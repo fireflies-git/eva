@@ -1,6 +1,6 @@
 # Eva
 
-Discord selfbot with a clean, modular architecture and OpenAI-compatible provider support.
+AI Assistant selfbot for Discord.
 
 ## Run
 
@@ -11,6 +11,6 @@ uv run eva
 ## Quality checks
 
 ```bash
-uv run ruff check src tests
-uv run pytest -q
+uv run lint
+uv run test
 ```

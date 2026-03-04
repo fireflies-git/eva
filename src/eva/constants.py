@@ -1,5 +1,3 @@
-"""Shared constants used across runtime modules."""
-
 CHECK_MARK = "✔"
 X_MARK = "✖"
 WARNING_MARK = ".ᐟ"

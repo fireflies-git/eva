@@ -10,7 +10,7 @@ import discord
 from eva.ai import AIClientError, ResponseService
 from eva.ai.schemas import ChatMessage
 from eva.config import Settings
-from eva.constants import CHECK_MARK, WARNING_MARK
+from eva.constants import WARNING_MARK
 from eva.discord.formatting import build_loading_text, build_response_text
 from eva.prompts import build_system_prompt
 from eva.state import ChannelHistoryStore, TrackedMessageStore
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class TriggerDecision:
     should_process: bool
-    clear_history: bool = False
     user_query: str = ""
 
 
@@ -29,14 +28,10 @@ def parse_trigger(
     *,
     content: str,
     trigger_prefix: str,
-    new_chat_command: str,
     is_reply_trigger: bool,
 ) -> TriggerDecision:
     text = content.strip()
     lowered = text.lower()
-
-    if lowered == new_chat_command.lower():
-        return TriggerDecision(should_process=False, clear_history=True)
 
     if is_reply_trigger:
         if not text:
@@ -108,22 +103,8 @@ class SelfbotMessageHandler:
         decision = parse_trigger(
             content=original_content,
             trigger_prefix=self._settings.trigger_prefix,
-            new_chat_command=self._settings.new_chat_command,
             is_reply_trigger=is_reply_trigger,
         )
-
-        if decision.clear_history:
-            self._history_store.clear(channel_id)
-            cleared_text = (
-                f"-# > {self._settings.new_chat_command}\n"
-                f" {CHECK_MARK} Chat history cleared for this channel."
-            )
-            await self._safe_edit(
-                message,
-                cleared_text,
-            )
-            self._tracked_messages.add(message.id)
-            return
 
         if not decision.should_process:
             return
