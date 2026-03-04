@@ -12,9 +12,12 @@ dependencies = [
 
 [project.scripts]
 eva = "main:main"
+lint = "eva.cli:run_lint"
+tests = "eva.cli:run_tests"
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.2",
     "ruff>=0.15.4",
 ]
 

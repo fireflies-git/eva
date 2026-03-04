@@ -1,0 +1,107 @@
+"""Environment loading and validated runtime settings."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+from eva.constants import X_MARK
+
+SETTINGS_DEFAULTS = {
+    "api_base_url": "https://inference.do-ai.run/v1",
+    "model_name": "openai-gpt-oss-120b",
+    "trigger_prefix": "eva ",
+    "new_chat_command": "eva new chat",
+    "max_history_messages": 20,
+    "response_context_messages": 25,
+    "request_timeout_seconds": 30.0,
+    "min_loading_seconds": 1.0,
+}
+
+class ConfigError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class Settings:
+    discord_token: str
+    api_key: str
+    api_base_url: str
+    model_name: str
+    trigger_prefix: str
+    new_chat_command: str
+    max_history_messages: int
+    response_context_messages: int
+    request_timeout_seconds: float
+    min_loading_seconds: float
+
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ConfigError(f"{X_MARK} Missing required environment variable: {name}")
+    return value
+
+
+def _optional_env(name: str, *, default: str) -> str:
+    return os.getenv(name, default).strip() or default
+
+
+def _optional_int(name: str, *, default: int, minimum: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+    if value < minimum:
+        raise ConfigError(f"{name} must be >= {minimum}, got {value}")
+    return value
+
+
+def _optional_float(name: str, *, default: float, minimum: float = 0.0) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if value < minimum:
+        raise ConfigError(f"{name} must be >= {minimum}, got {value}")
+    return value
+
+
+def load_settings() -> Settings:
+    load_dotenv()
+
+    return Settings(
+        discord_token=_required_env("DISCORD_TOKEN"),
+        api_key=_required_env("API_KEY"),
+        api_base_url=_optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"]),
+        model_name=_optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"]),
+        trigger_prefix=_optional_env("TRIGGER_PREFIX", default=SETTINGS_DEFAULTS["trigger_prefix"]),
+        new_chat_command=_optional_env(
+            "NEW_CHAT_COMMAND",
+            default=SETTINGS_DEFAULTS["new_chat_command"],
+        ),
+        max_history_messages=_optional_int(
+            "MAX_HISTORY_MESSAGES",
+            default=SETTINGS_DEFAULTS["max_history_messages"],
+        ),
+        response_context_messages=_optional_int(
+            "RESPONSE_CONTEXT_MESSAGES",
+            default=SETTINGS_DEFAULTS["response_context_messages"],
+        ),
+        request_timeout_seconds=_optional_float(
+            "REQUEST_TIMEOUT_SECONDS",
+            default=SETTINGS_DEFAULTS["request_timeout_seconds"],
+        ),
+        min_loading_seconds=_optional_float(
+            "MIN_LOADING_SECONDS",
+            default=SETTINGS_DEFAULTS["min_loading_seconds"],
+        ),
+    )
