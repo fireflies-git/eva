@@ -1,7 +1,7 @@
 [project]
 name = "eva"
 version = "0.1.0"
-description = "Clean rewrite of Eva Discord selfbot"
+description = "shitty ai selfbot"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
