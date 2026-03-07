@@ -23,13 +23,14 @@ class ResponseService:
             full_user_message = f'[Replying to message: "{reply_context}"]\n\n{user_message}'
 
         messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
-        messages.extend(context_messages)
         messages.extend(history_messages)
+        messages.extend(context_messages)
         messages.append({"role": "user", "content": full_user_message})
 
         return await self._client.chat_completion(
             messages=messages,
             model=self._model_name,
             temperature=0.7,
-            max_tokens=1024,
+            max_tokens=2048,
+            allow_reasoning_fallback=True,
         )

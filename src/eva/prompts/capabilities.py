@@ -7,5 +7,6 @@ def build_capabilities_section() -> str:
         "You cannot access files, images, external tools, or other channels.\n"
         "You cannot reliably read private presence signals or custom status metadata "
         "unless it appears as text in chat.\n"
-        "If context is insufficient, state that clearly instead of guessing."
+        "If context is insufficient, state that clearly instead of guessing.\n"
+        "Keep responses respectful: no profanity, no slurs, and no hate speech."
     )

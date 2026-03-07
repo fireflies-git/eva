@@ -11,7 +11,7 @@ from eva.ai import AIClientError, ResponseService
 from eva.ai.schemas import ChatMessage
 from eva.config import Settings
 from eva.constants import WARNING_MARK
-from eva.discord.formatting import build_loading_text, build_response_text
+from eva.discord.formatting import build_loading_text, build_response_chunks
 from eva.prompts import build_system_prompt
 from eva.state import ChannelHistoryStore, TrackedMessageStore
 
@@ -52,6 +52,7 @@ async def fetch_channel_context(
     channel: discord.abc.Messageable,
     *,
     limit: int,
+    exclude_message_id: int | None = None,
 ) -> list[ChatMessage]:
     if not hasattr(channel, "history"):
         return []
@@ -60,6 +61,8 @@ async def fetch_channel_context(
     try:
         async for msg in channel.history(limit=limit, oldest_first=False):
             if not getattr(msg, "content", ""):
+                continue
+            if exclude_message_id is not None and getattr(msg, "id", None) == exclude_message_id:
                 continue
             timestamp = msg.created_at.strftime("%H:%M")
             author = getattr(msg.author, "display_name", "unknown")
@@ -130,16 +133,17 @@ class SelfbotMessageHandler:
         user_query: str,
         reply_context: str | None,
     ) -> None:
-        loading_text = build_loading_text(original_content)
-        edit_started = time.monotonic()
-        await self._safe_edit(message, loading_text)
-
         response_context = await fetch_channel_context(
             message.channel,
             limit=self._settings.response_context_messages,
+            exclude_message_id=message.id,
         )
         history_messages = self._history_store.get(channel_id)
         system_prompt = build_system_prompt(message.channel, client)
+
+        loading_text = build_loading_text(original_content)
+        edit_started = time.monotonic()
+        await self._safe_edit(message, loading_text)
 
         try:
             ai_reply = await self._response_service.generate_reply(
@@ -157,9 +161,13 @@ class SelfbotMessageHandler:
         if elapsed < self._settings.min_loading_seconds:
             await asyncio.sleep(self._settings.min_loading_seconds - elapsed)
 
-        response_text = build_response_text(original_content, ai_reply)
-        await self._safe_edit(message, response_text)
+        response_chunks = build_response_chunks(original_content, ai_reply)
+        await self._safe_edit(message, response_chunks[0])
         self._tracked_messages.add(message.id)
+        for continuation in response_chunks[1:]:
+            sent_message = await self._safe_send(message.channel, continuation)
+            if sent_message is not None:
+                self._tracked_messages.add(sent_message.id)
 
         stored_user_message = user_query
         if reply_context:
@@ -189,3 +197,17 @@ class SelfbotMessageHandler:
             await message.edit(content=content)
         except Exception:
             logger.exception("Failed to edit message")
+
+    async def _safe_send(
+        self,
+        channel: discord.abc.Messageable,
+        content: str,
+    ) -> discord.Message | None:
+        send = getattr(channel, "send", None)
+        if send is None:
+            return None
+        try:
+            return await send(content=content)
+        except Exception:
+            logger.exception("Failed to send continuation message")
+            return None
