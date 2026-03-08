@@ -7,12 +7,11 @@ from dataclasses import dataclass
 
 import discord
 
-from eva.ai import AIClientError, ResponseService
+from eva.ai import AIClientError, ReplyGenerationService
 from eva.ai.schemas import ChatMessage
 from eva.config import Settings
 from eva.constants import WARNING_MARK
 from eva.discord.formatting import build_loading_text, build_response_chunks
-from eva.prompts import build_system_prompt
 from eva.state import ChannelHistoryStore, TrackedMessageStore
 
 logger = logging.getLogger(__name__)
@@ -80,12 +79,12 @@ class SelfbotMessageHandler:
         self,
         *,
         settings: Settings,
-        response_service: ResponseService,
+        reply_generation_service: ReplyGenerationService,
         history_store: ChannelHistoryStore,
         tracked_messages: TrackedMessageStore,
     ) -> None:
         self._settings = settings
-        self._response_service = response_service
+        self._reply_generation_service = reply_generation_service
         self._history_store = history_store
         self._tracked_messages = tracked_messages
 
@@ -139,15 +138,15 @@ class SelfbotMessageHandler:
             exclude_message_id=message.id,
         )
         history_messages = self._history_store.get(channel_id)
-        system_prompt = build_system_prompt(message.channel, client)
 
         loading_text = build_loading_text(original_content)
         edit_started = time.monotonic()
         await self._safe_edit(message, loading_text)
 
         try:
-            ai_reply = await self._response_service.generate_reply(
-                system_prompt=system_prompt,
+            ai_reply = await self._reply_generation_service.generate_reply(
+                channel=message.channel,
+                client=client,
                 context_messages=response_context,
                 history_messages=history_messages,
                 user_message=user_query,
@@ -194,7 +193,7 @@ class SelfbotMessageHandler:
 
     async def _safe_edit(self, message: discord.Message, content: str) -> None:
         try:
-            await message.edit(content=content)
+            await message.edit(content=content, suppress=True)
         except Exception:
             logger.exception("Failed to edit message")
 
@@ -207,7 +206,7 @@ class SelfbotMessageHandler:
         if send is None:
             return None
         try:
-            return await send(content=content)
+            return await send(content=content, suppress_embeds=True)
         except Exception:
             logger.exception("Failed to send continuation message")
             return None

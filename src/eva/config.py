@@ -27,6 +27,7 @@ class ConfigError(RuntimeError):
 class Settings:
     discord_token: str
     api_key: str
+    serper_api_key: str | None
     api_base_url: str
     model_name: str
     trigger_prefix: str
@@ -45,6 +46,14 @@ def _required_env(name: str) -> str:
 
 def _optional_env(name: str, *, default: str) -> str:
     return os.getenv(name, default).strip() or default
+
+
+def _optional_secret(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _optional_int(name: str, *, default: int, minimum: int, maximum: int) -> int:
@@ -66,6 +75,7 @@ def load_settings() -> Settings:
     return Settings(
         discord_token=_required_env("DISCORD_TOKEN"),
         api_key=_required_env("API_KEY"),
+        serper_api_key=_optional_secret("SERPER_API_KEY"),
         api_base_url=_optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"]),
         model_name=_optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"]),
         trigger_prefix=_optional_env("TRIGGER_PREFIX", default=SETTINGS_DEFAULTS["trigger_prefix"]),

@@ -13,7 +13,7 @@ def build_context_section(channel: discord.abc.Messageable, client: discord.Clie
     channel_name = getattr(channel, "name", "DM")
     owner = guild.owner.display_name if guild and guild.owner else "Unknown"
     current_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
-    user = client.user
+    user = getattr(client, "user", None)
 
     return (
         "## Runtime Context\n"
