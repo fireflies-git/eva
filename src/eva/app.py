@@ -12,7 +12,7 @@ from eva.ai import (
 from eva.config import Settings
 from eva.discord import SelfbotMessageHandler, create_discord_client
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
-from eva.state import ChannelHistoryStore, TrackedMessageStore
+from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +57,13 @@ class EvaApp:
         )
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
         self._tracked_messages = TrackedMessageStore()
+        self._whitelist = WhitelistStore()
         self._message_handler = SelfbotMessageHandler(
             settings=settings,
             reply_generation_service=self._reply_generation_service,
             history_store=self._history_store,
             tracked_messages=self._tracked_messages,
+            whitelist=self._whitelist,
         )
         self._discord_client = create_discord_client(self._message_handler)
 
