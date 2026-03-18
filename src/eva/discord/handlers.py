@@ -245,13 +245,12 @@ class SelfbotMessageHandler:
         message: discord.Message,
         content: str,
     ) -> bool:
-        prefix = self._settings.trigger_prefix.lower()
-        lowered = content.strip().lower()
-        if not lowered.startswith(f"{prefix}whitelist"):
-            return False
-
         parts = content.strip().split()
         # parts: ["eva", "whitelist", <subcommand>, ...]
+        prefix_word = self._settings.trigger_prefix.strip().lower()
+        if len(parts) < 2 or parts[0].lower() != prefix_word or parts[1].lower() != "whitelist":
+            return False
+
         if len(parts) < 3:
             await self._safe_edit(message, f"{X_MARK} Usage: `eva whitelist <add|remove|list>`")
             return True
