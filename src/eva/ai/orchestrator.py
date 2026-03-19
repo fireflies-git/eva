@@ -39,11 +39,13 @@ class ReplyGenerationService:
         history_messages: list[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        force_search: bool = False,
     ) -> str:
         search_results = await self._run_search_if_needed(
             context_messages=context_messages,
             user_message=user_message,
             reply_context=reply_context,
+            force_search=force_search,
         )
         if search_results is not None:
             reply = await self._generate_search_reply(
@@ -77,6 +79,7 @@ class ReplyGenerationService:
         context_messages: list[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        force_search: bool = False,
     ) -> SearchResultBundle | None:
         if self._search_service is None:
             return None
@@ -85,6 +88,7 @@ class ReplyGenerationService:
                 user_message=user_message,
                 recent_context=context_messages,
                 reply_context=reply_context,
+                force=force_search,
             )
         except SearchClientError:
             logger.exception("Search request failed")
