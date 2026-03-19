@@ -245,17 +245,24 @@ class SelfbotMessageHandler:
         message: discord.Message,
         content: str,
     ) -> bool:
-        parts = content.strip().split()
-        # parts: ["eva", "whitelist", <subcommand>, ...]
-        prefix_word = self._settings.trigger_prefix.strip().lower()
-        if len(parts) < 2 or parts[0].lower() != prefix_word or parts[1].lower() != "whitelist":
+        lowered = content.strip().lower()
+        prefix = self._settings.trigger_prefix.lower()
+        if not lowered.startswith(prefix):
             return False
 
-        if len(parts) < 3:
-            await self._safe_edit(message, f"{X_MARK} Usage: `eva whitelist <add|remove|list>`")
+        # Remove the prefix and strip leading/trailing whitespace
+        query = lowered[len(prefix):].strip()
+
+        # Check if it starts with "whitelist"
+        if not query.startswith("whitelist"):
+            return False
+
+        parts = query.split()
+        if len(parts) < 2:
+            await self._safe_edit(message, f"{X_MARK} Usage: `{self._settings.trigger_prefix.strip()} whitelist <add|remove|list>`")
             return True
 
-        subcommand = parts[2].lower()
+        subcommand = parts[1].lower()
 
         if subcommand == "list":
             ids = self._whitelist.list_all()
@@ -269,12 +276,18 @@ class SelfbotMessageHandler:
         if subcommand in ("add", "remove"):
             mention_match = _MENTION_RE.search(content)
             if not mention_match:
-                await self._safe_edit(
-                    message, f"{X_MARK} Mention a user: `eva whitelist {subcommand} @user`"
-                )
-                return True
+                # Fallback to checking if the 3rd argument is an ID directly
+                target_id = None
+                if len(parts) >= 3 and parts[2].isdigit():
+                    target_id = int(parts[2])
 
-            target_id = int(mention_match.group(1))
+                if not target_id:
+                    await self._safe_edit(
+                        message, f"{X_MARK} Mention a user or provide an ID: `{self._settings.trigger_prefix.strip()} whitelist {subcommand} @user`"
+                    )
+                    return True
+            else:
+                target_id = int(mention_match.group(1))
 
             if subcommand == "add":
                 added = self._whitelist.add(target_id)

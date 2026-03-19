@@ -14,11 +14,13 @@ dependencies = [
 eva = "main:main"
 lint = "eva.cli:run_lint"
 tests = "eva.cli:run_tests"
+build = "eva.cli:run_build"
 
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.4",
+    "nuitka>=2.5.4",
 ]
 
 [tool.uv]

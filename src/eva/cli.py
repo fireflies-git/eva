@@ -22,3 +22,20 @@ def run_lint() -> None:
     else:
         command.extend(["src", "tests"])
     raise SystemExit(subprocess.call(command))
+
+
+def run_build() -> None:
+    args = sys.argv[1:]
+    command = [
+        "nuitka",
+        "--standalone",
+        "--onefile",
+        "--assume-yes-for-downloads",
+        "--output-filename=eva",
+    ]
+    if args:
+        command.extend(args)
+
+    command.append("src/main.py")
+    raise SystemExit(subprocess.call(command))
+
