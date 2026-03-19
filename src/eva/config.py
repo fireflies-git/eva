@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -70,7 +71,14 @@ def _optional_int(name: str, *, default: int, minimum: int, maximum: int) -> int
 
 
 def load_settings() -> Settings:
-    load_dotenv()
+    # When compiled with Nuitka/PyInstaller, the executable runs in a tmp dir,
+    # so we must explicitly load .env from the directory of the executable
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        env_path = os.path.join(base_dir, ".env")
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv()
 
     return Settings(
         discord_token=_required_env("DISCORD_TOKEN"),
