@@ -25,12 +25,14 @@ class SearchService:
         user_message: str,
         recent_context: list[ChatMessage],
         reply_context: str | None,
-        force: bool = False,
     ) -> SearchResultBundle | None:
-        if not force:
-            decision = self._detector.should_search(user_message)
-            if not decision.should_search:
-                return None
+        decision = await self._detector.should_search(
+            user_message,
+            recent_context=recent_context,
+            reply_context=reply_context,
+        )
+        if not decision.should_search:
+            return None
 
         query = await self._query_builder.build_query(
             user_message=user_message,

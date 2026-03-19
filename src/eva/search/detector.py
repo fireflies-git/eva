@@ -1,67 +1,27 @@
+"""AI-based search decision detector."""
+
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
-LOOKUP_HINTS = (
-    "search ",
-    "search for",
-    "look up",
-    "google ",
-    "find ",
-    "check ",
-)
-RECENCY_HINTS = (
-    "latest",
-    "today",
-    "current",
-    "recent",
-    "right now",
-    " rn",
-    " rn?",
-    "this week",
-    "news",
-    "update",
-)
-EXTERNAL_FACT_HINTS = (
-    "stock price",
-    "share price",
-    "price of",
-    "market cap",
-    "release date",
-    "version",
-    "ceo",
-    "founder",
-    "headquarters",
-    "website",
-    "docs",
-    "documentation",
-)
-WORLD_SUPERLATIVE_PATTERN = re.compile(
-    r"\b(who|what)\b.*\b(oldest|youngest|richest|largest|biggest|fastest|tallest)\b.*\b"
-    r"(world|alive|living)\b"
-)
-PERSON_SUPERLATIVE_PATTERN = re.compile(
-    r"\bwho\b.*\b(oldest|youngest|richest|largest|biggest|fastest|tallest)\b.*\b"
-    r"(person|human|man|woman|player|athlete|president|ceo)\b"
-)
-NEGATIVE_HINTS = (
-    "last message",
-    "who said",
-    "summarize last",
-    "in this server",
-    "in this chat",
-    "in this channel",
-    "thank him",
-    "write ",
-    "poem",
-    "joke",
-    "story",
-)
-REFERENTIAL_LOOKUP_PATTERN = re.compile(
-    r"\b(what(?:'s| is)?|who(?:'s| is)?|when(?:'s| is)?|where(?:'s| is)?)\b.*\b("
-    r"ceo|founder|owner|price|stock|release|version|website|docs|documentation|news"
-    r")\b"
+from eva.ai.client import AIClientError, OpenAICompatibleClient
+from eva.ai.schemas import ChatMessage
+
+MAX_CONTEXT_MESSAGES = 5
+
+_SYSTEM_PROMPT = (
+    "You decide whether a web search is needed to answer a message in a Discord chat.\n\n"
+    "Reply with exactly YES or NO — nothing else.\n\n"
+    "Reply YES if the message asks about:\n"
+    "- Current events, news, prices, scores, or anything time-sensitive\n"
+    "- Facts about real-world people, companies, products, or places\n"
+    "- Something that requires up-to-date information to answer accurately\n"
+    "- A topic where the conversation context alone is clearly not enough\n\n"
+    "Reply NO if the message is:\n"
+    "- Casual chat, opinions, jokes, or banter\n"
+    "- A question answerable from the chat context already provided\n"
+    "- A creative writing or roleplay request\n"
+    "- A question about the bot itself or the conversation"
 )
 
 
@@ -72,22 +32,54 @@ class SearchDecision:
 
 
 class SearchDetector:
-    def should_search(self, user_message: str) -> SearchDecision:
-        text = user_message.strip().lower()
-        if not text:
+    def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
+        self._client = client
+        self._model_name = model_name
+
+    async def should_search(
+        self,
+        user_message: str,
+        recent_context: list[ChatMessage] | None = None,
+        reply_context: str | None = None,
+    ) -> SearchDecision:
+        if not user_message.strip():
             return SearchDecision(should_search=False)
-        if any(hint in text for hint in NEGATIVE_HINTS):
-            return SearchDecision(should_search=False)
-        if any(hint in text for hint in RECENCY_HINTS):
-            return SearchDecision(should_search=True, reason="recency")
-        if any(hint in text for hint in EXTERNAL_FACT_HINTS):
-            return SearchDecision(should_search=True, reason="external-fact")
-        if WORLD_SUPERLATIVE_PATTERN.search(text):
-            return SearchDecision(should_search=True, reason="world-superlative")
-        if PERSON_SUPERLATIVE_PATTERN.search(text):
-            return SearchDecision(should_search=True, reason="person-superlative")
-        if any(hint in text for hint in LOOKUP_HINTS):
-            return SearchDecision(should_search=True, reason="lookup")
-        if REFERENTIAL_LOOKUP_PATTERN.search(text):
-            return SearchDecision(should_search=True, reason="entity-lookup")
-        return SearchDecision(should_search=False)
+
+        input_text = self._build_input(user_message, recent_context, reply_context)
+
+        try:
+            response = await self._client.chat_completion(
+                messages=[
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": input_text},
+                ],
+                model=self._model_name,
+                temperature=0.0,
+                max_tokens=5,
+            )
+        except AIClientError:
+            return SearchDecision(should_search=False, reason="ai-error")
+
+        result = response.strip().upper()
+        return SearchDecision(should_search="YES" in result, reason="ai")
+
+    def _build_input(
+        self,
+        user_message: str,
+        recent_context: list[ChatMessage] | None,
+        reply_context: str | None,
+    ) -> str:
+        lines: list[str] = []
+
+        if recent_context:
+            relevant = recent_context[-MAX_CONTEXT_MESSAGES:]
+            lines.append("Recent chat:")
+            lines.extend(f"  {msg['content']}" for msg in relevant)
+            lines.append("")
+
+        if reply_context:
+            lines.append(f"Replying to: {reply_context}")
+            lines.append("")
+
+        lines.append(f"Message: {user_message}")
+        return "\n".join(lines)

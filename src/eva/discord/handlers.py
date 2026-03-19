@@ -24,7 +24,6 @@ _MENTION_RE = re.compile(r"<@!?(\d+)>")
 class TriggerDecision:
     should_process: bool
     user_query: str = ""
-    force_search: bool = False
 
 
 def parse_trigger(
@@ -48,17 +47,6 @@ def parse_trigger(
     query = text[len(trigger_prefix) :].strip()
     if not query:
         return TriggerDecision(should_process=False)
-
-    # Explicit search command: "eva search <query>"
-    query_lower = query.lower()
-    for search_prefix in ("search ", "look up ", "lookup "):
-        if query_lower.startswith(search_prefix):
-            search_query = query[len(search_prefix) :].strip()
-            if search_query:
-                return TriggerDecision(
-                    should_process=True, user_query=search_query, force_search=True
-                )
-
     return TriggerDecision(should_process=True, user_query=query)
 
 
@@ -150,7 +138,6 @@ class SelfbotMessageHandler:
                 channel_id=channel_id,
                 user_query=decision.user_query,
                 reply_context=reply_context,
-                force_search=decision.force_search,
             )
         else:
             await self._process_whitelisted_user_flow(
@@ -159,7 +146,6 @@ class SelfbotMessageHandler:
                 channel_id=channel_id,
                 user_query=decision.user_query,
                 reply_context=reply_context,
-                force_search=decision.force_search,
             )
 
     async def _process_response_flow(
@@ -171,7 +157,6 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
-        force_search: bool = False,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -193,7 +178,6 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
-                    force_search=force_search,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -224,7 +208,6 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
-        force_search: bool = False,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -242,7 +225,6 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
-                    force_search=force_search,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")

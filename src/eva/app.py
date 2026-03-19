@@ -41,7 +41,10 @@ class EvaApp:
             )
             self._search_service = SearchService(
                 client=self._search_client,
-                detector=SearchDetector(),
+                detector=SearchDetector(
+                    client=self._ai_client,
+                    model_name=settings.model_name,
+                ),
                 query_builder=SearchQueryBuilder(
                     client=self._ai_client,
                     model_name=settings.model_name,
