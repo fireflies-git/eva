@@ -127,6 +127,9 @@ class SearchResponseService:
                 if result.date:
                     lines.append(f"  Date: {result.date}")
 
+        return "\n".join(lines)
+
+
 class TOSCheckService:
     def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
         self._client = client
@@ -148,7 +151,7 @@ class TOSCheckService:
             response = await self._client.chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text}
+                    {"role": "user", "content": text},
                 ],
                 model=self._model_name,
                 temperature=0.0,
