@@ -168,14 +168,15 @@ class SelfbotMessageHandler:
         await self._safe_edit(message, loading_text)
 
         try:
-            ai_reply = await self._reply_generation_service.generate_reply(
-                channel=message.channel,
-                client=client,
-                context_messages=response_context,
-                history_messages=history_messages,
-                user_message=user_query,
-                reply_context=reply_context,
-            )
+            async with message.channel.typing():
+                ai_reply = await self._reply_generation_service.generate_reply(
+                    channel=message.channel,
+                    client=client,
+                    context_messages=response_context,
+                    history_messages=history_messages,
+                    user_message=user_query,
+                    reply_context=reply_context,
+                )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
             ai_reply = f"{WARNING_MARK} AI error: {exc}"
@@ -214,14 +215,15 @@ class SelfbotMessageHandler:
         history_messages = self._history_store.get(channel_id)
 
         try:
-            ai_reply = await self._reply_generation_service.generate_reply(
-                channel=message.channel,
-                client=client,
-                context_messages=response_context,
-                history_messages=history_messages,
-                user_message=user_query,
-                reply_context=reply_context,
-            )
+            async with message.channel.typing():
+                ai_reply = await self._reply_generation_service.generate_reply(
+                    channel=message.channel,
+                    client=client,
+                    context_messages=response_context,
+                    history_messages=history_messages,
+                    user_message=user_query,
+                    reply_context=reply_context,
+                )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
             ai_reply = f"{WARNING_MARK} AI error: {exc}"

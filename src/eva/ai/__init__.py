@@ -1,6 +1,6 @@
 from eva.ai.client import AIClientError, OpenAICompatibleClient
 from eva.ai.orchestrator import ReplyGenerationService
-from eva.ai.respond import ResponseService, SearchResponseService
+from eva.ai.respond import ResponseService, SearchResponseService, TOSCheckService
 
 __all__ = [
     "AIClientError",
@@ -8,4 +8,5 @@ __all__ = [
     "ReplyGenerationService",
     "ResponseService",
     "SearchResponseService",
+    "TOSCheckService",
 ]
