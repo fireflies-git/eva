@@ -108,8 +108,8 @@ class SelfbotMessageHandler:
         if channel_id is None:
             return
 
-        if is_owner:
-            handled = await self._try_whitelist_command(message, original_content)
+        if is_owner or self._whitelist.contains(message.author.id):
+            handled = await self._try_whitelist_command(message, original_content, is_owner=is_owner)
             if handled:
                 return
 
@@ -246,6 +246,7 @@ class SelfbotMessageHandler:
         self,
         message: discord.Message,
         content: str,
+        is_owner: bool = False,
     ) -> bool:
         lowered = content.strip().lower()
         prefix = self._settings.trigger_prefix.lower()
@@ -261,21 +262,28 @@ class SelfbotMessageHandler:
 
         parts = query.split()
         if len(parts) < 2:
-            await self._safe_edit(message, f"{X_MARK} Usage: `{self._settings.trigger_prefix.strip()} whitelist <add|remove|list>`")
+            await self._safe_reply_or_edit(message, is_owner, f"{X_MARK} Usage: `{self._settings.trigger_prefix.strip()} whitelist <add|remove|list>`")
             return True
 
         subcommand = parts[1].lower()
 
+        ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137}
+        is_admin = is_owner or message.author.id in ALLOWED_ADMIN_IDS
+
         if subcommand == "list":
             ids = self._whitelist.list_all()
             if not ids:
-                await self._safe_edit(message, f"{CHECK_MARK} Whitelist is empty.")
+                await self._safe_reply_or_edit(message, is_owner, f"{CHECK_MARK} Whitelist is empty.")
             else:
                 formatted = ", ".join(f"<@{uid}>" for uid in ids)
-                await self._safe_edit(message, f"{CHECK_MARK} Whitelisted: {formatted}")
+                await self._safe_reply_or_edit(message, is_owner, f"{CHECK_MARK} Whitelisted: {formatted}")
             return True
 
         if subcommand in ("add", "remove"):
+            if not is_admin:
+                await self._safe_reply_or_edit(message, is_owner, f"{X_MARK} You don't have permission to modify the whitelist.")
+                return True
+
             mention_match = _MENTION_RE.search(content)
             if not mention_match:
                 # Fallback to checking if the 3rd argument is an ID directly
@@ -284,8 +292,8 @@ class SelfbotMessageHandler:
                     target_id = int(parts[2])
 
                 if not target_id:
-                    await self._safe_edit(
-                        message, f"{X_MARK} Mention a user or provide an ID: `{self._settings.trigger_prefix.strip()} whitelist {subcommand} @user`"
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{X_MARK} Mention a user or provide an ID: `{self._settings.trigger_prefix.strip()} whitelist {subcommand} @user`"
                     )
                     return True
             else:
@@ -294,26 +302,26 @@ class SelfbotMessageHandler:
             if subcommand == "add":
                 added = self._whitelist.add(target_id)
                 if added:
-                    await self._safe_edit(
-                        message, f"{CHECK_MARK} <@{target_id}> added to whitelist."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{CHECK_MARK} <@{target_id}> added to whitelist."
                     )
                 else:
-                    await self._safe_edit(
-                        message, f"{WARNING_MARK} <@{target_id}> is already whitelisted."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{WARNING_MARK} <@{target_id}> is already whitelisted."
                     )
             else:
                 removed = self._whitelist.remove(target_id)
                 if removed:
-                    await self._safe_edit(
-                        message, f"{CHECK_MARK} <@{target_id}> removed from whitelist."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{CHECK_MARK} <@{target_id}> removed from whitelist."
                     )
                 else:
-                    await self._safe_edit(
-                        message, f"{WARNING_MARK} <@{target_id}> is not whitelisted."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{WARNING_MARK} <@{target_id}> is not whitelisted."
                     )
             return True
 
-        await self._safe_edit(message, f"{X_MARK} Unknown subcommand: `{subcommand}`")
+        await self._safe_reply_or_edit(message, is_owner, f"{X_MARK} Unknown subcommand: `{subcommand}`")
         return True
 
     async def _get_reply_context(self, message: discord.Message) -> str | None:
@@ -333,6 +341,12 @@ class SelfbotMessageHandler:
         if not ref_msg or not ref_msg.content:
             return None
         return f"{ref_msg.author.display_name}: {ref_msg.content}"
+
+    async def _safe_reply_or_edit(self, message: discord.Message, is_owner: bool, content: str) -> None:
+        if is_owner:
+            await self._safe_edit(message, content)
+        else:
+            await self._safe_reply(message, content)
 
     async def _safe_edit(self, message: discord.Message, content: str) -> None:
         try:
