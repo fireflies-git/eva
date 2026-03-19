@@ -27,6 +27,8 @@ def run_lint() -> None:
 def run_build() -> None:
     args = sys.argv[1:]
     command = [
+        sys.executable,
+        "-m",
         "nuitka",
         "--standalone",
         "--onefile",
