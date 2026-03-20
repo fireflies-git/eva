@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import discord
 
@@ -16,7 +16,7 @@ async def _capture_reply(
     is_owner: bool,
     content: str,
 ) -> None:
-    captured = cast(list[tuple[bool, str]], message._captured)
+    captured = cast(list[tuple[bool, str]], cast(Any, message)._captured)
     captured.append((is_owner, content))
 
 
@@ -26,7 +26,7 @@ def _make_message(*, author_id: int) -> discord.Message:
 
 
 def _captured_messages(message: discord.Message) -> list[tuple[bool, str]]:
-    return cast(list[tuple[bool, str]], message._captured)
+    return cast(list[tuple[bool, str]], cast(Any, message)._captured)
 
 
 def test_whitelist_list_command_is_still_available(tmp_path: Path) -> None:
@@ -46,7 +46,12 @@ def test_whitelist_list_command_is_still_available(tmp_path: Path) -> None:
     )
 
     assert handled is True
-    assert _captured_messages(message) == [(False, "✔ Whitelisted: <@100>")]
+    assert _captured_messages(message) == [
+        (
+            False,
+            "✔ Whitelisted: <@100>, <@213766338005434370>, <@218675193592283137>",
+        )
+    ]
 
 
 def test_whitelist_add_is_blocked_for_non_admin(tmp_path: Path) -> None:

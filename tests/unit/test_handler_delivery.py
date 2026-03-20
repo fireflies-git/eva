@@ -8,13 +8,16 @@ import discord
 import pytest
 
 import eva.discord.handlers as handlers
+from eva.ai import ReplyGenerationService
+from eva.ai.orchestrator import ReplyOutput
+from eva.config import Settings
 from eva.discord.delivery import DeliveryResult
 from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
 
 
 class StubReplyGenerationService:
-    async def generate_reply(self, **kwargs: object) -> str:
-        return "generated reply"
+    async def generate_reply(self, **kwargs: object) -> ReplyOutput:
+        return ReplyOutput(content="generated reply", attachments=[])
 
 
 class DummyTypingContext:
@@ -62,12 +65,15 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
         whitelist.add(user_id)
 
     handler = handlers.SelfbotMessageHandler(
-        settings=SimpleNamespace(
-            trigger_prefix="eva ",
-            response_context_messages=5,
-            min_loading_seconds=0.0,
+        settings=cast(
+            Settings,
+            SimpleNamespace(
+                trigger_prefix="eva ",
+                response_context_messages=5,
+                min_loading_seconds=0.0,
+            ),
         ),
-        reply_generation_service=StubReplyGenerationService(),
+        reply_generation_service=cast(ReplyGenerationService, StubReplyGenerationService()),
         history_store=history_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
