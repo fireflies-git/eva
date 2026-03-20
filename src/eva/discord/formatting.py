@@ -29,6 +29,27 @@ def _take_chunk(text: str, max_len: int) -> tuple[str, str]:
     return part, remainder
 
 
+def split_message_content(
+    text: str,
+    *,
+    message_limit: int = DISCORD_MESSAGE_LIMIT,
+) -> list[str]:
+    normalized = text.strip() or "(empty response)"
+    if len(normalized) <= message_limit:
+        return [normalized]
+
+    chunks: list[str] = []
+    remainder = normalized
+    while remainder:
+        if len(remainder) <= message_limit:
+            chunks.append(remainder)
+            break
+        chunk, remainder = _take_chunk(remainder, message_limit)
+        chunks.append(chunk)
+
+    return chunks
+
+
 def build_response_chunks(
     original_content: str,
     reply_content: str,
@@ -67,3 +88,11 @@ def build_response_chunks(
         chunks.append(f"{continuation_prefix}{continuation_body}")
 
     return chunks
+
+
+def build_plain_response_chunks(
+    reply_content: str,
+    *,
+    message_limit: int = DISCORD_MESSAGE_LIMIT,
+) -> list[str]:
+    return split_message_content(reply_content, message_limit=message_limit)

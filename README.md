@@ -12,5 +12,5 @@ uv run eva
 
 ```bash
 uv run lint
-uv run test
+uv run tests
 ```
