@@ -6,14 +6,18 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from eva.constants import X_MARK
+from eva.constants import (
+    DEFAULT_MAX_HISTORY_MESSAGES,
+    DEFAULT_RESPONSE_CONTEXT_MESSAGES,
+    X_MARK,
+)
 
 SETTINGS_DEFAULTS = {
     "api_base_url": "https://inference.do-ai.run/v1",
     "model_name": "openai-gpt-oss-120b",
     "trigger_prefix": "eva ",
-    "max_history_messages": 20,
-    "response_context_messages": 25,
+    "max_history_messages": DEFAULT_MAX_HISTORY_MESSAGES,
+    "response_context_messages": DEFAULT_RESPONSE_CONTEXT_MESSAGES,
     "request_timeout_seconds": 30.0,
     "min_loading_seconds": 1.0,
 }

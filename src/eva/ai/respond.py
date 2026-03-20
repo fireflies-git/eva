@@ -1,10 +1,20 @@
 from __future__ import annotations
 
-from eva.ai.client import OpenAICompatibleClient
+import logging
+from collections.abc import Sequence
+
+from eva.ai.client import AIClientError, ChatCompletionClient
+from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.schemas import ChatMessage
+from eva.constants import (
+    MAX_SEARCH_REPLY_CONTEXT_MESSAGES,
+    MAX_SEARCH_RESULTS,
+    REPLY_MAX_TOKENS,
+    SEARCH_REPLY_MAX_TOKENS,
+)
 from eva.search.schemas import SearchResultBundle
 
-MAX_SEARCH_RESULTS = 5
+logger = logging.getLogger(__name__)
 
 
 def _build_user_message(user_message: str, reply_context: str | None) -> str:
@@ -14,7 +24,7 @@ def _build_user_message(user_message: str, reply_context: str | None) -> str:
 
 
 class ResponseService:
-    def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
+    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
         self._client = client
         self._model_name = model_name
 
@@ -22,8 +32,8 @@ class ResponseService:
         self,
         *,
         system_prompt: str,
-        context_messages: list[ChatMessage],
-        history_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
+        history_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> str:
@@ -38,13 +48,13 @@ class ResponseService:
             messages=messages,
             model=self._model_name,
             temperature=0.7,
-            max_tokens=2048,
+            max_tokens=REPLY_MAX_TOKENS,
             allow_reasoning_fallback=True,
         )
 
 
 class SearchResponseService:
-    def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
+    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
         self._client = client
         self._model_name = model_name
 
@@ -53,7 +63,7 @@ class SearchResponseService:
         *,
         system_prompt: str,
         search_results: SearchResultBundle,
-        recent_context: list[ChatMessage],
+        recent_context: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> str:
@@ -74,7 +84,7 @@ class SearchResponseService:
             messages=messages,
             model=self._model_name,
             temperature=0.2,
-            max_tokens=2048,
+            max_tokens=SEARCH_REPLY_MAX_TOKENS,
             allow_reasoning_fallback=True,
         )
 
@@ -82,7 +92,7 @@ class SearchResponseService:
         self,
         *,
         search_results: SearchResultBundle,
-        recent_context: list[ChatMessage],
+        recent_context: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> str:
@@ -90,7 +100,7 @@ class SearchResponseService:
             f"User request: {_build_user_message(user_message, reply_context)}",
         ]
 
-        relevant_context = recent_context[-3:]
+        relevant_context = recent_context[-MAX_SEARCH_REPLY_CONTEXT_MESSAGES:]
         if relevant_context:
             lines.append("")
             lines.append("Recent channel context:")
@@ -131,20 +141,24 @@ class SearchResponseService:
 
 
 class TOSCheckService:
-    def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
+    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
         self._client = client
         self._model_name = model_name
 
     async def check_tos_violation(self, text: str) -> bool:
         system_prompt = (
-            "You are a strict Discord TOS moderator. Analyze the following text and determine if it violates Discord's Terms of Service, "
+            "You are a strict Discord TOS moderator. Analyze the following text and "
+            "determine if it violates Discord's Terms of Service, "
             "specifically checking for:\n"
             "1. Claims of being underage (e.g. 'I am 12', 'im 11', etc.)\n"
             "2. The hard-R n-word.\n"
             "3. Extreme hate speech or illegal content.\n\n"
-            "Note: General swearing and mild slurs (like 'faggot' or 'retard') are permitted by the owner in this context. "
-            "Only flag strict TOS violations like underage claims, the hard-R n-word, or extreme illegal/harmful content.\n\n"
-            "Reply with exactly 'YES' if it violates these rules, or 'NO' if it is acceptable. Say nothing else."
+            "Note: General swearing and mild slurs (like 'faggot' or 'retard') are "
+            "permitted by the owner in this context. "
+            "Only flag strict TOS violations like underage claims, the hard-R n-word, "
+            "or extreme illegal/harmful content.\n\n"
+            "Reply with exactly 'YES' if it violates these rules, or 'NO' if it is "
+            "acceptable. Say nothing else."
         )
 
         try:
@@ -157,6 +171,12 @@ class TOSCheckService:
                 temperature=0.0,
                 max_tokens=10,
             )
-            return "YES" in response.upper()
-        except Exception:
+        except AIClientError:
+            logger.exception("TOS moderation request failed")
             return False
+
+        decision = parse_strict_yes_no(response)
+        if decision is None:
+            logger.warning("TOS moderation returned unexpected response: %r", response)
+            return False
+        return decision

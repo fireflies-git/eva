@@ -42,4 +42,4 @@ jobs:
           path: |
             eva
             eva.exe
-          if-no-files-found: ignore
+          if-no-files-found: error

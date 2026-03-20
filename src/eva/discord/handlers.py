@@ -31,6 +31,7 @@ def parse_trigger(
     content: str,
     trigger_prefix: str,
     is_reply_trigger: bool,
+    mention_user_id: int | None = None,
 ) -> TriggerDecision:
     text = content.strip()
     lowered = text.lower()
@@ -41,13 +42,34 @@ def parse_trigger(
         return TriggerDecision(should_process=True, user_query=text)
 
     prefix = trigger_prefix.lower()
-    if not lowered.startswith(prefix):
+    if lowered.startswith(prefix):
+        query = text[len(trigger_prefix) :].strip()
+        if not query:
+            return TriggerDecision(should_process=False)
+        return TriggerDecision(should_process=True, user_query=query)
+
+    if mention_user_id is None:
         return TriggerDecision(should_process=False)
 
-    query = text[len(trigger_prefix) :].strip()
-    if not query:
-        return TriggerDecision(should_process=False)
-    return TriggerDecision(should_process=True, user_query=query)
+    mention_prefixes = (f"<@{mention_user_id}>", f"<@!{mention_user_id}>")
+    for mention_prefix in mention_prefixes:
+        if text.startswith(mention_prefix):
+            query = text[len(mention_prefix) :].strip()
+            if not query:
+                return TriggerDecision(should_process=False)
+            return TriggerDecision(should_process=True, user_query=query)
+
+    return TriggerDecision(should_process=False)
+
+
+def is_tracked_reply_trigger(
+    *,
+    message: discord.Message,
+    tracked_messages: TrackedMessageStore,
+) -> bool:
+    if not (message.reference and message.reference.message_id):
+        return False
+    return tracked_messages.contains(message.reference.message_id)
 
 
 async def fetch_channel_context(
@@ -115,14 +137,16 @@ class SelfbotMessageHandler:
             if handled:
                 return
 
-        is_reply_trigger = False
-        if is_owner and message.reference and message.reference.message_id:
-            is_reply_trigger = self._tracked_messages.contains(message.reference.message_id)
+        is_reply_trigger = is_tracked_reply_trigger(
+            message=message,
+            tracked_messages=self._tracked_messages,
+        )
 
         decision = parse_trigger(
             content=original_content,
             trigger_prefix=self._settings.trigger_prefix,
             is_reply_trigger=is_reply_trigger,
+            mention_user_id=user.id,
         )
 
         if not decision.should_process:
@@ -264,10 +288,11 @@ class SelfbotMessageHandler:
 
         parts = query.split()
         if len(parts) < 2:
+            usage = f"{self._settings.trigger_prefix.strip()} whitelist <add|remove|list>"
             await self._safe_reply_or_edit(
                 message,
                 is_owner,
-                f"{X_MARK} Usage: `{self._settings.trigger_prefix.strip()} whitelist <add|remove|list>`",
+                f"{X_MARK} Usage: `{usage}`",
             )
             return True
 
@@ -306,10 +331,14 @@ class SelfbotMessageHandler:
                     target_id = int(parts[2])
 
                 if not target_id:
+                    usage = (
+                        f"{self._settings.trigger_prefix.strip()} "
+                        f"whitelist {subcommand} @user"
+                    )
                     await self._safe_reply_or_edit(
                         message,
                         is_owner,
-                        f"{X_MARK} Mention a user or provide an ID: `{self._settings.trigger_prefix.strip()} whitelist {subcommand} @user`",
+                        f"{X_MARK} Mention a user or provide an ID: `{usage}`",
                     )
                     return True
             else:

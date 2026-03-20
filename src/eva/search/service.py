@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from eva.ai.schemas import ChatMessage
 from eva.search.client import SearchClientError, SerperClient
 from eva.search.detector import SearchDetector
@@ -23,7 +25,7 @@ class SearchService:
         self,
         *,
         user_message: str,
-        recent_context: list[ChatMessage],
+        recent_context: Sequence[ChatMessage],
         reply_context: str | None,
     ) -> SearchResultBundle | None:
         decision = await self._detector.should_search(

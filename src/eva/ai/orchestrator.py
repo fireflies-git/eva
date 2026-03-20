@@ -1,29 +1,68 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from typing import Protocol
 
 import discord
 
 from eva.ai.client import AIClientError
-from eva.ai.respond import ResponseService, SearchResponseService, TOSCheckService
 from eva.ai.schemas import ChatMessage
 from eva.constants import WARNING_MARK
 from eva.prompts import build_search_system_prompt, build_system_prompt
-from eva.search import SearchClientError, SearchResultBundle, SearchService
+from eva.search import SearchClientError, SearchResultBundle
 
 logger = logging.getLogger(__name__)
 
 SEARCH_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't verify that with search right now."
 
 
+class ResponseGenerator(Protocol):
+    async def generate_reply(
+        self,
+        *,
+        system_prompt: str,
+        context_messages: Sequence[ChatMessage],
+        history_messages: Sequence[ChatMessage],
+        user_message: str,
+        reply_context: str | None,
+    ) -> str: ...
+
+
+class SearchRunner(Protocol):
+    async def search_if_needed(
+        self,
+        *,
+        user_message: str,
+        recent_context: Sequence[ChatMessage],
+        reply_context: str | None,
+    ) -> SearchResultBundle | None: ...
+
+
+class SearchResponseGenerator(Protocol):
+    async def generate_reply(
+        self,
+        *,
+        system_prompt: str,
+        search_results: SearchResultBundle,
+        recent_context: Sequence[ChatMessage],
+        user_message: str,
+        reply_context: str | None,
+    ) -> str: ...
+
+
+class TOSChecker(Protocol):
+    async def check_tos_violation(self, text: str) -> bool: ...
+
+
 class ReplyGenerationService:
     def __init__(
         self,
         *,
-        response_service: ResponseService,
-        search_service: SearchService | None,
-        search_response_service: SearchResponseService | None,
-        tos_check_service: TOSCheckService,
+        response_service: ResponseGenerator,
+        search_service: SearchRunner | None,
+        search_response_service: SearchResponseGenerator | None,
+        tos_check_service: TOSChecker,
     ) -> None:
         self._response_service = response_service
         self._search_service = search_service
@@ -35,8 +74,8 @@ class ReplyGenerationService:
         *,
         channel: discord.abc.Messageable,
         client: discord.Client,
-        context_messages: list[ChatMessage],
-        history_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
+        history_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> str:
@@ -74,7 +113,7 @@ class ReplyGenerationService:
     async def _run_search_if_needed(
         self,
         *,
-        context_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> SearchResultBundle | None:
@@ -95,7 +134,7 @@ class ReplyGenerationService:
         *,
         channel: discord.abc.Messageable,
         client: discord.Client,
-        context_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
         search_results: SearchResultBundle,
         user_message: str,
         reply_context: str | None,

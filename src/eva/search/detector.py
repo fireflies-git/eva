@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from eva.ai.client import AIClientError, OpenAICompatibleClient
+from eva.ai.client import AIClientError, ChatCompletionClient
+from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.schemas import ChatMessage
-
-MAX_CONTEXT_MESSAGES = 5
+from eva.constants import MAX_SEARCH_DECISION_CONTEXT_MESSAGES
 
 _SYSTEM_PROMPT = (
     "You decide whether a web search is needed to answer a message in a Discord chat.\n\n"
@@ -32,14 +33,14 @@ class SearchDecision:
 
 
 class SearchDetector:
-    def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
+    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
         self._client = client
         self._model_name = model_name
 
     async def should_search(
         self,
         user_message: str,
-        recent_context: list[ChatMessage] | None = None,
+        recent_context: Sequence[ChatMessage] | None = None,
         reply_context: str | None = None,
     ) -> SearchDecision:
         if not user_message.strip():
@@ -60,19 +61,21 @@ class SearchDetector:
         except AIClientError:
             return SearchDecision(should_search=False, reason="ai-error")
 
-        result = response.strip().upper()
-        return SearchDecision(should_search="YES" in result, reason="ai")
+        decision = parse_strict_yes_no(response)
+        if decision is None:
+            return SearchDecision(should_search=False, reason="ai-invalid")
+        return SearchDecision(should_search=decision, reason="ai")
 
     def _build_input(
         self,
         user_message: str,
-        recent_context: list[ChatMessage] | None,
+        recent_context: Sequence[ChatMessage] | None,
         reply_context: str | None,
     ) -> str:
         lines: list[str] = []
 
         if recent_context:
-            relevant = recent_context[-MAX_CONTEXT_MESSAGES:]
+            relevant = recent_context[-MAX_SEARCH_DECISION_CONTEXT_MESSAGES:]
             lines.append("Recent chat:")
             lines.extend(f"  {msg['content']}" for msg in relevant)
             lines.append("")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Protocol
 
 import aiohttp
 
@@ -9,6 +10,18 @@ from eva.ai.schemas import ChatMessage
 
 class AIClientError(RuntimeError):
     pass
+
+
+class ChatCompletionClient(Protocol):
+    async def chat_completion(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        allow_reasoning_fallback: bool = False,
+    ) -> str: ...
 
 
 class OpenAICompatibleClient:
@@ -46,7 +59,7 @@ class OpenAICompatibleClient:
     async def chat_completion(
         self,
         *,
-        messages: list[ChatMessage],
+        messages: Sequence[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
@@ -54,7 +67,7 @@ class OpenAICompatibleClient:
     ) -> str:
         payload = {
             "model": model or self._default_model,
-            "messages": messages,
+            "messages": list(messages),
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,

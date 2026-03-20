@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any, cast
 
 from eva.ai import SearchResponseService
 from eva.search import SearchAnswerBox, SearchOrganicResult, SearchResultBundle
@@ -47,7 +48,8 @@ def test_search_response_service_uses_search_prompt_and_limits_results() -> None
     assert reply == "grounded answer"
     assert len(client.calls) == 1
     payload = client.calls[0]
-    assert payload["messages"][0]["content"] == "search prompt"
-    search_input = payload["messages"][1]["content"]
+    messages = cast(list[dict[str, Any]], payload["messages"])
+    assert messages[0]["content"] == "search prompt"
+    search_input = cast(str, messages[1]["content"])
     assert "Result 5" in search_input
     assert "Result 6" not in search_input
