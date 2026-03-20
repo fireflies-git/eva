@@ -1,40 +1,81 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from typing import Protocol
 
 import discord
 
 from eva.ai.client import AIClientError
-from eva.ai.respond import ResponseService, SearchResponseService
 from eva.ai.schemas import ChatMessage
 from eva.constants import WARNING_MARK
 from eva.prompts import build_search_system_prompt, build_system_prompt
-from eva.search import SearchClientError, SearchResultBundle, SearchService
+from eva.search import SearchClientError, SearchResultBundle
 
 logger = logging.getLogger(__name__)
 
 SEARCH_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't verify that with search right now."
 
 
+class ResponseGenerator(Protocol):
+    async def generate_reply(
+        self,
+        *,
+        system_prompt: str,
+        context_messages: Sequence[ChatMessage],
+        history_messages: Sequence[ChatMessage],
+        user_message: str,
+        reply_context: str | None,
+    ) -> str: ...
+
+
+class SearchRunner(Protocol):
+    async def search_if_needed(
+        self,
+        *,
+        user_message: str,
+        recent_context: Sequence[ChatMessage],
+        reply_context: str | None,
+    ) -> SearchResultBundle | None: ...
+
+
+class SearchResponseGenerator(Protocol):
+    async def generate_reply(
+        self,
+        *,
+        system_prompt: str,
+        search_results: SearchResultBundle,
+        recent_context: Sequence[ChatMessage],
+        user_message: str,
+        reply_context: str | None,
+    ) -> str: ...
+
+
+class TOSChecker(Protocol):
+    async def check_tos_violation(self, text: str) -> bool: ...
+
+
 class ReplyGenerationService:
     def __init__(
         self,
         *,
-        response_service: ResponseService,
-        search_service: SearchService | None,
-        search_response_service: SearchResponseService | None,
+        response_service: ResponseGenerator,
+        search_service: SearchRunner | None,
+        search_response_service: SearchResponseGenerator | None,
+        tos_check_service: TOSChecker,
     ) -> None:
         self._response_service = response_service
         self._search_service = search_service
         self._search_response_service = search_response_service
+        self._tos_check_service = tos_check_service
 
     async def generate_reply(
         self,
         *,
         channel: discord.abc.Messageable,
         client: discord.Client,
-        context_messages: list[ChatMessage],
-        history_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
+        history_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> str:
@@ -44,7 +85,7 @@ class ReplyGenerationService:
             reply_context=reply_context,
         )
         if search_results is not None:
-            return await self._generate_search_reply(
+            reply = await self._generate_search_reply(
                 channel=channel,
                 client=client,
                 context_messages=context_messages,
@@ -52,20 +93,27 @@ class ReplyGenerationService:
                 user_message=user_message,
                 reply_context=reply_context,
             )
+        else:
+            system_prompt = build_system_prompt(channel, client)
+            reply = await self._response_service.generate_reply(
+                system_prompt=system_prompt,
+                context_messages=context_messages,
+                history_messages=history_messages,
+                user_message=user_message,
+                reply_context=reply_context,
+            )
 
-        system_prompt = build_system_prompt(channel, client)
-        return await self._response_service.generate_reply(
-            system_prompt=system_prompt,
-            context_messages=context_messages,
-            history_messages=history_messages,
-            user_message=user_message,
-            reply_context=reply_context,
-        )
+        is_violation = await self._tos_check_service.check_tos_violation(reply)
+        if is_violation:
+            logger.warning("Generated reply blocked by TOS check.")
+            return f"{WARNING_MARK} I can't say that. It violates my safety or TOS guidelines."
+
+        return reply
 
     async def _run_search_if_needed(
         self,
         *,
-        context_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
     ) -> SearchResultBundle | None:
@@ -86,7 +134,7 @@ class ReplyGenerationService:
         *,
         channel: discord.abc.Messageable,
         client: discord.Client,
-        context_messages: list[ChatMessage],
+        context_messages: Sequence[ChatMessage],
         search_results: SearchResultBundle,
         user_message: str,
         reply_context: str | None,

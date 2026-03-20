@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
-from eva.ai.client import AIClientError, OpenAICompatibleClient
+from eva.ai.client import AIClientError, ChatCompletionClient
 from eva.ai.schemas import ChatMessage
+from eva.constants import MAX_QUERY_CONTEXT_MESSAGES, SEARCH_REWRITE_MAX_TOKENS
 
-MAX_QUERY_CONTEXT_MESSAGES = 3
 REFERENTIAL_PATTERN = re.compile(
     r"\b(it|they|them|that|this|those|these|he|she|him|her|what about|how about|and)\b",
     re.IGNORECASE,
@@ -13,7 +14,7 @@ REFERENTIAL_PATTERN = re.compile(
 
 
 class SearchQueryBuilder:
-    def __init__(self, *, client: OpenAICompatibleClient, model_name: str) -> None:
+    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
         self._client = client
         self._model_name = model_name
 
@@ -21,7 +22,7 @@ class SearchQueryBuilder:
         self,
         *,
         user_message: str,
-        recent_context: list[ChatMessage],
+        recent_context: Sequence[ChatMessage],
         reply_context: str | None,
     ) -> str:
         base_query = user_message.strip()
@@ -30,7 +31,7 @@ class SearchQueryBuilder:
         if not self._should_rewrite(base_query, reply_context):
             return base_query
 
-        messages = [
+        messages: list[ChatMessage] = [
             {"role": "system", "content": self._build_rewrite_prompt()},
             {
                 "role": "user",
@@ -47,7 +48,7 @@ class SearchQueryBuilder:
                 messages=messages,
                 model=self._model_name,
                 temperature=0.1,
-                max_tokens=48,
+                max_tokens=SEARCH_REWRITE_MAX_TOKENS,
             )
         except AIClientError:
             return base_query
@@ -74,7 +75,7 @@ class SearchQueryBuilder:
         self,
         *,
         user_message: str,
-        recent_context: list[ChatMessage],
+        recent_context: Sequence[ChatMessage],
         reply_context: str | None,
     ) -> str:
         lines = [f"User message: {user_message}"]

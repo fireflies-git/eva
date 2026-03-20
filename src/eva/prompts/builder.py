@@ -9,10 +9,12 @@ from eva.prompts.context import build_context_section
 from eva.prompts.formatting import build_formatting_section
 from eva.prompts.persona import build_persona_section
 from eva.prompts.search import build_search_prompt
+from eva.prompts.security import build_security_section
 
 
 def build_system_prompt(channel: discord.abc.Messageable, client: discord.Client) -> str:
     sections = [
+        build_security_section(),
         build_persona_section(),
         build_formatting_section(),
         build_capabilities_section(),
@@ -23,6 +25,7 @@ def build_system_prompt(channel: discord.abc.Messageable, client: discord.Client
 
 def build_search_system_prompt(channel: discord.abc.Messageable, client: discord.Client) -> str:
     sections = [
+        build_security_section(),
         build_persona_section(),
         build_formatting_section(),
         build_capabilities_section(),

@@ -31,6 +31,7 @@ def parse_trigger(
     content: str,
     trigger_prefix: str,
     is_reply_trigger: bool,
+    mention_user_id: int | None = None,
 ) -> TriggerDecision:
     text = content.strip()
     lowered = text.lower()
@@ -41,13 +42,34 @@ def parse_trigger(
         return TriggerDecision(should_process=True, user_query=text)
 
     prefix = trigger_prefix.lower()
-    if not lowered.startswith(prefix):
+    if lowered.startswith(prefix):
+        query = text[len(trigger_prefix) :].strip()
+        if not query:
+            return TriggerDecision(should_process=False)
+        return TriggerDecision(should_process=True, user_query=query)
+
+    if mention_user_id is None:
         return TriggerDecision(should_process=False)
 
-    query = text[len(trigger_prefix) :].strip()
-    if not query:
-        return TriggerDecision(should_process=False)
-    return TriggerDecision(should_process=True, user_query=query)
+    mention_prefixes = (f"<@{mention_user_id}>", f"<@!{mention_user_id}>")
+    for mention_prefix in mention_prefixes:
+        if text.startswith(mention_prefix):
+            query = text[len(mention_prefix) :].strip()
+            if not query:
+                return TriggerDecision(should_process=False)
+            return TriggerDecision(should_process=True, user_query=query)
+
+    return TriggerDecision(should_process=False)
+
+
+def is_tracked_reply_trigger(
+    *,
+    message: discord.Message,
+    tracked_messages: TrackedMessageStore,
+) -> bool:
+    if not (message.reference and message.reference.message_id):
+        return False
+    return tracked_messages.contains(message.reference.message_id)
 
 
 async def fetch_channel_context(
@@ -108,19 +130,23 @@ class SelfbotMessageHandler:
         if channel_id is None:
             return
 
-        if is_owner:
-            handled = await self._try_whitelist_command(message, original_content)
+        if is_owner or self._whitelist.contains(message.author.id):
+            handled = await self._try_whitelist_command(
+                message, original_content, is_owner=is_owner
+            )
             if handled:
                 return
 
-        is_reply_trigger = False
-        if is_owner and message.reference and message.reference.message_id:
-            is_reply_trigger = self._tracked_messages.contains(message.reference.message_id)
+        is_reply_trigger = is_tracked_reply_trigger(
+            message=message,
+            tracked_messages=self._tracked_messages,
+        )
 
         decision = parse_trigger(
             content=original_content,
             trigger_prefix=self._settings.trigger_prefix,
             is_reply_trigger=is_reply_trigger,
+            mention_user_id=user.id,
         )
 
         if not decision.should_process:
@@ -168,14 +194,15 @@ class SelfbotMessageHandler:
         await self._safe_edit(message, loading_text)
 
         try:
-            ai_reply = await self._reply_generation_service.generate_reply(
-                channel=message.channel,
-                client=client,
-                context_messages=response_context,
-                history_messages=history_messages,
-                user_message=user_query,
-                reply_context=reply_context,
-            )
+            async with message.channel.typing():
+                ai_reply = await self._reply_generation_service.generate_reply(
+                    channel=message.channel,
+                    client=client,
+                    context_messages=response_context,
+                    history_messages=history_messages,
+                    user_message=user_query,
+                    reply_context=reply_context,
+                )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
             ai_reply = f"{WARNING_MARK} AI error: {exc}"
@@ -214,14 +241,15 @@ class SelfbotMessageHandler:
         history_messages = self._history_store.get(channel_id)
 
         try:
-            ai_reply = await self._reply_generation_service.generate_reply(
-                channel=message.channel,
-                client=client,
-                context_messages=response_context,
-                history_messages=history_messages,
-                user_message=user_query,
-                reply_context=reply_context,
-            )
+            async with message.channel.typing():
+                ai_reply = await self._reply_generation_service.generate_reply(
+                    channel=message.channel,
+                    client=client,
+                    context_messages=response_context,
+                    history_messages=history_messages,
+                    user_message=user_query,
+                    reply_context=reply_context,
+                )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
             ai_reply = f"{WARNING_MARK} AI error: {exc}"
@@ -244,61 +272,103 @@ class SelfbotMessageHandler:
         self,
         message: discord.Message,
         content: str,
+        is_owner: bool = False,
     ) -> bool:
-        parts = content.strip().split()
-        # parts: ["eva", "whitelist", <subcommand>, ...]
-        prefix_word = self._settings.trigger_prefix.strip().lower()
-        if len(parts) < 2 or parts[0].lower() != prefix_word or parts[1].lower() != "whitelist":
+        lowered = content.strip().lower()
+        prefix = self._settings.trigger_prefix.lower()
+        if not lowered.startswith(prefix):
             return False
 
-        if len(parts) < 3:
-            await self._safe_edit(message, f"{X_MARK} Usage: `eva whitelist <add|remove|list>`")
+        # Remove the prefix and strip leading/trailing whitespace
+        query = lowered[len(prefix) :].strip()
+
+        # Check if it starts with "whitelist"
+        if not query.startswith("whitelist"):
+            return False
+
+        parts = query.split()
+        if len(parts) < 2:
+            usage = f"{self._settings.trigger_prefix.strip()} whitelist <add|remove|list>"
+            await self._safe_reply_or_edit(
+                message,
+                is_owner,
+                f"{X_MARK} Usage: `{usage}`",
+            )
             return True
 
-        subcommand = parts[2].lower()
+        subcommand = parts[1].lower()
+
+        ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137}
+        is_admin = is_owner or message.author.id in ALLOWED_ADMIN_IDS
 
         if subcommand == "list":
             ids = self._whitelist.list_all()
             if not ids:
-                await self._safe_edit(message, f"{CHECK_MARK} Whitelist is empty.")
+                await self._safe_reply_or_edit(
+                    message, is_owner, f"{CHECK_MARK} Whitelist is empty."
+                )
             else:
                 formatted = ", ".join(f"<@{uid}>" for uid in ids)
-                await self._safe_edit(message, f"{CHECK_MARK} Whitelisted: {formatted}")
+                await self._safe_reply_or_edit(
+                    message, is_owner, f"{CHECK_MARK} Whitelisted: {formatted}"
+                )
             return True
 
         if subcommand in ("add", "remove"):
-            mention_match = _MENTION_RE.search(content)
-            if not mention_match:
-                await self._safe_edit(
-                    message, f"{X_MARK} Mention a user: `eva whitelist {subcommand} @user`"
+            if not is_admin:
+                await self._safe_reply_or_edit(
+                    message,
+                    is_owner,
+                    f"{X_MARK} You don't have permission to modify the whitelist.",
                 )
                 return True
 
-            target_id = int(mention_match.group(1))
+            mention_match = _MENTION_RE.search(content)
+            if not mention_match:
+                # Fallback to checking if the 3rd argument is an ID directly
+                target_id = None
+                if len(parts) >= 3 and parts[2].isdigit():
+                    target_id = int(parts[2])
+
+                if not target_id:
+                    usage = (
+                        f"{self._settings.trigger_prefix.strip()} "
+                        f"whitelist {subcommand} @user"
+                    )
+                    await self._safe_reply_or_edit(
+                        message,
+                        is_owner,
+                        f"{X_MARK} Mention a user or provide an ID: `{usage}`",
+                    )
+                    return True
+            else:
+                target_id = int(mention_match.group(1))
 
             if subcommand == "add":
                 added = self._whitelist.add(target_id)
                 if added:
-                    await self._safe_edit(
-                        message, f"{CHECK_MARK} <@{target_id}> added to whitelist."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{CHECK_MARK} <@{target_id}> added to whitelist."
                     )
                 else:
-                    await self._safe_edit(
-                        message, f"{WARNING_MARK} <@{target_id}> is already whitelisted."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{WARNING_MARK} <@{target_id}> is already whitelisted."
                     )
             else:
                 removed = self._whitelist.remove(target_id)
                 if removed:
-                    await self._safe_edit(
-                        message, f"{CHECK_MARK} <@{target_id}> removed from whitelist."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{CHECK_MARK} <@{target_id}> removed from whitelist."
                     )
                 else:
-                    await self._safe_edit(
-                        message, f"{WARNING_MARK} <@{target_id}> is not whitelisted."
+                    await self._safe_reply_or_edit(
+                        message, is_owner, f"{WARNING_MARK} <@{target_id}> is not whitelisted."
                     )
             return True
 
-        await self._safe_edit(message, f"{X_MARK} Unknown subcommand: `{subcommand}`")
+        await self._safe_reply_or_edit(
+            message, is_owner, f"{X_MARK} Unknown subcommand: `{subcommand}`"
+        )
         return True
 
     async def _get_reply_context(self, message: discord.Message) -> str | None:
@@ -318,6 +388,14 @@ class SelfbotMessageHandler:
         if not ref_msg or not ref_msg.content:
             return None
         return f"{ref_msg.author.display_name}: {ref_msg.content}"
+
+    async def _safe_reply_or_edit(
+        self, message: discord.Message, is_owner: bool, content: str
+    ) -> None:
+        if is_owner:
+            await self._safe_edit(message, content)
+        else:
+            await self._safe_reply(message, content)
 
     async def _safe_edit(self, message: discord.Message, content: str) -> None:
         try:

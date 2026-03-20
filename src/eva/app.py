@@ -8,6 +8,7 @@ from eva.ai import (
     ReplyGenerationService,
     ResponseService,
     SearchResponseService,
+    TOSCheckService,
 )
 from eva.config import Settings
 from eva.discord import SelfbotMessageHandler, create_discord_client
@@ -40,7 +41,10 @@ class EvaApp:
             )
             self._search_service = SearchService(
                 client=self._search_client,
-                detector=SearchDetector(),
+                detector=SearchDetector(
+                    client=self._ai_client,
+                    model_name=settings.model_name,
+                ),
                 query_builder=SearchQueryBuilder(
                     client=self._ai_client,
                     model_name=settings.model_name,
@@ -50,10 +54,15 @@ class EvaApp:
                 client=self._ai_client,
                 model_name=settings.model_name,
             )
+        self._tos_check_service = TOSCheckService(
+            client=self._ai_client,
+            model_name=settings.model_name,
+        )
         self._reply_generation_service = ReplyGenerationService(
             response_service=self._response_service,
             search_service=self._search_service,
             search_response_service=self._search_response_service,
+            tos_check_service=self._tos_check_service,
         )
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
         self._tracked_messages = TrackedMessageStore()
