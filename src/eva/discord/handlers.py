@@ -9,7 +9,7 @@ import discord
 from eva.ai import AIClientError, ReplyGenerationService
 from eva.config import Settings
 from eva.constants import WARNING_MARK
-from eva.discord.commands import handle_whitelist_command
+from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
 from eva.discord.delivery import (
     deliver_owner_response,
@@ -49,8 +49,9 @@ class SelfbotMessageHandler:
             return
 
         is_owner = message.author.id == user.id
+        is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
 
-        if not is_owner and not self._whitelist.contains(message.author.id):
+        if not is_admin and not self._whitelist.contains(message.author.id):
             return
 
         original_content = message.content

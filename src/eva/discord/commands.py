@@ -14,6 +14,14 @@ ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137}
 ReplyOrEdit = Callable[[discord.Message, bool, str], Awaitable[None]]
 
 
+def is_admin_user(*, user_id: int, is_owner: bool) -> bool:
+    return is_owner or user_id in ALLOWED_ADMIN_IDS
+
+
+def list_effective_whitelist(whitelist: WhitelistStore) -> list[int]:
+    return sorted(set(whitelist.list_all()) | ALLOWED_ADMIN_IDS)
+
+
 async def handle_whitelist_command(
     *,
     message: discord.Message,
@@ -39,10 +47,10 @@ async def handle_whitelist_command(
         return True
 
     subcommand = parts[1].lower()
-    is_admin = is_owner or message.author.id in ALLOWED_ADMIN_IDS
+    is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
 
     if subcommand == "list":
-        ids = whitelist.list_all()
+        ids = list_effective_whitelist(whitelist)
         if not ids:
             await reply_or_edit(message, is_owner, f"{CHECK_MARK} Whitelist is empty.")
         else:
@@ -74,6 +82,13 @@ async def handle_whitelist_command(
             return True
 
         if subcommand == "add":
+            if target_id in ALLOWED_ADMIN_IDS:
+                await reply_or_edit(
+                    message,
+                    is_owner,
+                    f"{WARNING_MARK} <@{target_id}> is already allowed as an admin.",
+                )
+                return True
             added = whitelist.add(target_id)
             if added:
                 await reply_or_edit(
@@ -84,6 +99,13 @@ async def handle_whitelist_command(
                     message, is_owner, f"{WARNING_MARK} <@{target_id}> is already whitelisted."
                 )
         else:
+            if target_id in ALLOWED_ADMIN_IDS:
+                await reply_or_edit(
+                    message,
+                    is_owner,
+                    f"{WARNING_MARK} <@{target_id}> is an admin and is always allowed.",
+                )
+                return True
             removed = whitelist.remove(target_id)
             if removed:
                 await reply_or_edit(
