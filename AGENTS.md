@@ -222,6 +222,7 @@ uv run build
 ```
 
 Notes:
+- For a fresh environment with dev tooling, run `uv sync --group dev`.
 - `uv run tests` is the packaged test command from `pyproject.toml`.
 - `uv run pytest -q` is still useful for targeted or ad hoc test runs.
 - Keep docs, workflows, and scripts aligned. If a command name changes in `pyproject.toml`,
@@ -231,6 +232,10 @@ Notes:
 
 The repo is intentionally split by responsibility:
 
+- `src/eva/cli.py`
+  Thin command wrappers for lint, test, and build entry points.
+- `src/eva/logging.py`
+  Logging setup only.
 - `src/eva/app.py`
   Composition root only. Wire dependencies here. Do not put behavior here.
 - `src/eva/config.py`
@@ -239,6 +244,7 @@ The repo is intentionally split by responsibility:
   Shared code-level constants and tuning knobs.
 - `src/eva/discord/*`
   Discord-facing behavior, split by concern:
+  - `client.py`: Discord client/event wiring only
   - `handlers.py`: orchestration facade only
   - `triggers.py`: prefix / mention / tracked-reply trigger decisions
   - `commands.py`: whitelist command parsing and authorization
@@ -248,11 +254,11 @@ The repo is intentionally split by responsibility:
 - `src/eva/ai/*`
   AI transport, orchestration, response shaping, moderation/search decision parsing.
 - `src/eva/search/*`
-  Search detection, search query rewriting, search HTTP client, result normalization.
+  Search detection, query rewriting, search execution, and result normalization.
 - `src/eva/images/*`
   Image-generation detection, image API transport, response validation, and asset handling.
 - `src/eva/prompts/*`
-  Prompt text and prompt composition only.
+  Prompt text and prompt composition only, including capabilities/limitations guidance.
 - `src/eva/state/*`
   Lightweight persistence/in-memory stores.
 - `tests/unit/*`
@@ -264,8 +270,14 @@ Keep file roles sharp. Avoid “convenience” code that blurs module boundaries
 
 ### Put behavior in the owning layer
 
+- Command-line entry points for lint/tests/build:
+  `src/eva/cli.py`
+- Logging configuration:
+  `src/eva/logging.py`
 - Trigger parsing and tracked-reply detection:
   `src/eva/discord/triggers.py`
+- Discord client event registration and handoff to the handler:
+  `src/eva/discord/client.py`
 - Whitelist command parsing and admin checks:
   `src/eva/discord/commands.py`
 - Channel history reads and reply-context fetches:
@@ -276,10 +288,16 @@ Keep file roles sharp. Avoid “convenience” code that blurs module boundaries
   `src/eva/discord/handlers.py`
 - Prompt wording, tone, security rules, search-response format:
   `src/eva/prompts/*`
+- Capability and limitation prompt text:
+  `src/eva/prompts/capabilities.py`
 - Search-vs-normal routing and moderation sequencing:
   `src/eva/ai/orchestrator.py`
 - Model payload construction and output shaping:
   `src/eva/ai/respond.py`
+- Search execution and result fetching:
+  `src/eva/search/service.py`
+- Search query rewriting:
+  `src/eva/search/query_builder.py`
 - Search detection, search rewrite, and search API handling:
   `src/eva/search/*`
 - Image detection, image API validation, and image asset download handling:
@@ -293,6 +311,25 @@ Keep file roles sharp. Avoid “convenience” code that blurs module boundaries
 - start/stop async resources
 
 Do not add business logic or trigger logic there.
+
+### Keep `discord/client.py` thin
+
+`src/eva/discord/client.py` should stay focused on Discord client setup:
+- create the Discord client
+- register event handlers
+- log connection state
+- hand message events off to `SelfbotMessageHandler`
+
+Do not add authorization, trigger parsing, or reply-generation logic there.
+
+### Keep `cli.py` as command wrappers
+
+`src/eva/cli.py` should stay a thin command shim:
+- translate script entry points into subprocess calls
+- preserve passthrough args
+- exit with the underlying command status
+
+Do not add application business logic there.
 
 ### Keep `handlers.py` as the orchestration facade
 
@@ -312,6 +349,7 @@ Move detailed logic out when it belongs elsewhere:
 - Discord read-side fetches -> `context.py`
 - Discord write-side delivery -> `delivery.py`
 - chunk formatting -> `formatting.py`
+- Discord event wiring -> `client.py`
 
 ## Constants vs Config
 
@@ -760,6 +798,7 @@ Edit these carefully and verify behavior after changes:
 ## Anti-Patterns to Avoid
 
 - adding new trigger rules directly in `on_message()` instead of `parse_trigger()`
+- putting Discord behavior in `discord/client.py` instead of `handlers.py`
 - re-implementing whitelist parsing in `handlers.py` instead of `commands.py`
 - mixing Discord read-side context fetches with send/edit/reply logic in the same helper
 - mixing authorization decisions with prompt text
