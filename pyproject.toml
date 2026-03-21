@@ -7,6 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.3",
     "discord-py-self>=2.1.0",
+    "Pillow>=11.3.0; platform_system == 'Windows'",
+    "pystray>=0.19.5; platform_system == 'Windows'",
     "python-dotenv>=1.2.2",
 ]
 
@@ -19,6 +21,7 @@ build = "eva.cli:run_build"
 [dependency-groups]
 dev = [
     "ty>=0.0.24",
+    "pyright>=1.1.407",
     "pytest>=9.0.2",
     "ruff>=0.15.4",
     "nuitka>=2.5.4",

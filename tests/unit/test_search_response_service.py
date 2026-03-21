@@ -42,6 +42,7 @@ def test_search_response_service_uses_search_prompt_and_limits_results() -> None
             recent_context=[],
             user_message="what is apple stock price today",
             reply_context=None,
+            requester_context=None,
         )
     )
 

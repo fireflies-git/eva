@@ -36,6 +36,7 @@ class ResponseGenerator(Protocol):
         history_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        requester_context: str | None,
     ) -> str: ...
 
 
@@ -68,6 +69,7 @@ class SearchResponseGenerator(Protocol):
         recent_context: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        requester_context: str | None,
     ) -> str: ...
 
 
@@ -101,6 +103,7 @@ class ReplyGenerationService:
         user_message: str,
         reply_context: str | None,
         allow_image_generation: bool = True,
+        requester_context: str | None = None,
     ) -> ReplyOutput:
         image_results = await self._run_image_if_needed(
             context_messages=context_messages,
@@ -125,6 +128,7 @@ class ReplyGenerationService:
                     search_results=search_results,
                     user_message=user_message,
                     reply_context=reply_context,
+                    requester_context=requester_context,
                 )
                 reply = ReplyOutput(content=content, attachments=[])
             else:
@@ -135,6 +139,7 @@ class ReplyGenerationService:
                     history_messages=history_messages,
                     user_message=user_message,
                     reply_context=reply_context,
+                    requester_context=requester_context,
                 )
                 reply = ReplyOutput(content=content, attachments=[])
 
@@ -223,6 +228,7 @@ class ReplyGenerationService:
         search_results: SearchResultBundle,
         user_message: str,
         reply_context: str | None,
+        requester_context: str | None,
     ) -> str:
         if search_results.is_error:
             return SEARCH_FAILURE_MESSAGE
@@ -237,6 +243,7 @@ class ReplyGenerationService:
                 recent_context=context_messages,
                 user_message=user_message,
                 reply_context=reply_context,
+                requester_context=requester_context,
             )
         except AIClientError:
             logger.exception("Search response generation failed")

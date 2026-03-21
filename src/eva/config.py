@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -54,6 +55,16 @@ class Settings:
     image_incognito: bool
 
 
+def get_runtime_base_dir() -> Path:
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        return Path(sys.argv[0]).resolve().parent
+    return Path.cwd()
+
+
+def get_env_path() -> Path:
+    return get_runtime_base_dir() / ".env"
+
+
 def _required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -99,14 +110,7 @@ def _optional_int(name: str, *, default: int, minimum: int, maximum: int) -> int
 
 
 def load_settings() -> Settings:
-    # When compiled with Nuitka/PyInstaller, the executable runs in a tmp dir,
-    # so we must explicitly load .env from the directory of the executable
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
-        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        env_path = os.path.join(base_dir, ".env")
-        load_dotenv(dotenv_path=env_path)
-    else:
-        load_dotenv()
+    load_dotenv(dotenv_path=get_env_path())
 
     return Settings(
         discord_token=_required_env("DISCORD_TOKEN"),
