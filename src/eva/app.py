@@ -12,6 +12,7 @@ from eva.ai import (
 )
 from eva.config import Settings
 from eva.discord import SelfbotMessageHandler, create_discord_client
+from eva.images import ImageClient, ImageDetector, ImageGenerationService
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
 from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
 
@@ -31,6 +32,26 @@ class EvaApp:
             client=self._ai_client,
             model_name=settings.model_name,
         )
+
+        self._image_client: ImageClient | None = None
+        self._image_service: ImageGenerationService | None = None
+        if settings.image_api_key:
+            self._image_client = ImageClient(
+                api_key=settings.image_api_key,
+                base_url=settings.image_api_base_url,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+            self._image_service = ImageGenerationService(
+                client=self._image_client,
+                detector=ImageDetector(
+                    client=self._ai_client,
+                    model_name=settings.model_name,
+                ),
+                model_name=settings.image_model_name,
+                language=settings.image_language,
+                incognito=settings.image_incognito,
+            )
+
         self._search_client: SerperClient | None = None
         self._search_service: SearchService | None = None
         self._search_response_service: SearchResponseService | None = None
@@ -60,6 +81,7 @@ class EvaApp:
         )
         self._reply_generation_service = ReplyGenerationService(
             response_service=self._response_service,
+            image_service=self._image_service,
             search_service=self._search_service,
             search_response_service=self._search_response_service,
             tos_check_service=self._tos_check_service,
@@ -82,6 +104,8 @@ class EvaApp:
     async def _run(self) -> None:
         logger.info("Starting Eva app")
         await self._ai_client.start()
+        if self._image_client is not None:
+            await self._image_client.start()
         if self._search_client is not None:
             await self._search_client.start()
         try:
@@ -89,4 +113,6 @@ class EvaApp:
         finally:
             if self._search_client is not None:
                 await self._search_client.close()
+            if self._image_client is not None:
+                await self._image_client.close()
             await self._ai_client.close()

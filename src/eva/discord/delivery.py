@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 from dataclasses import dataclass, field
 
@@ -17,9 +18,25 @@ class DeliveryResult:
     had_continuation_failures: bool = False
 
 
-async def safe_edit(message: discord.Message, content: str) -> bool:
+def _build_files(attachments: list[tuple[str, bytes]]) -> list[discord.File]:
+    files: list[discord.File] = []
+    for filename, data in attachments:
+        files.append(discord.File(fp=io.BytesIO(data), filename=filename))
+    return files
+
+
+async def safe_edit(
+    message: discord.Message,
+    content: str,
+    *,
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> bool:
     try:
-        await message.edit(content=content, suppress=True)
+        if attachments:
+            files = _build_files(attachments)
+            await message.edit(content=content, suppress=True, attachments=files)
+        else:
+            await message.edit(content=content, suppress=True)
         return True
     except Exception:
         logger.exception("Failed to edit message")
@@ -29,11 +46,16 @@ async def safe_edit(message: discord.Message, content: str) -> bool:
 async def safe_send(
     channel: discord.abc.Messageable,
     content: str,
+    *,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> discord.Message | None:
     send = getattr(channel, "send", None)
     if send is None:
         return None
     try:
+        if attachments:
+            files = _build_files(attachments)
+            return await send(content=content, files=files, suppress_embeds=True)
         return await send(content=content, suppress_embeds=True)
     except Exception:
         logger.exception("Failed to send continuation message")
@@ -43,8 +65,13 @@ async def safe_send(
 async def safe_reply(
     message: discord.Message,
     content: str,
+    *,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> discord.Message | None:
     try:
+        if attachments:
+            files = _build_files(attachments)
+            return await message.reply(content=content, files=files, suppress_embeds=True)
         return await message.reply(content=content, suppress_embeds=True)
     except Exception:
         logger.exception("Failed to reply to message")
@@ -63,9 +90,14 @@ async def deliver_owner_response(
     message: discord.Message,
     original_content: str,
     reply_content: str,
+    reply_attachments: list[tuple[str, bytes]] | None = None,
 ) -> DeliveryResult:
     response_chunks = build_response_chunks(original_content, reply_content)
-    primary_delivered = await safe_edit(message, response_chunks[0])
+    primary_delivered = await safe_edit(
+        message,
+        response_chunks[0],
+        attachments=reply_attachments,
+    )
     if not primary_delivered:
         return DeliveryResult(primary_delivered=False)
 
@@ -89,9 +121,10 @@ async def deliver_reply_response(
     *,
     message: discord.Message,
     reply_content: str,
+    reply_attachments: list[tuple[str, bytes]] | None = None,
 ) -> DeliveryResult:
     chunks = build_plain_response_chunks(reply_content)
-    first = await safe_reply(message, chunks[0])
+    first = await safe_reply(message, chunks[0], attachments=reply_attachments)
     if first is None:
         return DeliveryResult(primary_delivered=False)
 

@@ -7,6 +7,7 @@ import time
 import discord
 
 from eva.ai import AIClientError, ReplyGenerationService
+from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.constants import WARNING_MARK
 from eva.discord.commands import handle_whitelist_command, is_admin_user
@@ -95,6 +96,7 @@ class SelfbotMessageHandler:
                 channel_id=channel_id,
                 user_query=decision.user_query,
                 reply_context=reply_context,
+                allow_image_generation=not decision.is_reply_trigger,
             )
         else:
             await self._process_whitelisted_user_flow(
@@ -103,6 +105,7 @@ class SelfbotMessageHandler:
                 channel_id=channel_id,
                 user_query=decision.user_query,
                 reply_context=reply_context,
+                allow_image_generation=not decision.is_reply_trigger,
             )
 
     async def _process_response_flow(
@@ -114,6 +117,7 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
+        allow_image_generation: bool,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -135,10 +139,11 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
+                    allow_image_generation=allow_image_generation,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
-            ai_reply = f"{WARNING_MARK} AI error: {exc}"
+            ai_reply = ReplyOutput(content=f"{WARNING_MARK} AI error: {exc}", attachments=[])
 
         elapsed = time.monotonic() - edit_started
         if elapsed < self._settings.min_loading_seconds:
@@ -147,14 +152,15 @@ class SelfbotMessageHandler:
         delivery_result = await deliver_owner_response(
             message=message,
             original_content=original_content,
-            reply_content=ai_reply,
+            reply_content=ai_reply.content,
+            reply_attachments=ai_reply.attachments,
         )
         for message_id in delivery_result.tracked_message_ids:
             self._tracked_messages.add(message_id)
 
         if delivery_result.primary_delivered:
             stored_user_message = _build_stored_user_message(user_query, reply_context)
-            self._history_store.append_exchange(channel_id, stored_user_message, ai_reply)
+            self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
 
     async def _process_whitelisted_user_flow(
         self,
@@ -164,6 +170,7 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
+        allow_image_generation: bool,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -181,21 +188,23 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
+                    allow_image_generation=allow_image_generation,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
-            ai_reply = f"{WARNING_MARK} AI error: {exc}"
+            ai_reply = ReplyOutput(content=f"{WARNING_MARK} AI error: {exc}", attachments=[])
 
         delivery_result = await deliver_reply_response(
             message=message,
-            reply_content=ai_reply,
+            reply_content=ai_reply.content,
+            reply_attachments=ai_reply.attachments,
         )
         for message_id in delivery_result.tracked_message_ids:
             self._tracked_messages.add(message_id)
 
         if delivery_result.primary_delivered:
             stored_user_message = _build_stored_user_message(user_query, reply_context)
-            self._history_store.append_exchange(channel_id, stored_user_message, ai_reply)
+            self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
 
 
 def _build_stored_user_message(user_query: str, reply_context: str | None) -> str:
