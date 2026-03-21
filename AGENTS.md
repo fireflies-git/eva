@@ -22,6 +22,193 @@ uv run pyright
 
 Do not treat one as a replacement for the other.
 
+## Clean Code Style
+
+This repo prefers boring, explicit, readable code over clever code.
+
+The standard to aim for:
+- small functions with one job
+- early returns over deep nesting
+- explicit names over abbreviated names
+- helpers for repeated logic
+- thin orchestration, thick domain helpers
+- behavior encoded in Python, not hidden in prompt wording
+
+### Prefer small focused helpers
+
+If a function is doing parsing, authorization, formatting, and state mutation all at once,
+split it.
+
+Good:
+
+```python
+def _parse_target_id(*, content: str, parts: list[str]) -> int | None:
+    mention_match = _MENTION_RE.search(content)
+    if mention_match is not None:
+        return int(mention_match.group(1))
+    if len(parts) >= 3 and parts[2].isdigit():
+        return int(parts[2])
+    return None
+```
+
+Bad:
+
+```python
+async def handle_command(...) -> bool:
+    ...
+    if mention_match is not None:
+        ...
+    elif len(parts) >= 3 and parts[2].isdigit():
+        ...
+    else:
+        ...
+    if subcommand == "add":
+        ...
+    else:
+        ...
+```
+
+### Prefer early returns
+
+Reduce indentation whenever possible.
+
+Good:
+
+```python
+if not decision.should_generate:
+    return None
+
+if not prompt:
+    raise ImageClientError("Image prompt is empty")
+```
+
+Bad:
+
+```python
+if decision.should_generate:
+    if prompt:
+        ...
+```
+
+### Keep orchestration readable
+
+Top-level flow functions should read like a checklist.
+
+Good `handlers.py` / `orchestrator.py` style:
+- gather inputs
+- call one helper per step
+- handle failures clearly
+- persist only after success
+
+Bad:
+- inline parsing
+- inline formatting
+- inline permission logic
+- inline HTTP-specific behavior
+
+### Name things by responsibility
+
+Prefer names that tell the reader what layer a function belongs to.
+
+Good:
+- `parse_trigger`
+- `handle_whitelist_command`
+- `fetch_reply_context`
+- `deliver_owner_response`
+- `build_image_generation_prompt`
+
+Avoid vague names like:
+- `process`
+- `handle`
+- `run`
+- `do_stuff`
+
+unless the surrounding type already makes the role obvious.
+
+### Keep branches symmetrical
+
+When two branches do similar work, keep the structure aligned.
+
+Good:
+- owner flow and whitelisted-user flow both gather context, call the orchestrator, deliver, then persist
+
+Bad:
+- one branch updates history before delivery
+- the other updates history after delivery
+- one branch chunks responses in a helper and the other hand-rolls it inline
+
+### Prefer explicit data shaping at boundaries
+
+When crossing a boundary between layers, normalize data once.
+
+Examples:
+- API JSON -> dataclass / typed object in client code
+- Discord trigger text -> `TriggerDecision`
+- AI reply -> `ReplyOutput`
+
+Do not leak raw dicts or partially normalized payloads deep into the app.
+
+### Extract repeated strings and tiny policy knobs when shared
+
+If the same small limit or status string matters in multiple places, move it to
+`src/eva/constants.py`.
+
+Good:
+
+```python
+MAX_IMAGE_URLS = 4
+MAX_SEARCH_RESULTS = 5
+```
+
+Bad:
+
+```python
+for image in results.images[:4]:
+    ...
+```
+
+But keep large prompt bodies and one-off regexes local to their modules unless they are reused.
+
+### Write comments sparingly
+
+Comments should explain non-obvious intent, not restate code.
+
+Good:
+
+```python
+# If upload/download failed, fall back to URLs so Discord can still render embeds.
+```
+
+Bad:
+
+```python
+# Loop through images
+for image in images:
+```
+
+### Make invalid states obvious
+
+If something should not happen, fail clearly near the boundary where it becomes invalid.
+
+Examples:
+- malformed image API payload -> reject in `src/eva/images/client.py`
+- empty image prompt -> reject in `src/eva/images/service.py`
+- invalid YES/NO model output -> parse to `None`, then handle explicitly
+
+Do not silently reinterpret obviously bad states unless that fallback is an intentional product decision.
+
+### Prefer consistency over local cleverness
+
+If there is already an established pattern in the repo, follow it even if another pattern would also work.
+
+Examples:
+- use prompt helpers under `src/eva/prompts/*`
+- use protocols at service boundaries
+- use targeted unit tests with small fakes
+- use markdown-friendly output shaping in the orchestrator
+
+New code should feel like it belongs next to the surrounding file.
+
 ## Common Commands
 
 Use the repo commands that actually exist today:
@@ -62,6 +249,8 @@ The repo is intentionally split by responsibility:
   AI transport, orchestration, response shaping, moderation/search decision parsing.
 - `src/eva/search/*`
   Search detection, search query rewriting, search HTTP client, result normalization.
+- `src/eva/images/*`
+  Image-generation detection, image API transport, response validation, and asset handling.
 - `src/eva/prompts/*`
   Prompt text and prompt composition only.
 - `src/eva/state/*`
@@ -93,6 +282,8 @@ Keep file roles sharp. Avoid “convenience” code that blurs module boundaries
   `src/eva/ai/respond.py`
 - Search detection, search rewrite, and search API handling:
   `src/eva/search/*`
+- Image detection, image API validation, and image asset download handling:
+  `src/eva/images/*`
 
 ### Keep `app.py` thin
 
@@ -233,6 +424,21 @@ A valid trigger format should never imply permission.
 
 Always keep the owner/whitelist gate as an early return in `on_message()`.
 
+### Admin IDs bypass the whitelist gate
+
+The current top-level message gate treats hardcoded admins as allowed users even if they are not in
+`whitelist.json`.
+
+That means:
+- owner -> always allowed
+- `ALLOWED_ADMIN_IDS` -> allowed to chat and use commands without whitelist membership
+- whitelisted users -> allowed
+- everyone else -> ignored
+
+If you change admin handling, verify both:
+- admin users can still send normal prompts like `eva hello` without being added to the whitelist
+- whitelist command permissions still behave the same
+
 ### Reply chaining is stateful
 
 Reply chaining depends on `TrackedMessageStore`.
@@ -240,6 +446,17 @@ Reply chaining depends on `TrackedMessageStore`.
 If you change how Eva emits messages, verify reply-triggering still works for:
 - owner replies
 - whitelisted user replies
+
+### Reply triggers must not invoke image generation
+
+Tracked replies are allowed to continue normal text conversations, but they should not trigger the
+image-generation path.
+
+Current rule:
+- explicit prefix or leading mention -> image generation may run
+- tracked reply trigger -> image generation is disabled, text flow continues normally
+
+If you change trigger semantics, preserve this rule unless image replies are intentionally being redesigned.
 
 ### Mention behavior should stay narrow
 
@@ -276,6 +493,7 @@ If you touch whitelist behavior, document and preserve:
 - who can `list`
 - who can `add/remove`
 - whether admin IDs are hardcoded or config-driven
+- whether admin IDs bypass general chat access as well as whitelist mutation checks
 
 Avoid adding more hardcoded privilege rules inline in the handler. Keep them inside `commands.py` unless
 admin behavior is explicitly being redesigned.
@@ -310,6 +528,7 @@ Do not concatenate ad hoc prompt fragments deep inside runtime code.
 - runtime context -> `src/eva/prompts/context.py`
 - security/jailbreak rules -> `src/eva/prompts/security.py`
 - search answer formatting -> `src/eva/prompts/search.py`
+- image detection and image prompt helpers -> `src/eva/prompts/image.py`
 
 Do not mix these concerns together unless the behavior is intentionally coupled.
 
@@ -322,7 +541,17 @@ If you tune tone:
 - avoid repeated filler habits
 - do not bury behavior-only fixes in prompt text when the real logic belongs in Python
 
-## AI and Search Rules
+### Image prompt rules belong in `prompts/image.py`
+
+Do not keep image detector system prompts or image prompt-construction templates inline inside
+`src/eva/images/detector.py` or `src/eva/images/service.py`.
+
+Keep these separate:
+- image detection prompt text
+- image-generation prompt construction for referential follow-ups
+- Python logic deciding whether reply context is required
+
+## AI, Search, and Image Rules
 
 ### Keep transport clients dumb
 
@@ -333,12 +562,19 @@ If you tune tone:
 
 Do **not** move routing, policy, prompt logic, or fallback behavior into transport clients.
 
+The same applies to `src/eva/images/client.py`:
+- do HTTP
+- normalize the payload
+- reject malformed or non-generated image responses
+- do not move trigger policy or Discord formatting there
+
 ### Keep orchestration explicit
 
 `src/eva/ai/orchestrator.py` owns:
 - search vs normal reply routing
 - moderation sequencing
 - fail-open vs fail-closed behavior at the orchestration level
+- final image reply text shaping for Discord
 
 If you change fallback behavior, do it deliberately and update tests.
 
@@ -359,6 +595,8 @@ Use `src/eva/ai/parsing.py` and preserve the `bool | None` contract for ambiguou
 Today:
 - search failures fail closed to a warning message
 - moderation model failures fail open by returning `False`
+- image API failures fail closed to a warning message
+- image download failures fall back to URL-only image results when the payload still looks valid
 
 Treat those as product decisions, not incidental implementation details.
 
@@ -367,6 +605,70 @@ Treat those as product decisions, not incidental implementation details.
 Search-grounded answer rules belong in the search prompt and search services.
 
 Do not blend search-specific formatting policy into the general persona prompt.
+
+### Image generation is its own mode with real provider quirks
+
+Image generation should remain separate from both normal chat and search.
+
+Keep these responsibilities distinct:
+- `src/eva/images/detector.py`
+  decides whether the user explicitly asked for an image
+- `src/eva/images/service.py`
+  builds the final generation prompt and downloads generated assets
+- `src/eva/images/client.py`
+  validates whether `/images` really returned generated media
+- `src/eva/ai/orchestrator.py`
+  decides how to present successful image output in Discord
+
+### `/images` responses must be validated, not trusted blindly
+
+Real upstream behavior is inconsistent.
+
+Observed behavior from live requests:
+- successful generated results usually return:
+  - `answer` like `Media generated: '...'`
+  - `images[0].source == "seedream-router"`
+  - `images[0].generation_model == "seedream"`
+  - `images[0].prompt == null`
+  - `download_url` may be `null`
+- some conversational prompts can return HTTP `200` with `image_generation: true` but only web/youtube
+  search-style image results and a text answer instead of real generated media
+
+Because of that:
+- do not assume `HTTP 200` means “good generated image”
+- do not assume `image_generation: true` means the images are valid generated assets
+- validate generated image payloads in `src/eva/images/client.py`
+- reject non-generated-looking image arrays before they reach Discord delivery logic
+
+### Use `answer` as the primary image description
+
+Do not rely on `images[0].prompt` for user-facing output.
+
+Observed live behavior:
+- `answer` is the stable place where the generated description appears
+- `images[0].prompt` is often `null`
+
+Current Discord output should be derived from `answer`, with the canned
+`Media generated: '...'` wrapper normalized into a blockquote-style description.
+
+### `download_url` is optional
+
+When handling generated images:
+- use `download_url or url`
+- do not assume a dedicated download URL exists
+- preserve graceful fallback when only direct asset URLs are available
+
+### Keep the detector conservative and explicit
+
+The upstream `/images` endpoint can misroute soft conversational requests like:
+- “create me a suitable pfp”
+
+These can come back as search-like image collections instead of actual generated media.
+
+So:
+- keep image detection conservative
+- prefer explicit prompts such as “generate an image of ...”
+- do not broaden image triggering with vague heuristics unless you also add stronger validation and tests
 
 ## State Rules
 
@@ -398,6 +700,7 @@ Add tests whenever you change:
 - async/sync contracts
 - constructor signatures
 - search/mode routing
+- image routing or image response validation
 - moderation behavior
 - typed message construction
 
@@ -408,6 +711,12 @@ For any new branch or helper, add:
 - one negative case
 - one malformed/empty-input case
 - one failure-path case if AI/network behavior is involved
+
+For image-related changes, strongly prefer direct tests at the image layer:
+- `tests/unit/test_image_detector.py`
+- `tests/unit/test_image_client.py`
+- `tests/unit/test_image_service.py`
+- then one orchestration regression in `tests/unit/test_reply_generation.py` if the Discord-visible output changes
 
 ### Prefer helper tests for helper logic
 
@@ -441,6 +750,12 @@ Edit these carefully and verify behavior after changes:
   Prompt payload shape and token budgets live here.
 - `src/eva/search/detector.py`
   Small changes affect cost, latency, and whether Eva searches at all.
+- `src/eva/images/client.py`
+  Response validation here determines whether weird upstream `/images` payloads are treated as success or failure.
+- `src/eva/images/service.py`
+  Prompt construction and asset download fallback behavior live here.
+- `src/eva/prompts/image.py`
+  Small wording changes can change when image generation runs and how referential prompts are built.
 
 ## Anti-Patterns to Avoid
 
@@ -455,6 +770,9 @@ Edit these carefully and verify behavior after changes:
 - catching broad exceptions without logging
 - hiding behavior changes only in prompt wording without tests
 - letting prompt text become the only enforcement mechanism for routing or safety
+- treating any `/images` HTTP 200 payload as a valid generated-image success
+- relying on `images[0].prompt` for image reply text
+- letting tracked replies invoke image generation
 
 ## Practical “Ready to Commit” Checklist
 
@@ -467,6 +785,7 @@ Edit these carefully and verify behavior after changes:
 - read-only collections use `Sequence[...]`
 - `ChatMessage` lists are typed explicitly where needed
 - trigger/whitelist/search changes have targeted unit tests
+- image changes have targeted client/service/orchestrator tests
 - `uv run lint` passes
 - `uv run pytest -q` passes
 - `uv run pyright` passes
