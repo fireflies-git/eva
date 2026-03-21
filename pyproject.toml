@@ -18,7 +18,7 @@ build = "eva.cli:run_build"
 
 [dependency-groups]
 dev = [
-    "pyright>=1.1.408",
+    "ty>=0.0.24",
     "pytest>=9.0.2",
     "ruff>=0.15.4",
     "nuitka>=2.5.4",
@@ -33,3 +33,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ty.environment]
+python = ".venv"
+python-version = "3.12"
+root = ["src"]
