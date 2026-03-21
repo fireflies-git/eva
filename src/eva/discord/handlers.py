@@ -91,7 +91,10 @@ class SelfbotMessageHandler:
         reply_context = await fetch_reply_context(message)
         requester_context = build_requester_context(message)
         interaction_logger.info(
-            "incoming channel_id=%s message_id=%s author_id=%s reply_trigger=%s query=%r requester=%r",
+            (
+                "incoming channel_id=%s message_id=%s author_id=%s "
+                "reply_trigger=%s query=%r requester=%r"
+            ),
             channel_id,
             message.id,
             message.author.id,
