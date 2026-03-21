@@ -26,6 +26,7 @@ class ImageResultBundle:
     id: str = ""
     model: str = ""
     prompt: str = ""
+    image_generation: bool = False
     images: list[GeneratedImage] = field(default_factory=list)
     assets: list[GeneratedImageAsset] = field(default_factory=list)
     answer: str = ""

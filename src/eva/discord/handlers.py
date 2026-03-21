@@ -96,6 +96,7 @@ class SelfbotMessageHandler:
                 channel_id=channel_id,
                 user_query=decision.user_query,
                 reply_context=reply_context,
+                allow_image_generation=not decision.is_reply_trigger,
             )
         else:
             await self._process_whitelisted_user_flow(
@@ -104,6 +105,7 @@ class SelfbotMessageHandler:
                 channel_id=channel_id,
                 user_query=decision.user_query,
                 reply_context=reply_context,
+                allow_image_generation=not decision.is_reply_trigger,
             )
 
     async def _process_response_flow(
@@ -115,6 +117,7 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
+        allow_image_generation: bool,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -136,6 +139,7 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
+                    allow_image_generation=allow_image_generation,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -166,6 +170,7 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
+        allow_image_generation: bool,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -183,6 +188,7 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
+                    allow_image_generation=allow_image_generation,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")

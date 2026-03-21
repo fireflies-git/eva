@@ -13,18 +13,7 @@ from eva.ai.client import AIClientError, ChatCompletionClient
 from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.schemas import ChatMessage
 from eva.constants import MAX_IMAGE_DECISION_CONTEXT_MESSAGES
-
-_SYSTEM_PROMPT = (
-    "You decide whether an image should be generated in response to a message "
-    "in a Discord chat.\n\n"
-    "Reply with exactly YES or NO — nothing else.\n\n"
-    "Reply YES only if the user explicitly requests an image, picture, photo, artwork, or drawing, "
-    "or uses clear directives like 'generate an image', 'draw', 'create a picture', 'make art', "
-    "or 'make a thumbnail'.\n\n"
-    "Reply NO if the user is asking for text-only information, explanations, code, "
-    "or anything that does not clearly request an image to be produced.\n\n"
-    "Be conservative. If unsure, reply NO."
-)
+from eva.prompts import build_image_decision_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +40,7 @@ class ImageDetector:
         try:
             response = await self._client.chat_completion(
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": build_image_decision_prompt()},
                     {"role": "user", "content": input_text},
                 ],
                 model=self._model_name,

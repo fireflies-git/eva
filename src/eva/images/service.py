@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from eva.ai.schemas import ChatMessage
-from eva.constants import MAX_IMAGE_UPLOAD_BYTES
+from eva.constants import MAX_IMAGE_UPLOAD_BYTES, MAX_IMAGE_URLS
 from eva.images.client import ImageClient, ImageClientError
 from eva.images.detector import ImageDetector
 from eva.images.schemas import GeneratedImageAsset, ImageResultBundle
+from eva.prompts import build_image_generation_prompt
 
 
 class ImageGenerationService:
@@ -40,7 +41,10 @@ class ImageGenerationService:
         if not decision.should_generate:
             return None
 
-        prompt = user_message.strip()
+        prompt = build_image_generation_prompt(
+            user_message=user_message,
+            reply_context=reply_context,
+        )
         if not prompt:
             raise ImageClientError("Image prompt is empty")
 
@@ -53,23 +57,35 @@ class ImageGenerationService:
         if not result.images:
             raise ImageClientError("Image generation returned no usable images")
 
-        primary = result.images[0]
-        download_url = (primary.download_url or primary.url).strip()
-        try:
-            raw, content_type, filename = await self._client.download_asset(
-                url=download_url,
-                filename_hint="eva-image",
-                max_bytes=MAX_IMAGE_UPLOAD_BYTES,
+        assets: list[GeneratedImageAsset] = []
+        for index, image in enumerate(result.images[:MAX_IMAGE_URLS], start=1):
+            download_url = (image.download_url or image.url).strip()
+            try:
+                raw, content_type, filename = await self._client.download_asset(
+                    url=download_url,
+                    filename_hint=f"eva-image-{index}",
+                    max_bytes=MAX_IMAGE_UPLOAD_BYTES,
+                )
+            except ImageClientError:
+                continue
+
+            assets.append(
+                GeneratedImageAsset(
+                    filename=filename,
+                    data=raw,
+                    mime_type=content_type,
+                )
             )
-        except ImageClientError:
+
+        if not assets:
             return result
 
-        asset = GeneratedImageAsset(filename=filename, data=raw, mime_type=content_type)
         return ImageResultBundle(
             id=result.id,
             model=result.model,
             prompt=result.prompt,
+            image_generation=result.image_generation,
             images=result.images,
-            assets=[asset],
+            assets=assets,
             answer=result.answer,
         )

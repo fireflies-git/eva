@@ -13,6 +13,9 @@ class ImageClientError(RuntimeError):
     pass
 
 
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({502, 503, 504})
+
+
 class ImageClient:
     def __init__(
         self,
@@ -51,6 +54,7 @@ class ImageClient:
             id=self._string_or_empty(data.get("id")),
             model=self._string_or_empty(data.get("model")),
             prompt=self._string_or_empty(data.get("prompt")),
+            image_generation=self._bool_or_false(data.get("image_generation")),
             answer=self._string_or_empty(data.get("answer")),
             images=self._build_images(data),
         )
@@ -70,7 +74,11 @@ class ImageClient:
                 if response.status != 200:
                     text = await response.text()
                     raise ImageClientError(
-                        f"Image download error HTTP {response.status}: {text[:300]}"
+                        self._format_http_error(
+                            prefix="Image download error",
+                            status=response.status,
+                            body=text,
+                        )
                     )
 
                 content_type = response.headers.get("Content-Type")
@@ -119,11 +127,18 @@ class ImageClient:
             async with self._session.post(url, headers=headers, json=payload) as response:
                 text = await response.text()
                 if response.status != 200:
-                    raise ImageClientError(f"Image API error HTTP {response.status}: {text[:300]}")
+                    raise ImageClientError(
+                        self._format_http_error(
+                            prefix="Image API error",
+                            status=response.status,
+                            body=text,
+                        )
+                    )
                 try:
                     data = await response.json()
                 except Exception as exc:
-                    raise ImageClientError(f"Invalid image JSON response: {text[:300]}") from exc
+                    excerpt = self._compact_error_body(text)
+                    raise ImageClientError(f"Invalid image JSON response: {excerpt}") from exc
                 if not isinstance(data, dict):
                     raise ImageClientError("Invalid image API response type")
                 return data
@@ -144,17 +159,20 @@ class ImageClient:
             url = self._string_or_none(item.get("url"))
             if not url:
                 continue
-            images.append(
-                GeneratedImage(
-                    url=url,
-                    thumbnail_url=self._string_or_none(item.get("thumbnail_url")),
-                    download_url=self._string_or_none(item.get("download_url")),
-                    mime_type=self._string_or_none(item.get("mime_type")),
-                    source=self._string_or_none(item.get("source")),
-                    generation_model=self._string_or_none(item.get("generation_model")),
-                    prompt=self._string_or_none(item.get("prompt")),
-                )
+            image = GeneratedImage(
+                url=url,
+                thumbnail_url=self._string_or_none(item.get("thumbnail_url")),
+                download_url=self._string_or_none(item.get("download_url")),
+                mime_type=self._string_or_none(item.get("mime_type")),
+                source=self._string_or_none(item.get("source")),
+                generation_model=self._string_or_none(item.get("generation_model")),
+                prompt=self._string_or_none(item.get("prompt")),
             )
+            if self._looks_like_generated_image(image):
+                images.append(image)
+
+        if raw and not images:
+            raise ImageClientError("Image API returned non-generated image results")
         return images
 
     def _string_or_none(self, value: Any) -> str | None:
@@ -165,6 +183,9 @@ class ImageClient:
 
     def _string_or_empty(self, value: Any) -> str:
         return self._string_or_none(value) or ""
+
+    def _bool_or_false(self, value: Any) -> bool:
+        return value is True
 
     def _pick_filename(
         self,
@@ -206,3 +227,30 @@ class ImageClient:
         if ext in {"png", "jpg", "jpeg", "webp", "gif"}:
             return "jpg" if ext == "jpeg" else ext
         return None
+
+    def _looks_like_generated_image(self, image: GeneratedImage) -> bool:
+        if image.generation_model:
+            return True
+        if image.source and image.source.endswith("-router"):
+            return True
+
+        try:
+            parsed = urlparse(image.url)
+        except Exception:
+            return False
+
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        return "user-gen-media-assets" in host or "seedream_images" in path
+
+    def _format_http_error(self, *, prefix: str, status: int, body: str) -> str:
+        if status in _TRANSIENT_HTTP_STATUS_CODES:
+            return f"{prefix} HTTP {status}: upstream service temporarily unavailable"
+        excerpt = self._compact_error_body(body)
+        return f"{prefix} HTTP {status}: {excerpt}"
+
+    def _compact_error_body(self, body: str) -> str:
+        compact = " ".join(body.split())
+        if not compact:
+            return "empty response body"
+        return compact[:300]

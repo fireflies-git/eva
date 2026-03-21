@@ -8,7 +8,7 @@ from eva.ai.orchestrator import (
     SEARCH_FAILURE_MESSAGE,
     ReplyGenerationService,
 )
-from eva.images import GeneratedImageAsset, ImageClientError, ImageResultBundle
+from eva.images import GeneratedImage, GeneratedImageAsset, ImageClientError, ImageResultBundle
 from eva.search import SearchClientError, SearchResultBundle
 
 
@@ -75,8 +75,10 @@ class StubImageService:
     ) -> None:
         self.result = result
         self.error = error
+        self.calls: list[dict[str, object]] = []
 
     async def generate_if_needed(self, **kwargs: object) -> ImageResultBundle | None:
+        self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
         return self.result
@@ -217,11 +219,43 @@ def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
         )
     )
 
-    assert reply.content == "Media generated: 'fox'"
+    assert reply.content == "> fox"
     assert reply.attachments == [("fox.png", b"png-bytes")]
     assert response_service.calls == []
     assert search_response_service.calls == []
-    assert tos_service.calls == ["Media generated: 'fox'"]
+    assert tos_service.calls == ["> fox"]
+
+
+def test_reply_generation_formats_image_url_fallback_as_blockquote() -> None:
+    reply_service = ReplyGenerationService(
+        response_service=StubResponseService("normal"),
+        image_service=StubImageService(
+            result=ImageResultBundle(
+                answer="Media generated: 'A realistic chocolate chip cookie on a wooden table'",
+                images=[GeneratedImage(url="https://example.com/cookie.png")],
+            )
+        ),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="generate an image of a cookie",
+            reply_context=None,
+        )
+    )
+
+    assert (
+        reply.content
+        == "> A realistic chocolate chip cookie on a wooden table\nhttps://example.com/cookie.png"
+    )
+    assert reply.attachments == []
 
 
 def test_reply_generation_fails_closed_when_image_generation_errors() -> None:
@@ -246,3 +280,37 @@ def test_reply_generation_fails_closed_when_image_generation_errors() -> None:
 
     assert reply.content == IMAGE_FAILURE_MESSAGE
     assert reply.attachments == []
+
+
+def test_reply_generation_skips_image_path_for_reply_trigger() -> None:
+    response_service = StubResponseService("normal")
+    image_service = StubImageService(
+        result=ImageResultBundle(
+            answer="Media generated: 'fox'",
+            assets=[GeneratedImageAsset(filename="fox.png", data=b"png-bytes")],
+        )
+    )
+    reply_service = ReplyGenerationService(
+        response_service=response_service,
+        image_service=image_service,
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="make it blue",
+            reply_context="A red fox in the rain",
+            allow_image_generation=False,
+        )
+    )
+
+    assert reply.content == "normal"
+    assert reply.attachments == []
+    assert image_service.calls == []
+    assert len(response_service.calls) == 1

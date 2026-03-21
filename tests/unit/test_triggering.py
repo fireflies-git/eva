@@ -16,6 +16,7 @@ def test_parse_trigger_with_prefix_message() -> None:
     )
     assert result.should_process is True
     assert result.user_query == "tell me a joke"
+    assert result.is_reply_trigger is False
 
 
 def test_parse_trigger_reply_retrigger() -> None:
@@ -27,6 +28,7 @@ def test_parse_trigger_reply_retrigger() -> None:
     )
     assert result.should_process is True
     assert result.user_query == "continue that"
+    assert result.is_reply_trigger is True
 
 
 def test_parse_trigger_non_match() -> None:
@@ -58,6 +60,7 @@ def test_parse_trigger_with_user_mention() -> None:
     )
     assert result.should_process is True
     assert result.user_query == "tell me a joke"
+    assert result.is_reply_trigger is False
 
 
 def test_parse_trigger_empty_query_after_mention() -> None:

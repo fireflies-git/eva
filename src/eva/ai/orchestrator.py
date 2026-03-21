@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 SEARCH_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't verify that with search right now."
 IMAGE_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't generate an image right now."
+_IMAGE_ANSWER_PREFIX = "media generated:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,11 +100,13 @@ class ReplyGenerationService:
         history_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        allow_image_generation: bool = True,
     ) -> ReplyOutput:
         image_results = await self._run_image_if_needed(
             context_messages=context_messages,
             user_message=user_message,
             reply_context=reply_context,
+            allow_image_generation=allow_image_generation,
         )
 
         if image_results is not None:
@@ -152,8 +155,9 @@ class ReplyGenerationService:
         context_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        allow_image_generation: bool,
     ) -> ImageResultBundle | None:
-        if self._image_service is None:
+        if self._image_service is None or not allow_image_generation:
             return None
         try:
             return await self._image_service.generate_if_needed(
@@ -170,7 +174,7 @@ class ReplyGenerationService:
             return ReplyOutput(content=IMAGE_FAILURE_MESSAGE, attachments=[])
 
         answer = (results.answer or "").strip()
-        content = answer or "Media generated."
+        content = _format_image_reply_text(answer)
 
         attachments: list[tuple[str, bytes]] = []
         for asset in results.assets[:MAX_IMAGE_URLS]:
@@ -237,3 +241,23 @@ class ReplyGenerationService:
         except AIClientError:
             logger.exception("Search response generation failed")
             return SEARCH_FAILURE_MESSAGE
+
+
+def _format_image_reply_text(answer: str) -> str:
+    if not answer:
+        return "Media generated."
+
+    normalized = answer.strip()
+    lowered = normalized.lower()
+    if lowered.startswith(_IMAGE_ANSWER_PREFIX):
+        description = normalized[len(_IMAGE_ANSWER_PREFIX) :].strip()
+        if description:
+            return f"> {_strip_wrapping_quotes(description)}"
+
+    return normalized
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
+        return text[1:-1].strip()
+    return text
