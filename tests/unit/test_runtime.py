@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from eva.runtime import (
+    _build_menu_frame,
     apply_menu_key,
     get_env_search_paths,
     get_resolved_env_path,
@@ -76,3 +77,19 @@ def test_resolved_env_path_prefers_explicit_env_path(monkeypatch, tmp_path: Path
 
     assert search_paths == [explicit.resolve()]
     assert resolved == explicit.resolve()
+
+
+def test_menu_frame_places_options_near_bottom() -> None:
+    options = ["Run Eva", "Setup .env", "Show interaction logs", "Exit"]
+    frame = _build_menu_frame(
+        options=options,
+        selected=1,
+        width=80,
+        height=24,
+        supports_ansi=False,
+    )
+
+    non_empty_lines = [index for index, value in enumerate(frame) if value.strip()]
+    assert non_empty_lines
+    assert max(non_empty_lines) >= 22
+    assert "Setup .env" in frame[20] or "Setup .env" in frame[21] or "Setup .env" in frame[22]

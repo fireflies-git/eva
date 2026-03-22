@@ -8,18 +8,20 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from colorama import Fore, Style
+from colorama import init as colorama_init
+
 _ASCII_LOGO = (
-    "  eeeee  vv   vv   aaaa  ",
-    "  ee      vv vv   aa  aa ",
-    "  eeee     vvv    aaaaaa ",
-    "  ee       vv     aa  aa ",
-    "  eeeee    vv     aa  aa ",
+    " ___  __   __   __ _ ",
+    "/ _ \\ \\ \\ / /  / _` |",
+    "|  __/  \\ V /  | (_| |",
+    " \\___|   \\_/    \\__,_|",
 )
 
-_COLOR_BLUE = "\033[38;5;75m"
-_COLOR_PURPLE = "\033[38;5;141m"
-_COLOR_DIM = "\033[38;5;104m"
-_COLOR_RESET = "\033[0m"
+_COLOR_BLUE = Fore.CYAN
+_COLOR_PURPLE = Fore.MAGENTA
+_COLOR_DIM = Fore.BLUE
+_COLOR_RESET = Style.RESET_ALL
 
 MenuReader = Callable[[], str]
 MenuWriter = Callable[[str], None]
@@ -252,25 +254,48 @@ def _render_menu(
     supports_ansi: bool,
 ) -> None:
     width = shutil.get_terminal_size((80, 24)).columns
-    if supports_ansi:
-        write("\033[2J\033[H")
-    else:
-        write("\n" * 10)
+    height = shutil.get_terminal_size((80, 24)).lines
 
-    for line in _ASCII_LOGO:
+    frame = _build_menu_frame(
+        options=options,
+        selected=selected,
+        width=width,
+        height=height,
+        supports_ansi=supports_ansi,
+    )
+
+    if supports_ansi:
+        write("\033[2J\033[H" + "\n".join(frame))
+    else:
+        write("\n".join(frame))
+
+
+def _build_menu_frame(
+    *,
+    options: Sequence[str],
+    selected: int,
+    width: int,
+    height: int,
+    supports_ansi: bool,
+) -> list[str]:
+    safe_height = max(height, 12)
+    lines = [""] * safe_height
+
+    logo_start = max(1, (safe_height // 3) - (len(_ASCII_LOGO) // 2))
+    for index, logo_line in enumerate(_ASCII_LOGO):
+        styled = logo_line
         if supports_ansi:
-            write(_center_text(f"{_COLOR_PURPLE}{line}{_COLOR_RESET}", width))
-        else:
-            write(_center_text(line, width))
+            styled = f"{_COLOR_PURPLE}{logo_line}{_COLOR_RESET}"
+        _set_line(lines, logo_start + index, _center_text(styled, width))
 
-    write("")
     hint = "Use arrow keys and Enter"
+    hint_line = max(logo_start + len(_ASCII_LOGO) + 1, safe_height - len(options) - 3)
+    hint_text = _center_text(hint, width)
     if supports_ansi:
-        write(_center_text(f"{_COLOR_DIM}{hint}{_COLOR_RESET}", width))
-    else:
-        write(_center_text(hint, width))
-    write("")
+        hint_text = _center_text(f"{_COLOR_DIM}{hint}{_COLOR_RESET}", width)
+    _set_line(lines, hint_line, hint_text)
 
+    options_start = max(hint_line + 1, safe_height - len(options) - 1)
     for index, option in enumerate(options):
         marker = ">" if index == selected else " "
         label = f"{marker} {option}"
@@ -278,7 +303,14 @@ def _render_menu(
             label = f"{_COLOR_BLUE}{label}{_COLOR_RESET}"
         elif supports_ansi:
             label = f"{_COLOR_PURPLE}{label}{_COLOR_RESET}"
-        write(_center_text(label, width))
+        _set_line(lines, options_start + index, _center_text(label, width))
+
+    return lines
+
+
+def _set_line(lines: list[str], index: int, content: str) -> None:
+    if 0 <= index < len(lines):
+        lines[index] = content
 
 
 def _center_text(text: str, width: int) -> str:
@@ -305,6 +337,8 @@ def _strip_ansi(text: str) -> str:
 def _enable_ansi_if_supported() -> bool:
     if not sys.stdout.isatty():
         return False
+
+    colorama_init()
     if not sys.platform.startswith("win"):
         return True
 
