@@ -52,15 +52,18 @@ def _build_interaction_file_handler() -> logging.Handler:
     return handler
 
 
-def configure_logging() -> None:
+def configure_logging(*, console_output: bool = True) -> None:
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
     log_format = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
     use_color = sys.stderr.isatty() and os.getenv("NO_COLOR") is None
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(ColorFormatter(log_format, use_color=use_color))
+    handlers: list[logging.Handler] = []
+    if console_output:
+        handler = logging.StreamHandler()
+        handler.setFormatter(ColorFormatter(log_format, use_color=use_color))
+        handlers.append(handler)
 
     interaction_logger = logging.getLogger("eva.interaction")
     interaction_logger.handlers = [_build_interaction_file_handler()]
@@ -69,5 +72,5 @@ def configure_logging() -> None:
 
     logging.basicConfig(
         level=level,
-        handlers=[handler],
+        handlers=handlers,
     )

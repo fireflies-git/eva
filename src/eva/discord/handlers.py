@@ -102,6 +102,11 @@ class SelfbotMessageHandler:
             decision.user_query,
             requester_context,
         )
+        interaction_logger.info(
+            "AI | %s: %s",
+            getattr(message.author, "display_name", "unknown"),
+            original_content,
+        )
 
         if is_owner:
             await self._process_response_flow(

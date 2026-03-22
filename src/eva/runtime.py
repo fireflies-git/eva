@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -217,16 +218,23 @@ def run_menu(
     *,
     options: Sequence[str],
     read_key: MenuReader,
-    write: MenuWriter = print,
+    write: MenuWriter | None = None,
 ) -> int:
+    resolved_write = write or _stdout_write
     supports_ansi = _enable_ansi_if_supported()
     selected = 0
 
     while True:
-        _render_menu(options=options, selected=selected, write=write, supports_ansi=supports_ansi)
+        _render_menu(
+            options=options,
+            selected=selected,
+            write=resolved_write,
+            supports_ansi=supports_ansi,
+        )
         key = read_key()
         selected = apply_menu_key(selected=selected, key=key, options_count=len(options))
         if key == "enter":
+            _show_cursor(write=resolved_write)
             return selected
 
 
@@ -265,9 +273,16 @@ def _render_menu(
     )
 
     if supports_ansi:
-        write("\033[2J\033[H" + "\n".join(frame))
+        _hide_cursor(write=write)
+    _write_screen(frame=frame, write=write, supports_ansi=supports_ansi)
+
+
+def _write_screen(*, frame: Sequence[str], write: MenuWriter, supports_ansi: bool) -> None:
+    content = "\n".join(frame)
+    if supports_ansi:
+        write("\033[2J\033[H" + content)
     else:
-        write("\n".join(frame))
+        write(content)
 
 
 def _build_menu_frame(
@@ -281,8 +296,10 @@ def _build_menu_frame(
     safe_height = max(height, 12)
     lines = [""] * safe_height
 
-    logo_start = max(1, (safe_height // 3) - (len(_ASCII_LOGO) // 2))
-    for index, logo_line in enumerate(_ASCII_LOGO):
+    logo_lines = _normalized_logo_lines()
+
+    logo_start = max(1, (safe_height // 3) - (len(logo_lines) // 2))
+    for index, logo_line in enumerate(logo_lines):
         styled = logo_line
         if supports_ansi:
             styled = f"{_COLOR_PURPLE}{logo_line}{_COLOR_RESET}"
@@ -358,6 +375,210 @@ def _enable_ansi_if_supported() -> bool:
         return True
     except Exception:
         return False
+
+
+def _normalized_logo_lines() -> tuple[str, ...]:
+    max_width = max(len(line) for line in _ASCII_LOGO)
+    return tuple(line.ljust(max_width) for line in _ASCII_LOGO)
+
+
+def _hide_cursor(*, write: MenuWriter) -> None:
+    write("\033[?25l")
+
+
+def _show_cursor(*, write: MenuWriter) -> None:
+    write("\033[?25h")
+
+
+def run_settings_menu(env_path: Path) -> None:
+    values = read_env_values(env_path)
+    supports_ansi = _enable_ansi_if_supported()
+    writer = _stdout_write
+
+    while True:
+        options = [
+            _format_setting_option("Discord token", values.get("DISCORD_TOKEN", ""), secret=True),
+            _format_setting_option("API key", values.get("API_KEY", ""), secret=True),
+            _format_setting_option("Trigger prefix", values.get("TRIGGER_PREFIX", "eva ")),
+            _format_setting_option(
+                "Context messages",
+                values.get("RESPONSE_CONTEXT_MESSAGES", "40"),
+            ),
+            _format_setting_option(
+                "Search API key",
+                values.get("SERPER_API_KEY", ""),
+                secret=True,
+            ),
+            _format_setting_option(
+                "Image API key",
+                values.get("IMAGE_API_KEY", ""),
+                secret=True,
+            ),
+            "Save and return",
+            "Cancel",
+        ]
+        selected = run_menu(options=options, read_key=read_menu_key, write=writer)
+
+        if selected == 6:
+            write_env_values(env_path, _merge_env_values(values))
+            return
+        if selected == 7:
+            return
+
+        field_map = [
+            "DISCORD_TOKEN",
+            "API_KEY",
+            "TRIGGER_PREFIX",
+            "RESPONSE_CONTEXT_MESSAGES",
+            "SERPER_API_KEY",
+            "IMAGE_API_KEY",
+        ]
+        key = field_map[selected]
+        current = values.get(key, _default_for_key(key))
+        _show_cursor(write=writer)
+        prompt = f"\n{key} [{current}]: "
+        new_value = input(prompt).strip()
+        if new_value:
+            values[key] = new_value
+        if supports_ansi:
+            _hide_cursor(write=writer)
+
+
+def _merge_env_values(updates: dict[str, str]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for field in ENV_FIELDS:
+        merged[field.key] = updates.get(field.key, field.default)
+    return merged
+
+
+def _default_for_key(key: str) -> str:
+    for field in ENV_FIELDS:
+        if field.key == key:
+            return field.default
+    return ""
+
+
+def _format_setting_option(label: str, value: str, *, secret: bool = False) -> str:
+    cleaned = value.strip()
+    if secret and cleaned:
+        display = "*" * min(len(cleaned), 8)
+    elif cleaned:
+        display = cleaned
+    else:
+        display = "(not set)"
+    return f"{label}: {display}"
+
+
+def run_live_dashboard(
+    *,
+    account: str,
+    interaction_log_path: Path,
+    on_minimize_to_tray: Callable[[], None],
+    should_exit: Callable[[], bool],
+) -> None:
+    supports_ansi = _enable_ansi_if_supported()
+    writer = _stdout_write
+
+    while not should_exit():
+        recent = tail_text_file(interaction_log_path, lines=8)
+        account = _read_account_label(recent) or account
+        lines = _build_dashboard_frame(
+            account=account,
+            interactions=_format_interaction_lines(recent),
+            supports_ansi=supports_ansi,
+        )
+        _write_screen(frame=lines, write=writer, supports_ansi=supports_ansi)
+
+        key = _poll_dashboard_key()
+        if key == "minimize":
+            on_minimize_to_tray()
+        elif key == "quit":
+            break
+        time.sleep(0.15)
+
+    _show_cursor(write=writer)
+
+
+def _format_interaction_lines(lines: Sequence[str]) -> list[str]:
+    output: list[str] = []
+    for raw in lines:
+        text = raw.strip()
+        if "AI |" in text:
+            output.append(text.split("AI |", 1)[1].strip())
+        elif "ACCOUNT |" in text:
+            continue
+    return output[-6:]
+
+
+def _read_account_label(lines: Sequence[str]) -> str | None:
+    for raw in reversed(lines):
+        if "ACCOUNT |" not in raw:
+            continue
+        marker = raw.split("ACCOUNT |", 1)[1].strip()
+        return marker
+    return None
+
+
+def _build_dashboard_frame(
+    *,
+    account: str,
+    interactions: Sequence[str],
+    supports_ansi: bool,
+) -> list[str]:
+    width, height = shutil.get_terminal_size((100, 28))
+    safe_height = max(height, 16)
+
+    top = "+" + ("-" * (width - 2)) + "+"
+    lines = [top]
+
+    account_line = f" Account: {account}"
+    lines.append("|" + account_line.ljust(width - 2)[: width - 2] + "|")
+    lines.append("|" + (" Interactions".ljust(width - 2)) + "|")
+    lines.append("|" + ("-" * (width - 2)) + "|")
+
+    body_rows = max(4, safe_height - 8)
+    for index in range(body_rows):
+        text = interactions[-body_rows + index] if index >= body_rows - len(interactions) else ""
+        line = f" AI | {text}" if text else ""
+        lines.append("|" + line.ljust(width - 2)[: width - 2] + "|")
+
+    lines.append("|" + ("-" * (width - 2)) + "|")
+    footer = " [M] Send to tray  [Q] Quit dashboard "
+    if supports_ansi:
+        footer = (
+            f" {_COLOR_BLUE}[M]{_COLOR_RESET} Send to tray  "
+            f"{_COLOR_BLUE}[Q]{_COLOR_RESET} Quit dashboard "
+        )
+    lines.append("|" + footer.ljust(width - 2)[: width - 2] + "|")
+    lines.append(top)
+    return lines
+
+
+def _poll_dashboard_key() -> str | None:
+    if sys.platform.startswith("win"):
+        return _poll_dashboard_key_windows()
+    return None
+
+
+def _poll_dashboard_key_windows() -> str | None:
+    import msvcrt
+
+    kbhit = getattr(msvcrt, "kbhit", None)
+    getch = getattr(msvcrt, "getch", None)
+    if kbhit is None or getch is None or not kbhit():
+        return None
+
+    key = getch().lower()
+    if key == b"m":
+        return "minimize"
+    if key == b"q":
+        return "quit"
+    return None
+
+
+def _stdout_write(text: str) -> None:
+    sys.stdout.write(text)
+    sys.stdout.flush()
 
 
 def _read_menu_key_windows() -> str:
