@@ -1,10 +1,28 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+_ASCII_LOGO = (
+    "  eeeee  vv   vv   aaaa  ",
+    "  ee      vv vv   aa  aa ",
+    "  eeee     vvv    aaaaaa ",
+    "  ee       vv     aa  aa ",
+    "  eeeee    vv     aa  aa ",
+)
+
+_COLOR_BLUE = "\033[38;5;75m"
+_COLOR_PURPLE = "\033[38;5;141m"
+_COLOR_DIM = "\033[38;5;104m"
+_COLOR_RESET = "\033[0m"
+
+MenuReader = Callable[[], str]
+MenuWriter = Callable[[str], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +67,66 @@ def is_linux_service_mode() -> bool:
         return True
 
     return not sys.stdin.isatty() and not sys.stdout.isatty()
+
+
+def get_env_search_paths() -> list[Path]:
+    explicit = os.getenv("EVA_ENV_PATH", "").strip()
+    if explicit:
+        return [Path(explicit).expanduser().resolve()]
+
+    raw_candidates: list[Path] = []
+
+    executable_dir = _runtime_executable_dir()
+    if executable_dir is not None:
+        raw_candidates.append(executable_dir / ".env")
+
+    raw_candidates.extend(
+        [
+            Path.cwd() / ".env",
+            Path(sys.argv[0]).resolve().parent / ".env",
+            Path(__file__).resolve().parents[2] / ".env",
+        ]
+    )
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in raw_candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def get_resolved_env_path() -> Path:
+    for path in get_env_search_paths():
+        if path.exists():
+            return path
+    return _default_env_write_path()
+
+
+def _default_env_write_path() -> Path:
+    explicit = os.getenv("EVA_ENV_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    executable_dir = _runtime_executable_dir()
+    if executable_dir is not None:
+        return executable_dir / ".env"
+    return (Path.cwd() / ".env").resolve()
+
+
+def _runtime_executable_dir() -> Path | None:
+    executable = Path(sys.executable).resolve()
+    if getattr(sys, "frozen", False):
+        return executable.parent
+
+    name = executable.name.lower()
+    if name.startswith("python") or name.startswith("uv"):
+        return None
+    if executable.suffix.lower() == ".exe":
+        return executable.parent
+    return None
 
 
 def read_env_values(env_path: Path) -> dict[str, str]:
@@ -131,3 +209,176 @@ def show_interaction_logs(
     output_fn(f"Showing last {len(entries)} interaction log lines from {log_path}")
     for entry in entries:
         output_fn(entry)
+
+
+def run_menu(
+    *,
+    options: Sequence[str],
+    read_key: MenuReader,
+    write: MenuWriter = print,
+) -> int:
+    supports_ansi = _enable_ansi_if_supported()
+    selected = 0
+
+    while True:
+        _render_menu(options=options, selected=selected, write=write, supports_ansi=supports_ansi)
+        key = read_key()
+        selected = apply_menu_key(selected=selected, key=key, options_count=len(options))
+        if key == "enter":
+            return selected
+
+
+def apply_menu_key(*, selected: int, key: str, options_count: int) -> int:
+    if options_count <= 0:
+        return 0
+    if key == "up":
+        return (selected - 1) % options_count
+    if key == "down":
+        return (selected + 1) % options_count
+    return selected
+
+
+def read_menu_key() -> str:
+    if sys.platform.startswith("win"):
+        return _read_menu_key_windows()
+    return _read_menu_key_posix()
+
+
+def _render_menu(
+    *,
+    options: Sequence[str],
+    selected: int,
+    write: MenuWriter,
+    supports_ansi: bool,
+) -> None:
+    width = shutil.get_terminal_size((80, 24)).columns
+    if supports_ansi:
+        write("\033[2J\033[H")
+    else:
+        write("\n" * 10)
+
+    for line in _ASCII_LOGO:
+        if supports_ansi:
+            write(_center_text(f"{_COLOR_PURPLE}{line}{_COLOR_RESET}", width))
+        else:
+            write(_center_text(line, width))
+
+    write("")
+    hint = "Use arrow keys and Enter"
+    if supports_ansi:
+        write(_center_text(f"{_COLOR_DIM}{hint}{_COLOR_RESET}", width))
+    else:
+        write(_center_text(hint, width))
+    write("")
+
+    for index, option in enumerate(options):
+        marker = ">" if index == selected else " "
+        label = f"{marker} {option}"
+        if supports_ansi and index == selected:
+            label = f"{_COLOR_BLUE}{label}{_COLOR_RESET}"
+        elif supports_ansi:
+            label = f"{_COLOR_PURPLE}{label}{_COLOR_RESET}"
+        write(_center_text(label, width))
+
+
+def _center_text(text: str, width: int) -> str:
+    plain_len = len(_strip_ansi(text))
+    padding = max(0, (width - plain_len) // 2)
+    return (" " * padding) + text
+
+
+def _strip_ansi(text: str) -> str:
+    output = []
+    in_escape = False
+    for char in text:
+        if char == "\033":
+            in_escape = True
+            continue
+        if in_escape and char == "m":
+            in_escape = False
+            continue
+        if not in_escape:
+            output.append(char)
+    return "".join(output)
+
+
+def _enable_ansi_if_supported() -> bool:
+    if not sys.stdout.isatty():
+        return False
+    if not sys.platform.startswith("win"):
+        return True
+
+    try:
+        import ctypes
+
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return False
+        kernel32 = windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) == 0:
+            return False
+        if kernel32.SetConsoleMode(handle, mode.value | 0x0004) == 0:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _read_menu_key_windows() -> str:
+    import msvcrt
+
+    getch = getattr(msvcrt, "getch", None)
+    if getch is None:
+        return "enter"
+
+    while True:
+        key = getch()
+        if key in {b"\x00", b"\xe0"}:
+            special = getch()
+            if special == b"H":
+                return "up"
+            if special == b"P":
+                return "down"
+            continue
+        if key == b"\r":
+            return "enter"
+        if key == b"w":
+            return "up"
+        if key == b"s":
+            return "down"
+
+
+@contextmanager
+def _raw_stdin() -> Iterator[None]:
+    import termios
+    import tty
+
+    file_descriptor = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(file_descriptor)
+    try:
+        tty.setraw(file_descriptor)
+        yield None
+    finally:
+        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
+
+
+def _read_menu_key_posix() -> str:
+    with _raw_stdin():
+        while True:
+            key = sys.stdin.read(1)
+            if key == "\x1b":
+                next_a = sys.stdin.read(1)
+                next_b = sys.stdin.read(1)
+                if next_a == "[" and next_b == "A":
+                    return "up"
+                if next_a == "[" and next_b == "B":
+                    return "down"
+                continue
+            if key in {"\r", "\n"}:
+                return "enter"
+            if key == "w":
+                return "up"
+            if key == "s":
+                return "down"

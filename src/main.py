@@ -6,7 +6,13 @@ import sys
 from eva.app import EvaApp
 from eva.config import ConfigError, get_env_path, get_runtime_base_dir, load_settings
 from eva.logging import configure_logging, get_interaction_log_path
-from eva.runtime import is_linux_service_mode, run_env_setup_wizard, show_interaction_logs
+from eva.runtime import (
+    is_linux_service_mode,
+    read_menu_key,
+    run_env_setup_wizard,
+    run_menu,
+    show_interaction_logs,
+)
 from eva.windows_tray import run_in_tray
 
 
@@ -33,6 +39,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run minimized to tray on Windows",
     )
+    parser.add_argument(
+        "--show-env-path",
+        action="store_true",
+        help="Print resolved .env path and exit",
+    )
     return parser.parse_args()
 
 
@@ -46,23 +57,12 @@ def _run_app() -> None:
 
 
 def _show_menu() -> str:
-    print("Eva CLI")
-    print("1) Run Eva")
-    print("2) Setup .env")
-    print("3) Show interaction logs")
+    options = ["Run Eva", "Setup .env", "Show interaction logs"]
     if sys.platform.startswith("win"):
-        print("4) Run minimized to tray")
-        print("5) Exit")
-        valid = {"1", "2", "3", "4", "5"}
-    else:
-        print("4) Exit")
-        valid = {"1", "2", "3", "4"}
-
-    while True:
-        choice = input("Select an option: ").strip()
-        if choice in valid:
-            return choice
-        print("Invalid choice. Try again.")
+        options.append("Run minimized to tray")
+    options.append("Exit")
+    selected = run_menu(options=options, read_key=read_menu_key)
+    return options[selected]
 
 
 def _run_windows_tray() -> None:
@@ -83,6 +83,10 @@ def main() -> None:
     args = _parse_args()
     env_path = get_env_path()
 
+    if args.show_env_path:
+        print(env_path)
+        return
+
     if args.setup_env:
         run_env_setup_wizard(env_path)
         return
@@ -99,16 +103,16 @@ def main() -> None:
 
     if not sys.argv[1:] and sys.stdin.isatty() and sys.stdout.isatty():
         selection = _show_menu()
-        if selection == "1":
+        if selection == "Run Eva":
             _run_app()
             return
-        if selection == "2":
+        if selection == "Setup .env":
             run_env_setup_wizard(env_path)
             return
-        if selection == "3":
+        if selection == "Show interaction logs":
             show_interaction_logs(get_interaction_log_path(), lines=80)
             return
-        if selection == "4" and sys.platform.startswith("win"):
+        if selection == "Run minimized to tray" and sys.platform.startswith("win"):
             _run_windows_tray()
             return
         return

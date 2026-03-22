@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 
 from eva.runtime import (
+    apply_menu_key,
+    get_env_search_paths,
+    get_resolved_env_path,
     is_linux_service_mode,
     run_env_setup_wizard,
     show_interaction_logs,
@@ -56,3 +59,20 @@ def test_show_interaction_logs_handles_missing_file(tmp_path: Path) -> None:
 
     assert len(lines) == 1
     assert "No interaction logs found" in lines[0]
+
+
+def test_menu_key_wraps_up_and_down() -> None:
+    assert apply_menu_key(selected=0, key="up", options_count=4) == 3
+    assert apply_menu_key(selected=3, key="down", options_count=4) == 0
+
+
+def test_resolved_env_path_prefers_explicit_env_path(monkeypatch, tmp_path: Path) -> None:
+    explicit = tmp_path / "custom.env"
+    explicit.write_text("DISCORD_TOKEN=a\nAPI_KEY=b\n", encoding="utf-8")
+    monkeypatch.setenv("EVA_ENV_PATH", str(explicit))
+
+    search_paths = get_env_search_paths()
+    resolved = get_resolved_env_path()
+
+    assert search_paths == [explicit.resolve()]
+    assert resolved == explicit.resolve()

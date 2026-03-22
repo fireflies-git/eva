@@ -12,6 +12,7 @@ from eva.constants import (
     DEFAULT_RESPONSE_CONTEXT_MESSAGES,
     X_MARK,
 )
+from eva.runtime import get_env_search_paths, get_resolved_env_path
 
 SETTINGS_DEFAULTS = {
     "api_base_url": "https://inference.do-ai.run/v1",
@@ -56,13 +57,13 @@ class Settings:
 
 
 def get_runtime_base_dir() -> Path:
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+    if getattr(sys, "frozen", False):
         return Path(sys.argv[0]).resolve().parent
     return Path.cwd()
 
 
 def get_env_path() -> Path:
-    return get_runtime_base_dir() / ".env"
+    return get_resolved_env_path()
 
 
 def _required_env(name: str) -> str:
@@ -110,39 +111,47 @@ def _optional_int(name: str, *, default: int, minimum: int, maximum: int) -> int
 
 
 def load_settings() -> Settings:
-    load_dotenv(dotenv_path=get_env_path())
+    env_path = get_env_path()
+    load_dotenv(dotenv_path=env_path)
 
-    return Settings(
-        discord_token=_required_env("DISCORD_TOKEN"),
-        api_key=_required_env("API_KEY"),
-        serper_api_key=_optional_secret("SERPER_API_KEY"),
-        image_api_key=_optional_secret("IMAGE_API_KEY"),
-        api_base_url=_optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"]),
-        model_name=_optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"]),
-        trigger_prefix=_optional_env("TRIGGER_PREFIX", default=SETTINGS_DEFAULTS["trigger_prefix"]),
-        max_history_messages=SETTINGS_DEFAULTS["max_history_messages"],
-        response_context_messages=_optional_int(
-            "RESPONSE_CONTEXT_MESSAGES",
-            default=SETTINGS_DEFAULTS["response_context_messages"],
-            minimum=RESPONSE_CONTEXT_MESSAGES_MIN,
-            maximum=RESPONSE_CONTEXT_MESSAGES_MAX,
-        ),
-        request_timeout_seconds=SETTINGS_DEFAULTS["request_timeout_seconds"],
-        min_loading_seconds=SETTINGS_DEFAULTS["min_loading_seconds"],
-        image_api_base_url=_optional_env(
-            "IMAGE_API_BASE_URL",
-            default=SETTINGS_DEFAULTS["image_api_base_url"],
-        ),
-        image_model_name=_optional_env(
-            "IMAGE_MODEL_NAME",
-            default=SETTINGS_DEFAULTS["image_model_name"],
-        ),
-        image_language=_optional_env(
-            "IMAGE_LANGUAGE",
-            default=SETTINGS_DEFAULTS["image_language"],
-        ),
-        image_incognito=_optional_bool(
-            "IMAGE_INCOGNITO",
-            default=SETTINGS_DEFAULTS["image_incognito"],
-        ),
-    )
+    try:
+        return Settings(
+            discord_token=_required_env("DISCORD_TOKEN"),
+            api_key=_required_env("API_KEY"),
+            serper_api_key=_optional_secret("SERPER_API_KEY"),
+            image_api_key=_optional_secret("IMAGE_API_KEY"),
+            api_base_url=_optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"]),
+            model_name=_optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"]),
+            trigger_prefix=_optional_env(
+                "TRIGGER_PREFIX",
+                default=SETTINGS_DEFAULTS["trigger_prefix"],
+            ),
+            max_history_messages=SETTINGS_DEFAULTS["max_history_messages"],
+            response_context_messages=_optional_int(
+                "RESPONSE_CONTEXT_MESSAGES",
+                default=SETTINGS_DEFAULTS["response_context_messages"],
+                minimum=RESPONSE_CONTEXT_MESSAGES_MIN,
+                maximum=RESPONSE_CONTEXT_MESSAGES_MAX,
+            ),
+            request_timeout_seconds=SETTINGS_DEFAULTS["request_timeout_seconds"],
+            min_loading_seconds=SETTINGS_DEFAULTS["min_loading_seconds"],
+            image_api_base_url=_optional_env(
+                "IMAGE_API_BASE_URL",
+                default=SETTINGS_DEFAULTS["image_api_base_url"],
+            ),
+            image_model_name=_optional_env(
+                "IMAGE_MODEL_NAME",
+                default=SETTINGS_DEFAULTS["image_model_name"],
+            ),
+            image_language=_optional_env(
+                "IMAGE_LANGUAGE",
+                default=SETTINGS_DEFAULTS["image_language"],
+            ),
+            image_incognito=_optional_bool(
+                "IMAGE_INCOGNITO",
+                default=SETTINGS_DEFAULTS["image_incognito"],
+            ),
+        )
+    except ConfigError as exc:
+        candidates = ", ".join(str(path) for path in get_env_search_paths())
+        raise ConfigError(f"{exc} (env paths checked: {candidates})") from exc
