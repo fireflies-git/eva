@@ -12,24 +12,34 @@ from eva.prompts.search import build_search_prompt
 from eva.prompts.security import build_security_section
 
 
-def build_system_prompt(channel: discord.abc.Messageable, client: discord.Client) -> str:
+def build_system_prompt(
+    channel: discord.abc.Messageable,
+    client: discord.Client,
+    *,
+    account_mode: str,
+) -> str:
     sections = [
         build_security_section(),
-        build_persona_section(),
+        build_persona_section(account_mode),
         build_formatting_section(),
         build_capabilities_section(),
-        build_context_section(channel, client),
+        build_context_section(channel, client, account_mode),
     ]
     return "\n\n---\n\n".join(sections)
 
 
-def build_search_system_prompt(channel: discord.abc.Messageable, client: discord.Client) -> str:
+def build_search_system_prompt(
+    channel: discord.abc.Messageable,
+    client: discord.Client,
+    *,
+    account_mode: str,
+) -> str:
     sections = [
         build_security_section(),
-        build_persona_section(),
+        build_persona_section(account_mode),
         build_formatting_section(),
         build_capabilities_section(),
         build_search_prompt(),
-        build_context_section(channel, client),
+        build_context_section(channel, client, account_mode),
     ]
     return "\n\n---\n\n".join(sections)

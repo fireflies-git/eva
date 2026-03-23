@@ -30,7 +30,7 @@ def test_is_linux_service_mode_false_on_non_linux(monkeypatch) -> None:
 
 def test_run_env_setup_wizard_writes_required_values(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
-    answers = iter(["token", "key", "", "", "", "", "", "", "", "", "", ""])
+    answers = iter(["token", "key", *([""] * 14)])
     output: list[str] = []
 
     run_env_setup_wizard(

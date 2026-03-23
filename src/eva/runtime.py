@@ -40,7 +40,9 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("DISCORD_TOKEN", "", True, "Discord user token"),
     EnvField("API_KEY", "", True, "AI API key"),
     EnvField("API_BASE_URL", "https://inference.do-ai.run/v1", False, "AI API base URL"),
+    EnvField("ACCOUNT_MODE", "assistant", False, "assistant or standalone mode"),
     EnvField("MODEL_NAME", "openai-gpt-oss-120b", False, "AI model name"),
+    EnvField("SPLIT_MODEL_NAME", "llama3.3-70b-instruct", False, "Follow-up split planner model"),
     EnvField("TRIGGER_PREFIX", "eva ", False, "Prefix used to trigger Eva"),
     EnvField(
         "RESPONSE_CONTEXT_MESSAGES",
@@ -48,6 +50,8 @@ ENV_FIELDS: tuple[EnvField, ...] = (
         False,
         "How many recent channel messages to include",
     ),
+    EnvField("FOLLOWUP_DELAY_MIN_SECONDS", "0.75", False, "Minimum standalone follow-up delay"),
+    EnvField("FOLLOWUP_DELAY_MAX_SECONDS", "1.5", False, "Maximum standalone follow-up delay"),
     EnvField("SERPER_API_KEY", "", False, "Serper API key (optional)"),
     EnvField("IMAGE_API_KEY", "", False, "Image API key (optional)"),
     EnvField("IMAGE_API_BASE_URL", "https://ai.6969.pro/v1", False, "Image API base URL"),

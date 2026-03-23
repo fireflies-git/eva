@@ -1,0 +1,204 @@
+import asyncio
+from types import SimpleNamespace
+from typing import cast
+
+import discord
+import pytest
+
+from eva.ai import ReplyGenerationService, ResponseSplitService
+from eva.config import Settings
+from eva.discord.handlers import SelfbotMessageHandler, TriggerDecision
+from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+
+
+class DummyResponseService:
+    async def generate_reply(self, **kwargs: object) -> str:
+        return "unused"
+
+
+class DummyTOSCheckService:
+    async def check_tos_violation(self, text: str) -> bool:
+        return False
+
+
+class DummySplitService:
+    async def split_reply(
+        self,
+        *,
+        reply_content: str,
+        first_limit: int,
+        continuation_limit: int,
+    ) -> list[str] | None:
+        return [reply_content[:first_limit]]
+
+
+class DummyChannel:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, bool]] = []
+        self._next_id = 100
+
+    async def send(self, *, content: str, suppress_embeds: bool) -> object:
+        self.sent.append((content, suppress_embeds))
+        self._next_id += 1
+        return type("SentMessage", (), {"id": self._next_id})()
+
+
+class DummySplitClient:
+    async def chat_completion(self, **kwargs: object) -> str:
+        return '{"messages":["unused"]}'
+
+
+def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMessageHandler:
+    settings = Settings(
+        discord_token="token",
+        api_key="key",
+        serper_api_key=None,
+        image_api_key=None,
+        api_base_url="https://example.com/v1",
+        account_mode=account_mode,
+        model_name="openai-gpt-oss-120b",
+        split_model_name="llama3.3-70b-instruct",
+        trigger_prefix="eva ",
+        max_history_messages=20,
+        response_context_messages=25,
+        request_timeout_seconds=30.0,
+        min_loading_seconds=1.0,
+        followup_delay_min_seconds=0.75,
+        followup_delay_max_seconds=1.5,
+        image_api_base_url="https://images.example.com/v1",
+        image_model_name="sonar",
+        image_language="en-US",
+        image_incognito=True,
+    )
+    reply_generation_service = ReplyGenerationService(
+        account_mode=settings.account_mode,
+        response_service=DummyResponseService(),
+        search_service=None,
+        search_response_service=None,
+        tos_check_service=DummyTOSCheckService(),
+    )
+    response_split_service = ResponseSplitService(
+        client=DummySplitClient(),
+        model_name=settings.split_model_name,
+    )
+    return SelfbotMessageHandler(
+        settings=settings,
+        reply_generation_service=reply_generation_service,
+        response_split_service=response_split_service,
+        history_store=ChannelHistoryStore(),
+        tracked_messages=TrackedMessageStore(),
+        whitelist=WhitelistStore(tmp_path / "whitelist.json"),
+    )
+
+
+def test_calculate_followup_delay_scales_with_length(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 0.0)
+
+    short_delay = handler._calculate_followup_delay_seconds("short")
+    long_delay = handler._calculate_followup_delay_seconds("x" * 1200)
+
+    assert short_delay == pytest.approx(0.75 + (0.75 * (5 / 1200)))
+    assert long_delay == pytest.approx(1.5)
+
+
+def test_send_followup_messages_waits_and_tracks_sent_ids(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    channel = DummyChannel()
+    sleeps: list[float] = []
+
+    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 0.0)
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("eva.discord.handlers.asyncio.sleep", fake_sleep)
+
+    asyncio.run(
+        handler._send_followup_messages(
+            cast(discord.abc.Messageable, channel),
+            ["short", "x" * 1200],
+        )
+    )
+
+    assert sleeps == [
+        pytest.approx(0.75 + (0.75 * (5 / 1200))),
+        pytest.approx(1.5),
+    ]
+    assert channel.sent == [("short", True), ("x" * 1200, True)]
+    assert handler._tracked_messages.contains(101)
+    assert handler._tracked_messages.contains(102)
+
+
+def test_standalone_dm_trigger_accepts_any_non_empty_message(tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    message = cast(discord.Message, SimpleNamespace(channel=SimpleNamespace(guild=None)))
+
+    decision = handler._decide_standalone_trigger(
+        message=message,
+        content="help me with this",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    assert decision == TriggerDecision(should_process=True, user_query="help me with this")
+
+
+def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    server_channel = SimpleNamespace(guild=SimpleNamespace(id=1))
+
+    mention_message = cast(
+        discord.Message,
+        SimpleNamespace(channel=server_channel, raw_mentions=[123], content="hey <@123> help me"),
+    )
+    mention_decision = handler._decide_standalone_trigger(
+        message=mention_message,
+        content="hey <@123> help me",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    reply_message = cast(discord.Message, SimpleNamespace(channel=server_channel))
+    reply_decision = handler._decide_standalone_trigger(
+        message=reply_message,
+        content="continue",
+        is_reply_trigger=True,
+        mention_user_id=123,
+    )
+
+    prefix_decision = handler._decide_standalone_trigger(
+        message=reply_message,
+        content="eva summarize this",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    chatter_decision = handler._decide_standalone_trigger(
+        message=reply_message,
+        content="random chatter",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    assert mention_decision == TriggerDecision(should_process=True, user_query="hey help me")
+    assert reply_decision == TriggerDecision(
+        should_process=True,
+        user_query="continue",
+        is_reply_trigger=True,
+    )
+    assert prefix_decision == TriggerDecision(should_process=True, user_query="summarize this")
+    assert chatter_decision == TriggerDecision(should_process=False)
+
+
+def test_assistant_mode_skips_ai_split_planner(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path, account_mode="assistant")
+
+    async def fail_split_reply(**kwargs: object) -> list[str] | None:
+        raise AssertionError("split planner should not run in assistant mode")
+
+    monkeypatch.setattr(handler._response_split_service, "split_reply", fail_split_reply)
+
+    chunks = asyncio.run(handler._build_plain_response_chunks("one message only"))
+
+    assert chunks == ["one message only"]

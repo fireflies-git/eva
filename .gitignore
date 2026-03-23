@@ -28,13 +28,12 @@ MANIFEST
 main.dist
 /eva
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-docs/
-docs
+# Nuikta
+main.build/
+main.dist/
+main.onefile-build/
+eva
+eva.exe
 
 
 # Installer logs

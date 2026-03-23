@@ -88,6 +88,7 @@ def test_reply_generation_uses_normal_path_when_search_not_needed() -> None:
     response_service = StubResponseService("normal")
     tos_service = StubTOSCheckService()
     reply_service = ReplyGenerationService(
+        account_mode="assistant",
         response_service=response_service,
         image_service=StubImageService(result=None),
         search_service=StubSearchService(result=None),
@@ -122,6 +123,7 @@ def test_reply_generation_uses_search_path_when_results_exist() -> None:
     search_response_service = StubSearchResponseService("search")
     tos_service = StubTOSCheckService()
     reply_service = ReplyGenerationService(
+        account_mode="assistant",
         response_service=response_service,
         image_service=StubImageService(result=None),
         search_service=StubSearchService(result=SearchResultBundle(query="apple")),
@@ -149,6 +151,7 @@ def test_reply_generation_uses_search_path_when_results_exist() -> None:
 
 def test_reply_generation_fails_closed_when_search_errors() -> None:
     reply_service = ReplyGenerationService(
+        account_mode="assistant",
         response_service=StubResponseService("normal"),
         image_service=StubImageService(result=None),
         search_service=StubSearchService(error=SearchClientError("boom")),
@@ -173,6 +176,7 @@ def test_reply_generation_fails_closed_when_search_errors() -> None:
 
 def test_reply_generation_blocks_tos_violations() -> None:
     reply_service = ReplyGenerationService(
+        account_mode="assistant",
         response_service=StubResponseService("normal"),
         image_service=StubImageService(result=None),
         search_service=StubSearchService(result=None),

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from eva.app import EvaApp
+from eva.cli import run_settings
 from eva.config import ConfigError, get_env_path, get_runtime_base_dir, load_settings
 from eva.logging import configure_logging, get_interaction_log_path
 from eva.runtime import (
@@ -129,6 +130,9 @@ def _run_with_dashboard() -> None:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "settings":
+        raise SystemExit(run_settings(sys.argv[2:]))
+
     if is_linux_service_mode():
         configure_logging(console_output=True)
         env_path = get_env_path()

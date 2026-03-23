@@ -82,11 +82,13 @@ class ReplyGenerationService:
         self,
         *,
         response_service: ResponseGenerator,
-        image_service: ImageRunner | None,
-        search_service: SearchRunner | None,
-        search_response_service: SearchResponseGenerator | None,
         tos_check_service: TOSChecker,
+        account_mode: str = "assistant",
+        image_service: ImageRunner | None = None,
+        search_service: SearchRunner | None = None,
+        search_response_service: SearchResponseGenerator | None = None,
     ) -> None:
+        self._account_mode = account_mode
         self._response_service = response_service
         self._image_service = image_service
         self._search_service = search_service
@@ -132,7 +134,11 @@ class ReplyGenerationService:
                 )
                 reply = ReplyOutput(content=content, attachments=[])
             else:
-                system_prompt = build_system_prompt(channel, client)
+                system_prompt = build_system_prompt(
+                    channel,
+                    client,
+                    account_mode=self._account_mode,
+                )
                 content = await self._response_service.generate_reply(
                     system_prompt=system_prompt,
                     context_messages=context_messages,
@@ -235,7 +241,11 @@ class ReplyGenerationService:
         if self._search_response_service is None:
             return SEARCH_FAILURE_MESSAGE
 
-        search_prompt = build_search_system_prompt(channel, client)
+        search_prompt = build_search_system_prompt(
+            channel,
+            client,
+            account_mode=self._account_mode,
+        )
         try:
             return await self._search_response_service.generate_reply(
                 system_prompt=search_prompt,
