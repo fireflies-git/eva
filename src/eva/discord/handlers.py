@@ -21,9 +21,11 @@ from eva.discord.delivery import (
 from eva.discord.formatting import build_loading_text
 from eva.discord.triggers import TriggerDecision as TriggerDecision
 from eva.discord.triggers import is_tracked_reply_trigger, parse_trigger
+from eva.discord.user_metadata import build_requester_context
 from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
 
 logger = logging.getLogger(__name__)
+interaction_logger = logging.getLogger("eva.interaction")
 
 __all__ = ["SelfbotMessageHandler", "TriggerDecision", "parse_trigger"]
 
@@ -87,6 +89,24 @@ class SelfbotMessageHandler:
             return
 
         reply_context = await fetch_reply_context(message)
+        requester_context = build_requester_context(message)
+        interaction_logger.info(
+            (
+                "incoming channel_id=%s message_id=%s author_id=%s "
+                "reply_trigger=%s query=%r requester=%r"
+            ),
+            channel_id,
+            message.id,
+            message.author.id,
+            decision.is_reply_trigger,
+            decision.user_query,
+            requester_context,
+        )
+        interaction_logger.info(
+            "AI | %s: %s",
+            getattr(message.author, "display_name", "unknown"),
+            original_content,
+        )
 
         if is_owner:
             await self._process_response_flow(
@@ -97,6 +117,7 @@ class SelfbotMessageHandler:
                 user_query=decision.user_query,
                 reply_context=reply_context,
                 allow_image_generation=not decision.is_reply_trigger,
+                requester_context=requester_context,
             )
         else:
             await self._process_whitelisted_user_flow(
@@ -106,6 +127,7 @@ class SelfbotMessageHandler:
                 user_query=decision.user_query,
                 reply_context=reply_context,
                 allow_image_generation=not decision.is_reply_trigger,
+                requester_context=requester_context,
             )
 
     async def _process_response_flow(
@@ -118,6 +140,7 @@ class SelfbotMessageHandler:
         user_query: str,
         reply_context: str | None,
         allow_image_generation: bool,
+        requester_context: str,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -140,6 +163,7 @@ class SelfbotMessageHandler:
                     user_message=user_query,
                     reply_context=reply_context,
                     allow_image_generation=allow_image_generation,
+                    requester_context=requester_context,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -159,8 +183,21 @@ class SelfbotMessageHandler:
             self._tracked_messages.add(message_id)
 
         if delivery_result.primary_delivered:
-            stored_user_message = _build_stored_user_message(user_query, reply_context)
+            stored_user_message = _build_stored_user_message(
+                user_query,
+                reply_context,
+                requester_context,
+            )
             self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
+
+        interaction_logger.info(
+            "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
+            channel_id,
+            message.id,
+            delivery_result.primary_delivered,
+            len(delivery_result.tracked_message_ids),
+            ai_reply.content,
+        )
 
     async def _process_whitelisted_user_flow(
         self,
@@ -171,6 +208,7 @@ class SelfbotMessageHandler:
         user_query: str,
         reply_context: str | None,
         allow_image_generation: bool,
+        requester_context: str,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -189,6 +227,7 @@ class SelfbotMessageHandler:
                     user_message=user_query,
                     reply_context=reply_context,
                     allow_image_generation=allow_image_generation,
+                    requester_context=requester_context,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -203,11 +242,30 @@ class SelfbotMessageHandler:
             self._tracked_messages.add(message_id)
 
         if delivery_result.primary_delivered:
-            stored_user_message = _build_stored_user_message(user_query, reply_context)
+            stored_user_message = _build_stored_user_message(
+                user_query,
+                reply_context,
+                requester_context,
+            )
             self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
 
+        interaction_logger.info(
+            "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
+            channel_id,
+            message.id,
+            delivery_result.primary_delivered,
+            len(delivery_result.tracked_message_ids),
+            ai_reply.content,
+        )
 
-def _build_stored_user_message(user_query: str, reply_context: str | None) -> str:
+
+def _build_stored_user_message(
+    user_query: str,
+    reply_context: str | None,
+    requester_context: str,
+) -> str:
+    sections = [f"[Requester metadata]\n{requester_context}"]
     if reply_context:
-        return f'[Replying to message: "{reply_context}"]\n\n{user_query}'
-    return user_query
+        sections.append(f'[Replying to message: "{reply_context}"]')
+    sections.append(user_query)
+    return "\n\n".join(sections)

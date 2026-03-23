@@ -1,9 +1,12 @@
 import asyncio
+from typing import cast
 
 from eva.images import (
     GeneratedImage,
+    ImageClient,
     ImageClientError,
     ImageDecision,
+    ImageDetector,
     ImageGenerationService,
     ImageResultBundle,
 )
@@ -67,8 +70,8 @@ def test_image_generation_service_uses_plain_prompt_for_standalone_request() -> 
         },
     )
     service = ImageGenerationService(
-        client=client,
-        detector=FakeDetector(),
+        client=cast(ImageClient, client),
+        detector=cast(ImageDetector, FakeDetector()),
         model_name="model",
         language="en-US",
         incognito=True,
@@ -95,8 +98,8 @@ def test_image_generation_service_uses_reply_context_for_referential_follow_up()
         },
     )
     service = ImageGenerationService(
-        client=client,
-        detector=FakeDetector(),
+        client=cast(ImageClient, client),
+        detector=cast(ImageDetector, FakeDetector()),
         model_name="model",
         language="en-US",
         incognito=True,
@@ -131,8 +134,8 @@ def test_image_generation_service_downloads_multiple_assets() -> None:
         },
     )
     service = ImageGenerationService(
-        client=client,
-        detector=FakeDetector(),
+        client=cast(ImageClient, client),
+        detector=cast(ImageDetector, FakeDetector()),
         model_name="model",
         language="en-US",
         incognito=True,
@@ -164,8 +167,8 @@ def test_image_generation_service_returns_url_bundle_when_downloads_fail() -> No
         },
     )
     service = ImageGenerationService(
-        client=client,
-        detector=FakeDetector(),
+        client=cast(ImageClient, client),
+        detector=cast(ImageDetector, FakeDetector()),
         model_name="model",
         language="en-US",
         incognito=True,

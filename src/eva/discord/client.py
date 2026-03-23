@@ -7,6 +7,7 @@ import discord
 from eva.discord.handlers import SelfbotMessageHandler
 
 logger = logging.getLogger(__name__)
+interaction_logger = logging.getLogger("eva.interaction")
 
 
 def create_discord_client(handler: SelfbotMessageHandler) -> discord.Client:
@@ -23,6 +24,12 @@ def create_discord_client(handler: SelfbotMessageHandler) -> discord.Client:
             logger.info("Eva connected to Discord")
             return
         logger.info("Eva online as %s (ID: %s)", user, user.id)
+        interaction_logger.info(
+            "ACCOUNT | username=%s display=%s id=%s",
+            getattr(user, "name", "unknown"),
+            getattr(user, "display_name", "unknown"),
+            user.id,
+        )
 
     @client.event
     async def on_message(message: discord.Message) -> None:

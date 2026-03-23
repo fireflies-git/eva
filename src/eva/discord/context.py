@@ -5,6 +5,11 @@ import logging
 import discord
 
 from eva.ai.schemas import ChatMessage
+from eva.discord.user_metadata import (
+    build_user_metadata,
+    format_mentions_metadata,
+    format_user_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +31,12 @@ async def fetch_channel_context(
             if exclude_message_id is not None and getattr(msg, "id", None) == exclude_message_id:
                 continue
             timestamp = msg.created_at.strftime("%H:%M")
-            author = getattr(msg.author, "display_name", "unknown")
-            output.append({"role": "user", "content": f"[{timestamp}] {author}: {msg.content}"})
+            author = format_user_metadata(build_user_metadata(msg.author))
+            mentions = format_mentions_metadata(list(getattr(msg, "mentions", [])))
+            message_text = f"[{timestamp}] {author}: {msg.content}"
+            if mentions:
+                message_text = f"{message_text} ({mentions})"
+            output.append({"role": "user", "content": message_text})
     except Exception:
         logger.exception("Failed fetching channel context")
         return []
@@ -52,4 +61,8 @@ async def fetch_reply_context(message: discord.Message) -> str | None:
 
     if not ref_msg or not ref_msg.content:
         return None
-    return f"{ref_msg.author.display_name}: {ref_msg.content}"
+    author = format_user_metadata(build_user_metadata(ref_msg.author))
+    mentions = format_mentions_metadata(list(getattr(ref_msg, "mentions", [])))
+    if mentions:
+        return f"{author}: {ref_msg.content} ({mentions})"
+    return f"{author}: {ref_msg.content}"

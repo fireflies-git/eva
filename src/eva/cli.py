@@ -35,9 +35,15 @@ def run_build() -> None:
         "--assume-yes-for-downloads",
         "--output-filename=eva",
     ]
+    if sys.platform.startswith("win"):
+        command.extend(
+            [
+                "--windows-icon-from-ico=icon.ico",
+                "--include-data-files=icon.ico=icon.ico",
+            ]
+        )
     if args:
         command.extend(args)
 
     command.append("src/main.py")
     raise SystemExit(subprocess.call(command))
-

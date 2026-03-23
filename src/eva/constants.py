@@ -38,3 +38,4 @@ LOADING_MESSAGES: tuple[str, ...] = (
 )
 
 DISCORD_MESSAGE_LIMIT = 2000
+INTERACTION_LOG_FILENAME = "eva-interactions.log"

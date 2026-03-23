@@ -26,7 +26,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 main.dist
-eva
+/eva
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -213,3 +213,4 @@ __marimo__/
 
 # Bot Thingys
 whitelist.json
+eva.exe # eva windows build
