@@ -59,11 +59,13 @@ class ReplyGenerationService:
     def __init__(
         self,
         *,
+        account_mode: str,
         response_service: ResponseGenerator,
         search_service: SearchRunner | None,
         search_response_service: SearchResponseGenerator | None,
         tos_check_service: TOSChecker,
     ) -> None:
+        self._account_mode = account_mode
         self._response_service = response_service
         self._search_service = search_service
         self._search_response_service = search_response_service
@@ -94,7 +96,7 @@ class ReplyGenerationService:
                 reply_context=reply_context,
             )
         else:
-            system_prompt = build_system_prompt(channel, client)
+            system_prompt = build_system_prompt(channel, client, account_mode=self._account_mode)
             reply = await self._response_service.generate_reply(
                 system_prompt=system_prompt,
                 context_messages=context_messages,
@@ -144,7 +146,11 @@ class ReplyGenerationService:
         if self._search_response_service is None:
             return SEARCH_FAILURE_MESSAGE
 
-        search_prompt = build_search_system_prompt(channel, client)
+        search_prompt = build_search_system_prompt(
+            channel,
+            client,
+            account_mode=self._account_mode,
+        )
         try:
             return await self._search_response_service.generate_reply(
                 system_prompt=search_prompt,

@@ -7,6 +7,7 @@ from eva.ai import (
     OpenAICompatibleClient,
     ReplyGenerationService,
     ResponseService,
+    ResponseSplitService,
     SearchResponseService,
     TOSCheckService,
 )
@@ -56,9 +57,13 @@ class EvaApp:
             )
         self._tos_check_service = TOSCheckService(
             client=self._ai_client,
-            model_name=settings.model_name,
+        )
+        self._response_split_service = ResponseSplitService(
+            client=self._ai_client,
+            model_name=settings.split_model_name,
         )
         self._reply_generation_service = ReplyGenerationService(
+            account_mode=settings.account_mode,
             response_service=self._response_service,
             search_service=self._search_service,
             search_response_service=self._search_response_service,
@@ -70,6 +75,7 @@ class EvaApp:
         self._message_handler = SelfbotMessageHandler(
             settings=settings,
             reply_generation_service=self._reply_generation_service,
+            response_split_service=self._response_split_service,
             history_store=self._history_store,
             tracked_messages=self._tracked_messages,
             whitelist=self._whitelist,

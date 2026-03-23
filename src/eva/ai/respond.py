@@ -15,6 +15,8 @@ from eva.constants import (
 from eva.search.schemas import SearchResultBundle
 
 logger = logging.getLogger(__name__)
+EMPTY_RESPONSE_ERROR = "Model returned empty response content"
+TOS_MODERATION_MODEL = "llama3.3-70b-instruct"
 
 
 def _build_user_message(user_message: str, reply_context: str | None) -> str:
@@ -141,9 +143,8 @@ class SearchResponseService:
 
 
 class TOSCheckService:
-    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
+    def __init__(self, *, client: ChatCompletionClient) -> None:
         self._client = client
-        self._model_name = model_name
 
     async def check_tos_violation(self, text: str) -> bool:
         system_prompt = (
@@ -167,11 +168,14 @@ class TOSCheckService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text},
                 ],
-                model=self._model_name,
+                model=TOS_MODERATION_MODEL,
                 temperature=0.0,
                 max_tokens=10,
             )
-        except AIClientError:
+        except AIClientError as exc:
+            if str(exc) == EMPTY_RESPONSE_ERROR:
+                logger.debug("TOS moderation returned empty output; allowing reply")
+                return False
             logger.exception("TOS moderation request failed")
             return False
 
