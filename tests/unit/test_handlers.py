@@ -53,6 +53,7 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         discord_token="token",
         api_key="key",
         serper_api_key=None,
+        image_api_key=None,
         api_base_url="https://example.com/v1",
         account_mode=account_mode,
         model_name="openai-gpt-oss-120b",
@@ -64,6 +65,10 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         min_loading_seconds=1.0,
         followup_delay_min_seconds=0.75,
         followup_delay_max_seconds=1.5,
+        image_api_base_url="https://images.example.com/v1",
+        image_model_name="sonar",
+        image_language="en-US",
+        image_incognito=True,
     )
     reply_generation_service = ReplyGenerationService(
         account_mode=settings.account_mode,
@@ -177,7 +182,11 @@ def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) ->
     )
 
     assert mention_decision == TriggerDecision(should_process=True, user_query="hey help me")
-    assert reply_decision == TriggerDecision(should_process=True, user_query="continue")
+    assert reply_decision == TriggerDecision(
+        should_process=True,
+        user_query="continue",
+        is_reply_trigger=True,
+    )
     assert prefix_decision == TriggerDecision(should_process=True, user_query="summarize this")
     assert chatter_decision == TriggerDecision(should_process=False)
 

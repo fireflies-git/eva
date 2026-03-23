@@ -25,6 +25,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+main.dist
+/eva
 
 # Nuikta
 main.build/
@@ -210,3 +212,4 @@ __marimo__/
 
 # Bot Thingys
 whitelist.json
+eva.exe # eva windows build

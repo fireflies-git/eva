@@ -1,4 +1,4 @@
-from eva.discord.formatting import build_plain_reply_chunks, build_response_chunks
+from eva.discord.formatting import build_plain_response_chunks, build_response_chunks
 
 
 def test_build_response_chunks_respect_discord_limit() -> None:
@@ -21,10 +21,10 @@ def test_build_response_chunks_create_continuations() -> None:
     assert chunks[1].startswith("-# (cont.)\n ")
 
 
-def test_build_plain_reply_chunks_split_on_paragraphs() -> None:
+def test_build_plain_response_chunks_split_on_paragraphs() -> None:
     reply = "first paragraph\n\nsecond paragraph\n\nthird paragraph"
 
-    chunks = build_plain_reply_chunks(reply, message_limit=25)
+    chunks = build_plain_response_chunks(reply, message_limit=25)
 
     assert chunks == ["first paragraph", "second paragraph", "third paragraph"]
 
@@ -36,3 +36,9 @@ def test_build_response_chunks_keep_code_block_together_when_it_fits() -> None:
 
     assert len(chunks) == 1
     assert "```py\nprint('hi')\n```" in chunks[0]
+
+
+def test_build_plain_response_chunks_respect_discord_limit() -> None:
+    chunks = build_plain_response_chunks("x" * 6000)
+    assert chunks
+    assert all(len(chunk) <= 2000 for chunk in chunks)

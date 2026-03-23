@@ -19,10 +19,18 @@ EMPTY_RESPONSE_ERROR = "Model returned empty response content"
 TOS_MODERATION_MODEL = "llama3.3-70b-instruct"
 
 
-def _build_user_message(user_message: str, reply_context: str | None) -> str:
-    if not reply_context:
-        return user_message
-    return f'[Replying to message: "{reply_context}"]\n\n{user_message}'
+def _build_user_message(
+    user_message: str,
+    reply_context: str | None,
+    requester_context: str | None,
+) -> str:
+    sections: list[str] = []
+    if requester_context:
+        sections.append(f"[Requester metadata]\n{requester_context}")
+    if reply_context:
+        sections.append(f'[Replying to message: "{reply_context}"]')
+    sections.append(user_message)
+    return "\n\n".join(sections)
 
 
 class ResponseService:
@@ -38,12 +46,16 @@ class ResponseService:
         history_messages: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        requester_context: str | None,
     ) -> str:
         messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         messages.extend(history_messages)
         messages.extend(context_messages)
         messages.append(
-            {"role": "user", "content": _build_user_message(user_message, reply_context)}
+            {
+                "role": "user",
+                "content": _build_user_message(user_message, reply_context, requester_context),
+            }
         )
 
         return await self._client.chat_completion(
@@ -68,6 +80,7 @@ class SearchResponseService:
         recent_context: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        requester_context: str | None,
     ) -> str:
         messages: list[ChatMessage] = [
             {"role": "system", "content": system_prompt},
@@ -78,6 +91,7 @@ class SearchResponseService:
                     recent_context=recent_context,
                     user_message=user_message,
                     reply_context=reply_context,
+                    requester_context=requester_context,
                 ),
             },
         ]
@@ -97,9 +111,10 @@ class SearchResponseService:
         recent_context: Sequence[ChatMessage],
         user_message: str,
         reply_context: str | None,
+        requester_context: str | None,
     ) -> str:
         lines = [
-            f"User request: {_build_user_message(user_message, reply_context)}",
+            f"User request: {_build_user_message(user_message, reply_context, requester_context)}",
         ]
 
         relevant_context = recent_context[-MAX_SEARCH_REPLY_CONTEXT_MESSAGES:]

@@ -149,6 +149,18 @@ def split_reply_for_limits(
     return chunks or [EMPTY_RESPONSE]
 
 
+def split_message_content(
+    text: str,
+    *,
+    message_limit: int = DISCORD_MESSAGE_LIMIT,
+) -> list[str]:
+    return split_reply_for_limits(
+        text,
+        first_limit=message_limit,
+        continuation_limit=message_limit,
+    )
+
+
 def build_response_chunk_layout(
     original_content: str,
     *,
@@ -197,16 +209,20 @@ def format_response_chunks(
     return chunks
 
 
+def build_plain_response_chunks(
+    reply_content: str,
+    *,
+    message_limit: int = DISCORD_MESSAGE_LIMIT,
+) -> list[str]:
+    return split_message_content(reply_content, message_limit=message_limit)
+
+
 def build_plain_reply_chunks(
     reply_content: str,
     *,
     message_limit: int = DISCORD_MESSAGE_LIMIT,
 ) -> list[str]:
-    return split_reply_for_limits(
-        reply_content,
-        first_limit=message_limit,
-        continuation_limit=message_limit,
-    )
+    return build_plain_response_chunks(reply_content, message_limit=message_limit)
 
 
 def build_response_chunks(
