@@ -2,4 +2,7 @@ services:
   eva:
     build: .
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro

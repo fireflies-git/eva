@@ -129,6 +129,26 @@ def _run_with_dashboard() -> None:
         raise SystemExit(str(state["error"]))
 
 
+def _missing_service_mode_env_vars() -> list[str]:
+    required_names = ("DISCORD_TOKEN", "API_KEY")
+    return [name for name in required_names if not os.getenv(name, "").strip()]
+
+
+def _ensure_service_mode_configuration(env_path: Path) -> None:
+    if env_path.exists():
+        return
+
+    missing_vars = _missing_service_mode_env_vars()
+    if not missing_vars:
+        return
+
+    missing_list = ", ".join(missing_vars)
+    raise SystemExit(
+        f"Error: missing {env_path}. Service mode requires a .env file or injected "
+        f"environment variables for: {missing_list}."
+    )
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "settings":
         raise SystemExit(run_settings(sys.argv[2:]))
@@ -136,8 +156,7 @@ def main() -> None:
     if is_linux_service_mode():
         configure_logging(console_output=True)
         env_path = get_env_path()
-        if not env_path.exists():
-            raise SystemExit(f"Error: missing {env_path}. Service mode requires a .env file.")
+        _ensure_service_mode_configuration(env_path)
         _run_app()
         return
 
