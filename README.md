@@ -29,6 +29,35 @@ uv run eva --show-env-path
 uv run eva --tray  # Windows only
 ```
 
+## Terminal Access
+
+- Explicit commands:
+  - `eva shell <command>`
+  - `eva exec <command>`
+- These run inside Eva's Docker container working directory, which defaults to `/app`.
+- Explicit terminal commands are limited to the owner/admin command path.
+- Normal AI replies can also use a read-only terminal tool to inspect the container when it helps answer a question.
+
+Relevant env vars:
+
+```bash
+TERMINAL_ENABLED=true
+TERMINAL_AUTONOMOUS_ENABLED=true
+TERMINAL_WORKDIR=/app
+TERMINAL_SHELL=/bin/sh
+TERMINAL_TIMEOUT_SECONDS=15
+TERMINAL_MAX_OUTPUT_CHARS=6000
+```
+
+## Download Command
+
+- `eva dl <url>`
+- `eva download <url>`
+- Supports any site `yt-dlp` can handle.
+- Uses the current guild upload limit when available.
+- In DMs, Eva falls back to a default 10 MiB upload limit.
+- If the downloaded file is too large for Discord, the command fails with an error.
+
 ## Quality checks
 
 ```bash

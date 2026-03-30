@@ -11,6 +11,7 @@ dependencies = [
     "Pillow>=11.3.0; platform_system == 'Windows'",
     "pystray>=0.19.5; platform_system == 'Windows'",
     "python-dotenv>=1.2.2",
+    "yt-dlp>=2025.3.31",
 ]
 
 [project.scripts]

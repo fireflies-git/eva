@@ -87,6 +87,8 @@ class ReplyGenerationService:
         image_service: ImageRunner | None = None,
         search_service: SearchRunner | None = None,
         search_response_service: SearchResponseGenerator | None = None,
+        terminal_enabled: bool = False,
+        autonomous_terminal_enabled: bool = False,
     ) -> None:
         self._account_mode = account_mode
         self._response_service = response_service
@@ -94,6 +96,8 @@ class ReplyGenerationService:
         self._search_service = search_service
         self._search_response_service = search_response_service
         self._tos_check_service = tos_check_service
+        self._terminal_enabled = terminal_enabled
+        self._autonomous_terminal_enabled = autonomous_terminal_enabled
 
     async def generate_reply(
         self,
@@ -138,6 +142,8 @@ class ReplyGenerationService:
                     channel,
                     client,
                     account_mode=self._account_mode,
+                    terminal_enabled=self._terminal_enabled,
+                    autonomous_terminal_enabled=self._autonomous_terminal_enabled,
                 )
                 content = await self._response_service.generate_reply(
                     system_prompt=system_prompt,
@@ -245,6 +251,8 @@ class ReplyGenerationService:
             channel,
             client,
             account_mode=self._account_mode,
+            terminal_enabled=self._terminal_enabled,
+            autonomous_terminal_enabled=self._autonomous_terminal_enabled,
         )
         try:
             return await self._search_response_service.generate_reply(

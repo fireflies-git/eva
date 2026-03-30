@@ -13,9 +13,11 @@ from eva.ai import (
 )
 from eva.config import Settings
 from eva.discord import SelfbotMessageHandler, create_discord_client
+from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
 from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.terminal import TerminalService
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +31,20 @@ class EvaApp:
             default_model=settings.model_name,
             timeout_seconds=settings.request_timeout_seconds,
         )
+        self._terminal_service: TerminalService | None = None
+        if settings.terminal_enabled:
+            self._terminal_service = TerminalService(
+                workdir=settings.terminal_workdir,
+                shell=settings.terminal_shell,
+                timeout_seconds=settings.terminal_timeout_seconds,
+                max_output_chars=settings.terminal_max_output_chars,
+            )
+        self._download_service = DownloadService(client=YtDLPDownloadClient())
         self._response_service = ResponseService(
             client=self._ai_client,
             model_name=settings.model_name,
+            terminal_service=self._terminal_service,
+            autonomous_terminal_access=settings.terminal_autonomous_enabled,
         )
 
         self._image_client: ImageClient | None = None
@@ -75,6 +88,8 @@ class EvaApp:
             self._search_response_service = SearchResponseService(
                 client=self._ai_client,
                 model_name=settings.model_name,
+                terminal_service=self._terminal_service,
+                autonomous_terminal_access=settings.terminal_autonomous_enabled,
             )
         self._tos_check_service = TOSCheckService(
             client=self._ai_client,
@@ -90,6 +105,8 @@ class EvaApp:
             search_service=self._search_service,
             search_response_service=self._search_response_service,
             tos_check_service=self._tos_check_service,
+            terminal_enabled=settings.terminal_enabled,
+            autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
         )
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
         self._tracked_messages = TrackedMessageStore()
@@ -101,6 +118,8 @@ class EvaApp:
             history_store=self._history_store,
             tracked_messages=self._tracked_messages,
             whitelist=self._whitelist,
+            terminal_service=self._terminal_service,
+            download_service=self._download_service,
         )
         self._discord_client = create_discord_client(self._message_handler)
 

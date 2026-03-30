@@ -49,7 +49,10 @@ def test_whitelist_list_command_is_still_available(tmp_path: Path) -> None:
     assert _captured_messages(message) == [
         (
             False,
-            "✔ Whitelisted: <@100>, <@213766338005434370>, <@218675193592283137>",
+            (
+                "✔ Whitelisted: <@100>, <@213766338005434370>, <@218675193592283137>, "
+                "<@1202356249975595068>"
+            ),
         )
     ]
 

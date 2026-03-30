@@ -13,6 +13,7 @@ from eva.config import Settings
 from eva.constants import WARNING_MARK
 from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
+from eva.discord.download_commands import handle_download_command
 from eva.discord.delivery import (
     DeliveryResult,
     deliver_owner_response,
@@ -29,10 +30,13 @@ from eva.discord.formatting import (
     build_response_chunks,
     format_response_chunks,
 )
+from eva.discord.terminal_commands import handle_terminal_command
+from eva.downloads import DownloadService
 from eva.discord.triggers import TriggerDecision as TriggerDecision
 from eva.discord.triggers import is_tracked_reply_trigger, parse_trigger
 from eva.discord.user_metadata import build_requester_context
 from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.terminal import TerminalService
 
 logger = logging.getLogger(__name__)
 interaction_logger = logging.getLogger("eva.interaction")
@@ -49,6 +53,8 @@ class SelfbotMessageHandler:
         history_store: ChannelHistoryStore,
         tracked_messages: TrackedMessageStore,
         whitelist: WhitelistStore,
+        terminal_service: TerminalService | None,
+        download_service: DownloadService | None,
         response_split_service: ResponseSplitService | None = None,
     ) -> None:
         self._settings = settings
@@ -56,6 +62,8 @@ class SelfbotMessageHandler:
         self._history_store = history_store
         self._tracked_messages = tracked_messages
         self._whitelist = whitelist
+        self._terminal_service = terminal_service
+        self._download_service = download_service
         self._response_split_service = response_split_service
 
     async def on_message(self, client: discord.Client, message: discord.Message) -> None:
@@ -90,6 +98,40 @@ class SelfbotMessageHandler:
             )
             if handled:
                 return
+
+        terminal_response = await handle_terminal_command(
+            content=original_content,
+            user_id=message.author.id,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            terminal_service=self._terminal_service,
+        )
+        if terminal_response.handled:
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=terminal_response.content,
+            )
+            return
+
+        download_response = await handle_download_command(
+            message=message,
+            content=original_content,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            whitelist=self._whitelist,
+            download_service=self._download_service,
+        )
+        if download_response.handled:
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=download_response.content,
+                attachments=download_response.attachments,
+            )
+            return
 
         is_reply_trigger = is_tracked_reply_trigger(
             message=message,
@@ -385,6 +427,30 @@ class SelfbotMessageHandler:
             primary_delivered=True,
             tracked_message_ids=[first.id, *continuation_ids],
             had_continuation_failures=had_continuation_failures,
+        )
+
+    async def _deliver_command_response(
+        self,
+        *,
+        message: discord.Message,
+        is_owner: bool,
+        original_content: str,
+        content: str,
+        attachments: list[tuple[str, bytes]] | None = None,
+    ) -> None:
+        if is_owner and not self._is_standalone_mode():
+            await deliver_owner_response(
+                message=message,
+                original_content=original_content,
+                reply_content=content,
+                reply_attachments=attachments,
+            )
+            return
+
+        await deliver_reply_response(
+            message=message,
+            reply_content=content,
+            reply_attachments=attachments,
         )
 
     async def _build_owner_response_chunks(

@@ -1,4 +1,9 @@
-from eva.ai.client import AIClientError, ChatCompletionClient, OpenAICompatibleClient
+from eva.ai.client import (
+    AIClientError,
+    ChatCompletionClient,
+    OpenAICompatibleClient,
+    ToolChatCompletionClient,
+)
 from eva.ai.orchestrator import ReplyGenerationService
 from eva.ai.respond import ResponseService, SearchResponseService, TOSCheckService
 from eva.ai.splitting import ResponseSplitService
@@ -12,4 +17,5 @@ __all__ = [
     "ResponseSplitService",
     "SearchResponseService",
     "TOSCheckService",
+    "ToolChatCompletionClient",
 ]

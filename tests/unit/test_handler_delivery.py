@@ -77,6 +77,8 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
         history_store=history_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
+        terminal_service=None,
+        download_service=None,
     )
 
     async def fake_context(

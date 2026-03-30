@@ -5,10 +5,13 @@ from typing import cast
 import discord
 import pytest
 
+import eva.discord.handlers as handlers
 from eva.ai import ReplyGenerationService, ResponseSplitService
 from eva.config import Settings
 from eva.discord.handlers import SelfbotMessageHandler, TriggerDecision
+from eva.downloads import DownloadService
 from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.terminal import TerminalService
 
 
 class DummyResponseService:
@@ -69,6 +72,12 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         image_model_name="sonar",
         image_language="en-US",
         image_incognito=True,
+        terminal_enabled=True,
+        terminal_autonomous_enabled=True,
+        terminal_workdir="/app",
+        terminal_shell="/bin/sh",
+        terminal_timeout_seconds=15.0,
+        terminal_max_output_chars=6000,
     )
     reply_generation_service = ReplyGenerationService(
         account_mode=settings.account_mode,
@@ -88,6 +97,8 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         history_store=ChannelHistoryStore(),
         tracked_messages=TrackedMessageStore(),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
+        terminal_service=None,
+        download_service=None,
     )
 
 
@@ -202,3 +213,171 @@ def test_assistant_mode_skips_ai_split_planner(monkeypatch, tmp_path) -> None:
     chunks = asyncio.run(handler._build_plain_response_chunks("one message only"))
 
     assert chunks == ["one message only"]
+
+
+def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
+    class FailingReplyGenerationService:
+        async def generate_reply(self, **kwargs: object) -> object:
+            raise AssertionError("AI generation should not run for terminal commands")
+
+    settings = Settings(
+        discord_token="token",
+        api_key="key",
+        serper_api_key=None,
+        image_api_key=None,
+        api_base_url="https://example.com/v1",
+        account_mode="assistant",
+        model_name="openai-gpt-oss-120b",
+        split_model_name="llama3.3-70b-instruct",
+        trigger_prefix="eva ",
+        max_history_messages=20,
+        response_context_messages=25,
+        request_timeout_seconds=30.0,
+        min_loading_seconds=0.0,
+        followup_delay_min_seconds=0.75,
+        followup_delay_max_seconds=1.5,
+        image_api_base_url="https://images.example.com/v1",
+        image_model_name="sonar",
+        image_language="en-US",
+        image_incognito=True,
+        terminal_enabled=True,
+        terminal_autonomous_enabled=True,
+        terminal_workdir=str(tmp_path),
+        terminal_shell="/bin/sh",
+        terminal_timeout_seconds=5.0,
+        terminal_max_output_chars=200,
+    )
+    terminal_service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+    handler = SelfbotMessageHandler(
+        settings=settings,
+        reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
+        history_store=ChannelHistoryStore(),
+        tracked_messages=TrackedMessageStore(),
+        whitelist=WhitelistStore(tmp_path / "whitelist.json"),
+        terminal_service=terminal_service,
+        download_service=None,
+    )
+
+    delivered: list[str] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(cast(str, kwargs["reply_content"]))
+        return SimpleNamespace(
+            primary_delivered=True, tracked_message_ids=[], had_continuation_failures=False
+        )
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    message = cast(
+        discord.Message,
+        SimpleNamespace(
+            author=SimpleNamespace(id=218675193592283137, display_name="admin"),
+            channel=SimpleNamespace(id=1),
+            content="eva shell pwd",
+            id=123,
+            reference=None,
+        ),
+    )
+    client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))
+
+    asyncio.run(handler.on_message(client, message))
+
+    assert len(delivered) == 1
+    assert "Terminal result" in delivered[0]
+
+
+def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
+    class FailingReplyGenerationService:
+        async def generate_reply(self, **kwargs: object) -> object:
+            raise AssertionError("AI generation should not run for download commands")
+
+    class FakeDownloadService:
+        async def download_media(self, **kwargs: object) -> object:
+            return type("Asset", (), {"filename": "clip.mp4", "data": b"video-bytes"})()
+
+    settings = Settings(
+        discord_token="token",
+        api_key="key",
+        serper_api_key=None,
+        image_api_key=None,
+        api_base_url="https://example.com/v1",
+        account_mode="assistant",
+        model_name="openai-gpt-oss-120b",
+        split_model_name="llama3.3-70b-instruct",
+        trigger_prefix="eva ",
+        max_history_messages=20,
+        response_context_messages=25,
+        request_timeout_seconds=30.0,
+        min_loading_seconds=0.0,
+        followup_delay_min_seconds=0.75,
+        followup_delay_max_seconds=1.5,
+        image_api_base_url="https://images.example.com/v1",
+        image_model_name="sonar",
+        image_language="en-US",
+        image_incognito=True,
+        terminal_enabled=True,
+        terminal_autonomous_enabled=True,
+        terminal_workdir=str(tmp_path),
+        terminal_shell="/bin/sh",
+        terminal_timeout_seconds=5.0,
+        terminal_max_output_chars=200,
+    )
+    whitelist = WhitelistStore(tmp_path / "whitelist.json")
+    whitelist.add(2)
+    handler = SelfbotMessageHandler(
+        settings=settings,
+        reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
+        history_store=ChannelHistoryStore(),
+        tracked_messages=TrackedMessageStore(),
+        whitelist=whitelist,
+        terminal_service=None,
+        download_service=cast(DownloadService, FakeDownloadService()),
+    )
+
+    delivered: list[tuple[str, list[tuple[str, bytes]] | None]] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(
+            (
+                cast(str, kwargs["reply_content"]),
+                cast(list[tuple[str, bytes]] | None, kwargs.get("reply_attachments")),
+            )
+        )
+        return SimpleNamespace(
+            primary_delivered=True,
+            tracked_message_ids=[],
+            had_continuation_failures=False,
+        )
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    class DummyTypingContext:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    message = cast(
+        discord.Message,
+        SimpleNamespace(
+            author=SimpleNamespace(id=2, display_name="friend"),
+            channel=SimpleNamespace(id=1, typing=lambda: DummyTypingContext()),
+            guild=SimpleNamespace(filesize_limit=8 * 1024 * 1024),
+            content="eva dl https://example.com/video",
+            id=123,
+            reference=None,
+        ),
+    )
+    client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))
+
+    asyncio.run(handler.on_message(client, message))
+
+    assert delivered == [
+        ("✔ Downloaded `clip.mp4`", [("clip.mp4", b"video-bytes")]),
+    ]

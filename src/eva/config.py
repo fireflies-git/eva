@@ -31,11 +31,21 @@ SETTINGS_DEFAULTS = {
     "image_model_name": "sonar",
     "image_language": "en-US",
     "image_incognito": True,
+    "terminal_enabled": True,
+    "terminal_autonomous_enabled": True,
+    "terminal_workdir": "/app",
+    "terminal_shell": "/bin/sh",
+    "terminal_timeout_seconds": 15.0,
+    "terminal_max_output_chars": 6000,
 }
 RESPONSE_CONTEXT_MESSAGES_MIN = 1
 RESPONSE_CONTEXT_MESSAGES_MAX = 100
 FOLLOWUP_DELAY_SECONDS_MIN = 0.0
 FOLLOWUP_DELAY_SECONDS_MAX = 10.0
+TERMINAL_TIMEOUT_SECONDS_MIN = 1.0
+TERMINAL_TIMEOUT_SECONDS_MAX = 120.0
+TERMINAL_MAX_OUTPUT_CHARS_MIN = 200
+TERMINAL_MAX_OUTPUT_CHARS_MAX = 20000
 ACCOUNT_MODES = {"assistant", "standalone"}
 
 
@@ -65,6 +75,12 @@ class Settings:
     image_model_name: str
     image_language: str
     image_incognito: bool
+    terminal_enabled: bool
+    terminal_autonomous_enabled: bool
+    terminal_workdir: str
+    terminal_shell: str
+    terminal_timeout_seconds: float
+    terminal_max_output_chars: int
 
 
 def get_runtime_base_dir() -> Path:
@@ -209,6 +225,34 @@ def load_settings() -> Settings:
             image_incognito=_optional_bool(
                 "IMAGE_INCOGNITO",
                 default=SETTINGS_DEFAULTS["image_incognito"],
+            ),
+            terminal_enabled=_optional_bool(
+                "TERMINAL_ENABLED",
+                default=SETTINGS_DEFAULTS["terminal_enabled"],
+            ),
+            terminal_autonomous_enabled=_optional_bool(
+                "TERMINAL_AUTONOMOUS_ENABLED",
+                default=SETTINGS_DEFAULTS["terminal_autonomous_enabled"],
+            ),
+            terminal_workdir=_optional_env(
+                "TERMINAL_WORKDIR",
+                default=SETTINGS_DEFAULTS["terminal_workdir"],
+            ),
+            terminal_shell=_optional_env(
+                "TERMINAL_SHELL",
+                default=SETTINGS_DEFAULTS["terminal_shell"],
+            ),
+            terminal_timeout_seconds=_optional_float(
+                "TERMINAL_TIMEOUT_SECONDS",
+                default=SETTINGS_DEFAULTS["terminal_timeout_seconds"],
+                minimum=TERMINAL_TIMEOUT_SECONDS_MIN,
+                maximum=TERMINAL_TIMEOUT_SECONDS_MAX,
+            ),
+            terminal_max_output_chars=_optional_int(
+                "TERMINAL_MAX_OUTPUT_CHARS",
+                default=SETTINGS_DEFAULTS["terminal_max_output_chars"],
+                minimum=TERMINAL_MAX_OUTPUT_CHARS_MIN,
+                maximum=TERMINAL_MAX_OUTPUT_CHARS_MAX,
             ),
         )
     except ConfigError as exc:

@@ -58,6 +58,17 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("IMAGE_MODEL_NAME", "sonar", False, "Image model name"),
     EnvField("IMAGE_LANGUAGE", "en-US", False, "Image generation language"),
     EnvField("IMAGE_INCOGNITO", "true", False, "Image generation incognito mode"),
+    EnvField("TERMINAL_ENABLED", "true", False, "Enable terminal access features"),
+    EnvField(
+        "TERMINAL_AUTONOMOUS_ENABLED",
+        "true",
+        False,
+        "Allow read-only terminal tool use during normal replies",
+    ),
+    EnvField("TERMINAL_WORKDIR", "/app", False, "Working directory for terminal commands"),
+    EnvField("TERMINAL_SHELL", "/bin/sh", False, "Shell used for terminal commands"),
+    EnvField("TERMINAL_TIMEOUT_SECONDS", "15", False, "Timeout for terminal commands"),
+    EnvField("TERMINAL_MAX_OUTPUT_CHARS", "6000", False, "Max terminal output to capture"),
 )
 
 

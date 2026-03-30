@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import cast
 
-from eva.ai.client import AIClientError, ChatCompletionClient
+from eva.ai.client import (
+    AIClientError,
+    ChatCompletionClient,
+    ModelToolCall,
+    ToolChatCompletionClient,
+)
 from eva.ai.parsing import parse_strict_yes_no
-from eva.ai.schemas import ChatMessage
+from eva.ai.schemas import ChatMessage, ToolCall
 from eva.constants import (
     MAX_SEARCH_REPLY_CONTEXT_MESSAGES,
     MAX_SEARCH_RESULTS,
@@ -13,10 +19,13 @@ from eva.constants import (
     SEARCH_REPLY_MAX_TOKENS,
 )
 from eva.search.schemas import SearchResultBundle
+from eva.terminal import TerminalClientError, TerminalCommandRejectedError, TerminalService
 
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
 TOS_MODERATION_MODEL = "llama3.3-70b-instruct"
+MAX_TERMINAL_TOOL_ROUNDS = 3
+MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 3
 
 
 def _build_user_message(
@@ -34,9 +43,18 @@ def _build_user_message(
 
 
 class ResponseService:
-    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: ChatCompletionClient,
+        model_name: str,
+        terminal_service: TerminalService | None = None,
+        autonomous_terminal_access: bool = False,
+    ) -> None:
         self._client = client
         self._model_name = model_name
+        self._terminal_service = terminal_service
+        self._autonomous_terminal_access = autonomous_terminal_access
 
     async def generate_reply(
         self,
@@ -58,6 +76,18 @@ class ResponseService:
             }
         )
 
+        tool_reply = await _generate_reply_with_terminal_tool(
+            client=self._client,
+            model_name=self._model_name,
+            messages=messages,
+            terminal_service=self._terminal_service,
+            autonomous_terminal_access=self._autonomous_terminal_access,
+            temperature=0.7,
+            max_tokens=REPLY_MAX_TOKENS,
+        )
+        if tool_reply is not None:
+            return tool_reply
+
         return await self._client.chat_completion(
             messages=messages,
             model=self._model_name,
@@ -68,9 +98,18 @@ class ResponseService:
 
 
 class SearchResponseService:
-    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: ChatCompletionClient,
+        model_name: str,
+        terminal_service: TerminalService | None = None,
+        autonomous_terminal_access: bool = False,
+    ) -> None:
         self._client = client
         self._model_name = model_name
+        self._terminal_service = terminal_service
+        self._autonomous_terminal_access = autonomous_terminal_access
 
     async def generate_reply(
         self,
@@ -95,6 +134,18 @@ class SearchResponseService:
                 ),
             },
         ]
+
+        tool_reply = await _generate_reply_with_terminal_tool(
+            client=self._client,
+            model_name=self._model_name,
+            messages=messages,
+            terminal_service=self._terminal_service,
+            autonomous_terminal_access=self._autonomous_terminal_access,
+            temperature=0.2,
+            max_tokens=SEARCH_REPLY_MAX_TOKENS,
+        )
+        if tool_reply is not None:
+            return tool_reply
 
         return await self._client.chat_completion(
             messages=messages,
@@ -199,3 +250,98 @@ class TOSCheckService:
             logger.warning("TOS moderation returned unexpected response: %r", response)
             return False
         return decision
+
+
+async def _generate_reply_with_terminal_tool(
+    *,
+    client: ChatCompletionClient,
+    model_name: str,
+    messages: Sequence[ChatMessage],
+    terminal_service: TerminalService | None,
+    autonomous_terminal_access: bool,
+    temperature: float,
+    max_tokens: int,
+) -> str | None:
+    if terminal_service is None or not autonomous_terminal_access:
+        return None
+    if not isinstance(client, ToolChatCompletionClient):
+        return None
+
+    tool_client = cast(ToolChatCompletionClient, client)
+    tool_messages: list[ChatMessage] = list(messages)
+    tool_definition = terminal_service.build_autonomous_tool_definition()
+
+    try:
+        for _ in range(MAX_TERMINAL_TOOL_ROUNDS):
+            response = await tool_client.chat_completion_with_tools(
+                messages=tool_messages,
+                tools=[tool_definition],
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                allow_reasoning_fallback=True,
+            )
+
+            if not response.tool_calls:
+                if response.content is None:
+                    raise AIClientError(EMPTY_RESPONSE_ERROR)
+                return response.content
+
+            assistant_message = _build_assistant_tool_message(response.content, response.tool_calls)
+            tool_messages.append(assistant_message)
+
+            for tool_call in response.tool_calls[:MAX_TERMINAL_TOOL_CALLS_PER_ROUND]:
+                tool_messages.append(
+                    await _execute_terminal_tool_call(
+                        terminal_service=terminal_service, tool_call=tool_call
+                    )
+                )
+        raise AIClientError("Model exceeded terminal tool-call limit")
+    except AIClientError:
+        logger.exception("Autonomous terminal tool flow failed; falling back to plain reply")
+        return None
+
+
+def _build_assistant_tool_message(
+    content: str | None,
+    tool_calls: Sequence[ModelToolCall],
+) -> ChatMessage:
+    serialized_tool_calls: list[ToolCall] = [
+        {
+            "id": tool_call.id,
+            "type": "function",
+            "function": {
+                "name": tool_call.name,
+                "arguments": tool_call.arguments,
+            },
+        }
+        for tool_call in tool_calls
+    ]
+    return {
+        "role": "assistant",
+        "content": content or "",
+        "tool_calls": serialized_tool_calls,
+    }
+
+
+async def _execute_terminal_tool_call(
+    *,
+    terminal_service: TerminalService,
+    tool_call: ModelToolCall,
+) -> ChatMessage:
+    if tool_call.name != terminal_service.autonomous_tool_name:
+        result = f"Tool error: unknown tool '{tool_call.name}'."
+    else:
+        try:
+            result = await terminal_service.run_autonomous_tool(tool_call.arguments)
+        except TerminalCommandRejectedError as exc:
+            result = f"Tool error: {exc}"
+        except TerminalClientError as exc:
+            result = f"Tool error: {exc}"
+
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call.id,
+        "name": tool_call.name,
+        "content": result,
+    }

@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from eva.runtime import (
+    ENV_FIELDS,
     _build_menu_frame,
     apply_menu_key,
     get_env_search_paths,
@@ -30,7 +31,7 @@ def test_is_linux_service_mode_false_on_non_linux(monkeypatch) -> None:
 
 def test_run_env_setup_wizard_writes_required_values(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
-    answers = iter(["token", "key", *([""] * 14)])
+    answers = iter(["token", "key", *([""] * (len(ENV_FIELDS) - 2))])
     output: list[str] = []
 
     run_env_setup_wizard(

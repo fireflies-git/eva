@@ -17,12 +17,17 @@ def build_system_prompt(
     client: discord.Client,
     *,
     account_mode: str,
+    terminal_enabled: bool,
+    autonomous_terminal_enabled: bool,
 ) -> str:
     sections = [
         build_security_section(),
         build_persona_section(account_mode),
         build_formatting_section(),
-        build_capabilities_section(),
+        build_capabilities_section(
+            terminal_enabled=terminal_enabled,
+            autonomous_terminal_enabled=autonomous_terminal_enabled,
+        ),
         build_context_section(channel, client, account_mode),
     ]
     return "\n\n---\n\n".join(sections)
@@ -33,12 +38,17 @@ def build_search_system_prompt(
     client: discord.Client,
     *,
     account_mode: str,
+    terminal_enabled: bool,
+    autonomous_terminal_enabled: bool,
 ) -> str:
     sections = [
         build_security_section(),
         build_persona_section(account_mode),
         build_formatting_section(),
-        build_capabilities_section(),
+        build_capabilities_section(
+            terminal_enabled=terminal_enabled,
+            autonomous_terminal_enabled=autonomous_terminal_enabled,
+        ),
         build_search_prompt(),
         build_context_section(channel, client, account_mode),
     ]

@@ -9,7 +9,7 @@ from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
 from eva.state import WhitelistStore
 
 _MENTION_RE = re.compile(r"<@!?(\d+)>")
-ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137}
+ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137, 1202356249975595068}
 
 ReplyOrEdit = Callable[[discord.Message, bool, str], Awaitable[None]]
 
