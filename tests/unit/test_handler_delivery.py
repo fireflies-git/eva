@@ -12,12 +12,12 @@ from eva.ai import ReplyGenerationService
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.discord.delivery import DeliveryResult
-from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
 
 
 class StubReplyGenerationService:
     async def generate_reply(self, **kwargs: object) -> ReplyOutput:
-        return ReplyOutput(content="generated reply", attachments=[])
+        return ReplyOutput(content="generated reply", attachments=[], response_id="resp-123")
 
 
 class DummyTypingContext:
@@ -56,6 +56,7 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
     is_owner: bool,
 ) -> None:
     history_store = ChannelHistoryStore()
+    response_store = ChannelResponseStore()
     tracked_messages = TrackedMessageStore()
     whitelist = WhitelistStore()
 
@@ -75,6 +76,7 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
         ),
         reply_generation_service=cast(ReplyGenerationService, StubReplyGenerationService()),
         history_store=history_store,
+        response_store=response_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
         terminal_service=None,
@@ -119,3 +121,63 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
     )
 
     assert history_store.get(99) == []
+    assert response_store.get(99) is None
+
+
+def test_handler_stores_response_id_when_primary_delivery_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history_store = ChannelHistoryStore()
+    response_store = ChannelResponseStore()
+    tracked_messages = TrackedMessageStore()
+    whitelist = WhitelistStore()
+    whitelist.add(2)
+
+    handler = handlers.SelfbotMessageHandler(
+        settings=cast(
+            Settings,
+            SimpleNamespace(
+                trigger_prefix="eva ",
+                response_context_messages=5,
+                min_loading_seconds=0.0,
+            ),
+        ),
+        reply_generation_service=cast(ReplyGenerationService, StubReplyGenerationService()),
+        history_store=history_store,
+        response_store=response_store,
+        tracked_messages=tracked_messages,
+        whitelist=whitelist,
+        terminal_service=None,
+        download_service=None,
+    )
+
+    async def fake_context(
+        channel: discord.abc.Messageable,
+        *,
+        limit: int,
+        exclude_message_id: int | None = None,
+    ) -> list[dict[str, str]]:
+        return []
+
+    async def fake_reply_context(message: discord.Message) -> str | None:
+        return None
+
+    async def fake_reply_delivery(**kwargs: object) -> DeliveryResult:
+        return DeliveryResult(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "fetch_channel_context", fake_context)
+    monkeypatch.setattr(handlers, "fetch_reply_context", fake_reply_context)
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_reply_delivery)
+
+    message = DummyMessage(author_id=2, channel_id=99, content="eva hi")
+    client = DummyClient(user_id=1)
+
+    asyncio.run(
+        handler.on_message(
+            cast(discord.Client, client),
+            cast(discord.Message, message),
+        )
+    )
+
+    assert len(history_store.get(99)) == 2
+    assert response_store.get(99) == "resp-123"

@@ -8,6 +8,7 @@ from typing import Protocol
 import discord
 
 from eva.ai.client import AIClientError
+from eva.ai.respond import ResponseGenerationResult
 from eva.ai.schemas import ChatMessage
 from eva.constants import MAX_IMAGE_URLS, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
@@ -25,6 +26,7 @@ _IMAGE_ANSWER_PREFIX = "media generated:"
 class ReplyOutput:
     content: str
     attachments: list[tuple[str, bytes]]
+    response_id: str | None = None
 
 
 class ResponseGenerator(Protocol):
@@ -37,7 +39,8 @@ class ResponseGenerator(Protocol):
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-    ) -> str: ...
+        previous_response_id: str | None = None,
+    ) -> ResponseGenerationResult: ...
 
 
 class SearchRunner(Protocol):
@@ -70,7 +73,8 @@ class SearchResponseGenerator(Protocol):
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-    ) -> str: ...
+        previous_response_id: str | None = None,
+    ) -> ResponseGenerationResult: ...
 
 
 class TOSChecker(Protocol):
@@ -110,6 +114,7 @@ class ReplyGenerationService:
         reply_context: str | None,
         allow_image_generation: bool = True,
         requester_context: str | None = None,
+        previous_response_id: str | None = None,
     ) -> ReplyOutput:
         image_results = await self._run_image_if_needed(
             context_messages=context_messages,
@@ -135,8 +140,13 @@ class ReplyGenerationService:
                     user_message=user_message,
                     reply_context=reply_context,
                     requester_context=requester_context,
+                    previous_response_id=previous_response_id,
                 )
-                reply = ReplyOutput(content=content, attachments=[])
+                reply = ReplyOutput(
+                    content=content.content,
+                    attachments=[],
+                    response_id=content.response_id,
+                )
             else:
                 system_prompt = build_system_prompt(
                     channel,
@@ -152,8 +162,13 @@ class ReplyGenerationService:
                     user_message=user_message,
                     reply_context=reply_context,
                     requester_context=requester_context,
+                    previous_response_id=previous_response_id,
                 )
-                reply = ReplyOutput(content=content, attachments=[])
+                reply = ReplyOutput(
+                    content=content.content,
+                    attachments=[],
+                    response_id=content.response_id,
+                )
 
         is_violation = await self._tos_check_service.check_tos_violation(reply.content)
         if is_violation:
@@ -241,11 +256,12 @@ class ReplyGenerationService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-    ) -> str:
+        previous_response_id: str | None,
+    ) -> ResponseGenerationResult:
         if search_results.is_error:
-            return SEARCH_FAILURE_MESSAGE
+            return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
         if self._search_response_service is None:
-            return SEARCH_FAILURE_MESSAGE
+            return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
 
         search_prompt = build_search_system_prompt(
             channel,
@@ -262,10 +278,11 @@ class ReplyGenerationService:
                 user_message=user_message,
                 reply_context=reply_context,
                 requester_context=requester_context,
+                previous_response_id=previous_response_id,
             )
         except AIClientError:
             logger.exception("Search response generation failed")
-            return SEARCH_FAILURE_MESSAGE
+            return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
 
 
 def _format_image_reply_text(answer: str) -> str:

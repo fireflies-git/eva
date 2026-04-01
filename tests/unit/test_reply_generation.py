@@ -3,6 +3,7 @@ from typing import cast
 
 import discord
 
+from eva.ai import ResponseGenerationResult
 from eva.ai.orchestrator import (
     IMAGE_FAILURE_MESSAGE,
     SEARCH_FAILURE_MESSAGE,
@@ -17,9 +18,9 @@ class StubResponseService:
         self.response = response
         self.calls: list[dict[str, object]] = []
 
-    async def generate_reply(self, **kwargs: object) -> str:
+    async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
         self.calls.append(kwargs)
-        return self.response
+        return ResponseGenerationResult(self.response)
 
 
 class StubSearchService:
@@ -43,9 +44,9 @@ class StubSearchResponseService:
         self.response = response
         self.calls: list[dict[str, object]] = []
 
-    async def generate_reply(self, **kwargs: object) -> str:
+    async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
         self.calls.append(kwargs)
-        return self.response
+        return ResponseGenerationResult(self.response)
 
 
 class StubTOSCheckService:

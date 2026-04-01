@@ -58,6 +58,13 @@ TERMINAL_MAX_OUTPUT_CHARS=6000
 - In DMs, Eva falls back to a default 10 MiB upload limit.
 - If the downloaded file is too large for Discord, the command fails with an error.
 
+## Channel Memory
+
+- Eva now keeps separate in-memory chat state per channel using the Responses API.
+- `eva clear`
+- Owner/admin only.
+- Clears the current channel's in-memory conversation state.
+
 ## Quality checks
 
 ```bash

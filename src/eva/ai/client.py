@@ -26,6 +26,27 @@ class ChatCompletionClient(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class StoredResponseOutput:
+    response_id: str
+    content: str
+
+
+@runtime_checkable
+class ResponsesClient(Protocol):
+    async def create_response(
+        self,
+        *,
+        instructions: str,
+        messages: Sequence[ChatMessage],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_output_tokens: int = 1024,
+        previous_response_id: str | None = None,
+        allow_reasoning_fallback: bool = False,
+    ) -> StoredResponseOutput: ...
+
+
+@dataclass(frozen=True, slots=True)
 class ModelToolCall:
     id: str
     name: str
@@ -158,6 +179,44 @@ class OpenAICompatibleClient:
             tool_calls=_parse_tool_calls(message),
         )
 
+    async def create_response(
+        self,
+        *,
+        instructions: str,
+        messages: Sequence[ChatMessage],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_output_tokens: int = 1024,
+        previous_response_id: str | None = None,
+        allow_reasoning_fallback: bool = False,
+    ) -> StoredResponseOutput:
+        payload: dict[str, Any] = {
+            "model": model or self._default_model,
+            "input": list(messages),
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "store": True,
+        }
+        if instructions.strip():
+            payload["instructions"] = instructions
+        if previous_response_id is not None:
+            payload["previous_response_id"] = previous_response_id
+
+        data = await self._request("POST", "/responses", json=payload)
+
+        response_id = data.get("id")
+        if not isinstance(response_id, str) or not response_id.strip():
+            raise AIClientError("Responses API returned an invalid response id")
+
+        content = _extract_response_output_text(
+            data,
+            allow_reasoning_fallback=allow_reasoning_fallback,
+        )
+        if content is None:
+            raise AIClientError("Model returned empty response content")
+
+        return StoredResponseOutput(response_id=response_id, content=content)
+
     async def _request(
         self,
         method: str,
@@ -220,3 +279,85 @@ def _parse_tool_calls(message: dict[str, Any]) -> list[ModelToolCall]:
         parsed.append(ModelToolCall(id=tool_id, name=name, arguments=arguments))
 
     return parsed
+
+
+def _extract_response_output_text(
+    data: dict[str, Any],
+    *,
+    allow_reasoning_fallback: bool,
+) -> str | None:
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    primary_sections: list[str] = []
+    reasoning_sections: list[str] = []
+    raw_output = data.get("output")
+    if not isinstance(raw_output, list):
+        return None
+
+    for item in raw_output:
+        if not isinstance(item, dict):
+            continue
+        _collect_response_sections(
+            item,
+            primary_sections=primary_sections,
+            reasoning_sections=reasoning_sections,
+        )
+
+    if primary_sections:
+        return "\n".join(primary_sections)
+    if allow_reasoning_fallback and reasoning_sections:
+        return "\n".join(reasoning_sections)
+    return None
+
+
+def _collect_response_sections(
+    item: dict[str, Any],
+    *,
+    primary_sections: list[str],
+    reasoning_sections: list[str],
+) -> None:
+    raw_content = item.get("content")
+    if isinstance(raw_content, str) and raw_content.strip():
+        primary_sections.append(raw_content.strip())
+    elif isinstance(raw_content, list):
+        for block in raw_content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            text = _extract_response_block_text(block)
+            if text is None:
+                continue
+            if block_type in {"output_text", "text"}:
+                primary_sections.append(text)
+            elif block_type in {"reasoning", "reasoning_text"}:
+                reasoning_sections.append(text)
+
+    item_type = item.get("type")
+    if item_type in {"reasoning", "reasoning_text"}:
+        text = _extract_response_block_text(item)
+        if text is not None:
+            reasoning_sections.append(text)
+
+
+def _extract_response_block_text(block: dict[str, Any]) -> str | None:
+    text = block.get("text")
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    summary = block.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
+    if isinstance(summary, list):
+        parts: list[str] = []
+        for item in summary:
+            if not isinstance(item, dict):
+                continue
+            summary_text = item.get("text")
+            if isinstance(summary_text, str) and summary_text.strip():
+                parts.append(summary_text.strip())
+        if parts:
+            return "\n".join(parts)
+
+    return None

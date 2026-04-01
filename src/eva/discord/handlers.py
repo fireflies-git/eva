@@ -11,6 +11,7 @@ from eva.ai import AIClientError, ReplyGenerationService, ResponseSplitService
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.constants import WARNING_MARK
+from eva.discord.clear_commands import handle_clear_command
 from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
 from eva.discord.download_commands import handle_download_command
@@ -35,7 +36,7 @@ from eva.downloads import DownloadService
 from eva.discord.triggers import TriggerDecision as TriggerDecision
 from eva.discord.triggers import is_tracked_reply_trigger, parse_trigger
 from eva.discord.user_metadata import build_requester_context
-from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
 from eva.terminal import TerminalService
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class SelfbotMessageHandler:
         settings: Settings,
         reply_generation_service: ReplyGenerationService,
         history_store: ChannelHistoryStore,
+        response_store: ChannelResponseStore,
         tracked_messages: TrackedMessageStore,
         whitelist: WhitelistStore,
         terminal_service: TerminalService | None,
@@ -60,6 +62,7 @@ class SelfbotMessageHandler:
         self._settings = settings
         self._reply_generation_service = reply_generation_service
         self._history_store = history_store
+        self._response_store = response_store
         self._tracked_messages = tracked_messages
         self._whitelist = whitelist
         self._terminal_service = terminal_service
@@ -74,7 +77,29 @@ class SelfbotMessageHandler:
         is_owner = message.author.id == user.id
         is_standalone = self._is_standalone_mode()
 
+        original_content = message.content
+        channel_id = getattr(message.channel, "id", None)
+        if channel_id is None:
+            return
+
         if is_standalone:
+            clear_response = await handle_clear_command(
+                content=original_content,
+                user_id=message.author.id,
+                is_owner=is_owner,
+                trigger_prefix=self._settings.trigger_prefix,
+            )
+            if clear_response.handled:
+                if clear_response.should_clear:
+                    self._clear_channel_memory(channel_id)
+                await self._deliver_command_response(
+                    message=message,
+                    is_owner=is_owner,
+                    original_content=original_content,
+                    content=clear_response.content,
+                )
+                return
+
             if is_owner:
                 return
         else:
@@ -82,10 +107,22 @@ class SelfbotMessageHandler:
             if not is_admin and not self._whitelist.contains(message.author.id):
                 return
 
-        original_content = message.content
-        channel_id = getattr(message.channel, "id", None)
-        if channel_id is None:
-            return
+            clear_response = await handle_clear_command(
+                content=original_content,
+                user_id=message.author.id,
+                is_owner=is_owner,
+                trigger_prefix=self._settings.trigger_prefix,
+            )
+            if clear_response.handled:
+                if clear_response.should_clear:
+                    self._clear_channel_memory(channel_id)
+                await self._deliver_command_response(
+                    message=message,
+                    is_owner=is_owner,
+                    original_content=original_content,
+                    content=clear_response.content,
+                )
+                return
 
         if not is_standalone:
             handled = await handle_whitelist_command(
@@ -290,6 +327,7 @@ class SelfbotMessageHandler:
             exclude_message_id=message.id,
         )
         history_messages = self._history_store.get(channel_id)
+        previous_response_id = self._response_store.get(channel_id)
 
         loading_text = build_loading_text(original_content)
         edit_started = time.monotonic()
@@ -306,6 +344,7 @@ class SelfbotMessageHandler:
                     reply_context=reply_context,
                     allow_image_generation=allow_image_generation,
                     requester_context=requester_context,
+                    previous_response_id=previous_response_id,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -332,6 +371,7 @@ class SelfbotMessageHandler:
                 requester_context,
             )
             self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
+            self._store_channel_response_id(channel_id, ai_reply.response_id)
 
         interaction_logger.info(
             "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
@@ -359,6 +399,7 @@ class SelfbotMessageHandler:
             exclude_message_id=message.id,
         )
         history_messages = self._history_store.get(channel_id)
+        previous_response_id = self._response_store.get(channel_id)
 
         try:
             async with message.channel.typing():
@@ -371,6 +412,7 @@ class SelfbotMessageHandler:
                     reply_context=reply_context,
                     allow_image_generation=allow_image_generation,
                     requester_context=requester_context,
+                    previous_response_id=previous_response_id,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -398,6 +440,7 @@ class SelfbotMessageHandler:
                 requester_context,
             )
             self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
+            self._store_channel_response_id(channel_id, ai_reply.response_id)
 
         interaction_logger.info(
             "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
@@ -452,6 +495,16 @@ class SelfbotMessageHandler:
             reply_content=content,
             reply_attachments=attachments,
         )
+
+    def _clear_channel_memory(self, channel_id: int) -> None:
+        self._history_store.clear(channel_id)
+        self._response_store.clear(channel_id)
+
+    def _store_channel_response_id(self, channel_id: int, response_id: str | None) -> None:
+        if response_id is None:
+            self._response_store.clear(channel_id)
+            return
+        self._response_store.set(channel_id, response_id)
 
     async def _build_owner_response_chunks(
         self,

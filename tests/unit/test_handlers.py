@@ -6,17 +6,17 @@ import discord
 import pytest
 
 import eva.discord.handlers as handlers
-from eva.ai import ReplyGenerationService, ResponseSplitService
+from eva.ai import ReplyGenerationService, ResponseGenerationResult, ResponseSplitService
 from eva.config import Settings
 from eva.discord.handlers import SelfbotMessageHandler, TriggerDecision
 from eva.downloads import DownloadService
-from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
 from eva.terminal import TerminalService
 
 
 class DummyResponseService:
-    async def generate_reply(self, **kwargs: object) -> str:
-        return "unused"
+    async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
+        return ResponseGenerationResult("unused")
 
 
 class DummyTOSCheckService:
@@ -95,6 +95,7 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         reply_generation_service=reply_generation_service,
         response_split_service=response_split_service,
         history_store=ChannelHistoryStore(),
+        response_store=ChannelResponseStore(),
         tracked_messages=TrackedMessageStore(),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
         terminal_service=None,
@@ -257,6 +258,7 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         settings=settings,
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
         history_store=ChannelHistoryStore(),
+        response_store=ChannelResponseStore(),
         tracked_messages=TrackedMessageStore(),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
         terminal_service=terminal_service,
@@ -333,6 +335,7 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         settings=settings,
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
         history_store=ChannelHistoryStore(),
+        response_store=ChannelResponseStore(),
         tracked_messages=TrackedMessageStore(),
         whitelist=whitelist,
         terminal_service=None,
@@ -381,3 +384,43 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
     assert delivered == [
         ("✔ Downloaded `clip.mp4`", [("clip.mp4", b"video-bytes")]),
     ]
+
+
+def test_clear_command_clears_only_current_channel_memory(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path, account_mode="assistant")
+    handler._history_store.append_exchange(1, "hello", "hi")
+    handler._history_store.append_exchange(2, "yo", "sup")
+    handler._response_store.set(1, "resp-1")
+    handler._response_store.set(2, "resp-2")
+
+    delivered: list[str] = []
+
+    async def fake_deliver_owner_response(**kwargs: object) -> object:
+        delivered.append(cast(str, kwargs["reply_content"]))
+        return SimpleNamespace(
+            primary_delivered=True,
+            tracked_message_ids=[],
+            had_continuation_failures=False,
+        )
+
+    monkeypatch.setattr(handlers, "deliver_owner_response", fake_deliver_owner_response)
+
+    message = cast(
+        discord.Message,
+        SimpleNamespace(
+            author=SimpleNamespace(id=1, display_name="owner"),
+            channel=SimpleNamespace(id=1),
+            content="eva clear",
+            id=123,
+            reference=None,
+        ),
+    )
+    client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))
+
+    asyncio.run(handler.on_message(client, message))
+
+    assert delivered == ["✔ Cleared memory for this channel."]
+    assert handler._history_store.get(1) == []
+    assert handler._response_store.get(1) is None
+    assert len(handler._history_store.get(2)) == 2
+    assert handler._response_store.get(2) == "resp-2"

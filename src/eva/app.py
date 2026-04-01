@@ -16,7 +16,7 @@ from eva.discord import SelfbotMessageHandler, create_discord_client
 from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
-from eva.state import ChannelHistoryStore, TrackedMessageStore, WhitelistStore
+from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
 from eva.terminal import TerminalService
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,7 @@ class EvaApp:
             autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
         )
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
+        self._response_store = ChannelResponseStore()
         self._tracked_messages = TrackedMessageStore()
         self._whitelist = WhitelistStore()
         self._message_handler = SelfbotMessageHandler(
@@ -116,6 +117,7 @@ class EvaApp:
             reply_generation_service=self._reply_generation_service,
             response_split_service=self._response_split_service,
             history_store=self._history_store,
+            response_store=self._response_store,
             tracked_messages=self._tracked_messages,
             whitelist=self._whitelist,
             terminal_service=self._terminal_service,
