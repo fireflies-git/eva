@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from eva.constants import DISCORD_MESSAGE_LIMIT, LOADING_MESSAGES
 
 EMPTY_RESPONSE = "(empty response)"
-QUOTE_PREFIX = "-# > "
+QUOTE_PREFIX = "> "
 QUOTE_SEPARATOR = "\n "
 CONTINUATION_PREFIX = "-# (cont.)\n "
 _LIST_ITEM_RE = re.compile(r"^(?:[-*+]\s|\d+[.)]\s)")
