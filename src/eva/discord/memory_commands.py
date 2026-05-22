@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
+from eva.discord.command_outcome import CommandOutcome
 from eva.state import UserMemoryError, UserMemoryPersistenceError, UserMemoryStore
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryCommandResponse:
-    handled: bool
-    content: str = ""
-
 
 _REMEMBER_ALIASES = ("remember",)
 _FORGET_ALIASES = ("forget",)
@@ -25,10 +17,10 @@ async def handle_memory_command(
     user_id: int,
     trigger_prefix: str,
     memory_store: UserMemoryStore,
-) -> MemoryCommandResponse:
+) -> CommandOutcome:
     parsed = _parse_memory_command(content=content, trigger_prefix=trigger_prefix)
     if parsed is None:
-        return MemoryCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     verb, argument = parsed
 
@@ -41,7 +33,7 @@ async def handle_memory_command(
     if verb == "forget":
         return _handle_forget(memory_store, user_id=user_id, argument=argument)
 
-    return MemoryCommandResponse(handled=False)
+    return CommandOutcome.not_handled()
 
 
 def format_memories_for_prompt(notes: list[str]) -> str | None:
@@ -54,10 +46,10 @@ def format_memories_for_prompt(notes: list[str]) -> str | None:
     return "\n".join(lines)
 
 
-def _format_listing(memory_store: UserMemoryStore, user_id: int) -> MemoryCommandResponse:
+def _format_listing(memory_store: UserMemoryStore, user_id: int) -> CommandOutcome:
     notes = memory_store.get(user_id)
     if not notes:
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=(
                 f"{WARNING_MARK} You have no remembered facts. "
@@ -65,7 +57,7 @@ def _format_listing(memory_store: UserMemoryStore, user_id: int) -> MemoryComman
             ),
         )
     body = "\n".join(f"{i}. {note}" for i, note in enumerate(notes, start=1))
-    return MemoryCommandResponse(
+    return CommandOutcome(
         handled=True,
         content=f"{CHECK_MARK} Your remembered facts:\n{body}",
     )
@@ -76,17 +68,17 @@ def _handle_remember(
     *,
     user_id: int,
     note: str,
-) -> MemoryCommandResponse:
+) -> CommandOutcome:
     try:
         saved = memory_store.add(user_id, note)
     except UserMemoryError as exc:
-        return MemoryCommandResponse(handled=True, content=f"{WARNING_MARK} {exc}")
+        return CommandOutcome(handled=True, content=f"{WARNING_MARK} {exc}")
     except UserMemoryPersistenceError:
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Failed to persist your memory. Try again later.",
         )
-    return MemoryCommandResponse(handled=True, content=f"{CHECK_MARK} Remembered: {saved}")
+    return CommandOutcome(handled=True, content=f"{CHECK_MARK} Remembered: {saved}")
 
 
 def _handle_forget(
@@ -94,10 +86,10 @@ def _handle_forget(
     *,
     user_id: int,
     argument: str,
-) -> MemoryCommandResponse:
+) -> CommandOutcome:
     normalized = argument.strip().lower()
     if not normalized:
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} Usage: `forget <N>` or `forget all`.",
         )
@@ -106,16 +98,16 @@ def _handle_forget(
         try:
             removed = memory_store.clear(user_id)
         except UserMemoryPersistenceError:
-            return MemoryCommandResponse(
+            return CommandOutcome(
                 handled=True,
                 content=f"{X_MARK} Failed to persist your memory. Try again later.",
             )
         if removed == 0:
-            return MemoryCommandResponse(
+            return CommandOutcome(
                 handled=True,
                 content=f"{WARNING_MARK} You have no remembered facts to forget.",
             )
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{CHECK_MARK} Forgot all {removed} of your remembered facts.",
         )
@@ -123,7 +115,7 @@ def _handle_forget(
     try:
         index = int(normalized)
     except ValueError:
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} Usage: `forget <N>` or `forget all`.",
         )
@@ -131,16 +123,16 @@ def _handle_forget(
     try:
         removed_note = memory_store.remove(user_id, index)
     except UserMemoryPersistenceError:
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Failed to persist your memory. Try again later.",
         )
     if removed_note is None:
-        return MemoryCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} No remembered fact at index {index}.",
         )
-    return MemoryCommandResponse(handled=True, content=f"{CHECK_MARK} Forgot: {removed_note}")
+    return CommandOutcome(handled=True, content=f"{CHECK_MARK} Forgot: {removed_note}")
 
 
 def _parse_memory_command(*, content: str, trigger_prefix: str) -> tuple[str, str] | None:

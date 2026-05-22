@@ -9,6 +9,7 @@ import discord
 
 from eva.ai import AIClientError, SummarizationEmptyError, SummarizationService
 from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
+from eva.discord.command_outcome import CommandOutcome
 from eva.discord.context import fetch_channel_context
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,6 @@ def is_summarize_command(*, content: str, trigger_prefix: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
-class SummarizeCommandResponse:
-    handled: bool
-    content: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class _ParsedSummarize:
     requested_count: int | None
     argument_invalid: bool
@@ -51,19 +46,19 @@ async def handle_summarize_command(
     trigger_prefix: str,
     summarization_service: SummarizationService | None,
     requester_context: str | None = None,
-) -> SummarizeCommandResponse:
+) -> CommandOutcome:
     parsed = _parse_summarize_command(content=content, trigger_prefix=trigger_prefix)
     if parsed is None:
-        return SummarizeCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     if summarization_service is None:
-        return SummarizeCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Summarization is not available right now.",
         )
 
     if parsed.argument_invalid:
-        return SummarizeCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=(
                 f"{WARNING_MARK} Usage: `summarize [N]` where N is between "
@@ -75,7 +70,7 @@ async def handle_summarize_command(
     if requested is None:
         limit = DEFAULT_SUMMARIZE_MESSAGES
     elif requested < SUMMARIZE_MESSAGES_MIN or requested > SUMMARIZE_MESSAGES_MAX:
-        return SummarizeCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=(
                 f"{WARNING_MARK} Choose a number between "
@@ -91,7 +86,7 @@ async def handle_summarize_command(
         exclude_message_id=message.id,
     )
     if not channel_messages:
-        return SummarizeCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} I couldn't find any recent messages to summarize.",
         )
@@ -102,23 +97,23 @@ async def handle_summarize_command(
             requester_context=requester_context,
         )
     except SummarizationEmptyError as exc:
-        return SummarizeCommandResponse(handled=True, content=f"{WARNING_MARK} {exc}")
+        return CommandOutcome(handled=True, content=f"{WARNING_MARK} {exc}")
     except AIClientError as exc:
         logger.exception("Summarization failed")
-        return SummarizeCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Couldn't summarize: {exc}",
         )
 
     summary = summary.strip()
     if not summary:
-        return SummarizeCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} Got an empty summary back.",
         )
 
     header = f"{CHECK_MARK} Summary of the last {len(channel_messages)} messages:"
-    return SummarizeCommandResponse(handled=True, content=f"{header}\n{summary}")
+    return CommandOutcome(handled=True, content=f"{header}\n{summary}")
 
 
 def _parse_summarize_command(

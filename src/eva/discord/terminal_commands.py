@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from eva.constants import CHECK_MARK, X_MARK
+from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import is_admin_user
 from eva.terminal import TerminalClientError, TerminalService, format_terminal_result
 
 _TERMINAL_COMMANDS = ("shell", "exec")
-
-
-@dataclass(frozen=True, slots=True)
-class TerminalCommandResponse:
-    handled: bool
-    content: str = ""
 
 
 async def handle_terminal_command(
@@ -22,26 +15,26 @@ async def handle_terminal_command(
     is_owner: bool,
     trigger_prefix: str,
     terminal_service: TerminalService | None,
-) -> TerminalCommandResponse:
+) -> CommandOutcome:
     query = _parse_terminal_query(content=content, trigger_prefix=trigger_prefix)
     if query is None:
-        return TerminalCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     if not is_admin_user(user_id=user_id, is_owner=is_owner):
-        return TerminalCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} You don't have permission to use terminal commands.",
         )
 
     if terminal_service is None:
-        return TerminalCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Terminal access is disabled.",
         )
 
     if not query:
         usage = f"{trigger_prefix.strip()} shell <command>"
-        return TerminalCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Usage: `{usage}`",
         )
@@ -49,12 +42,12 @@ async def handle_terminal_command(
     try:
         result = await terminal_service.run(query)
     except TerminalClientError as exc:
-        return TerminalCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Terminal error: {exc}",
         )
 
-    return TerminalCommandResponse(
+    return CommandOutcome(
         handled=True,
         content=f"{CHECK_MARK} Terminal result\n\n{format_terminal_result(result)}",
     )

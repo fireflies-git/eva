@@ -1,16 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from eva.constants import CHECK_MARK, X_MARK
+from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import is_admin_user
-
-
-@dataclass(frozen=True, slots=True)
-class ClearCommandResponse:
-    handled: bool
-    content: str = ""
-    should_clear: bool = False
 
 
 async def handle_clear_command(
@@ -19,18 +11,18 @@ async def handle_clear_command(
     user_id: int,
     is_owner: bool,
     trigger_prefix: str,
-) -> ClearCommandResponse:
+) -> CommandOutcome:
     command = _parse_clear_command(content=content, trigger_prefix=trigger_prefix)
     if command is None:
-        return ClearCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     if not is_admin_user(user_id=user_id, is_owner=is_owner):
-        return ClearCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} You don't have permission to clear channel memory.",
         )
 
-    return ClearCommandResponse(
+    return CommandOutcome(
         handled=True,
         content=f"{CHECK_MARK} Cleared memory for this channel.",
         should_clear=True,

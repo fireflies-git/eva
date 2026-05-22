@@ -2,23 +2,16 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 
 import discord
 
 from eva.constants import CHECK_MARK, X_MARK
+from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import is_admin_user
 from eva.downloads import DownloadClientError, DownloadService
 from eva.state import WhitelistStore
 
 _DOWNLOAD_COMMANDS = ("dl", "download")
-
-
-@dataclass(frozen=True, slots=True)
-class DownloadCommandResponse:
-    handled: bool
-    content: str = ""
-    attachments: list[tuple[str, bytes]] = field(default_factory=list)
 
 
 async def handle_download_command(
@@ -29,29 +22,29 @@ async def handle_download_command(
     trigger_prefix: str,
     whitelist: WhitelistStore,
     download_service: DownloadService | None,
-) -> DownloadCommandResponse:
+) -> CommandOutcome:
     url = _parse_download_query(content=content, trigger_prefix=trigger_prefix)
     if url is None:
-        return DownloadCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     is_allowed = is_admin_user(user_id=message.author.id, is_owner=is_owner) or whitelist.contains(
         message.author.id
     )
     if not is_allowed:
-        return DownloadCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} You don't have permission to use download commands.",
         )
 
     if download_service is None:
-        return DownloadCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Download access is disabled.",
         )
 
     if not url:
         usage = f"{trigger_prefix.strip()} dl <url>"
-        return DownloadCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Usage: `{usage}`",
         )
@@ -64,12 +57,12 @@ async def handle_download_command(
                 guild_filesize_limit=guild_filesize_limit,
             )
         except DownloadClientError as exc:
-            return DownloadCommandResponse(
+            return CommandOutcome(
                 handled=True,
                 content=f"{X_MARK} {exc}",
             )
 
-    return DownloadCommandResponse(
+    return CommandOutcome(
         handled=True,
         content=f"{CHECK_MARK} Downloaded `{asset.filename}`",
         attachments=[(asset.filename, asset.data)],

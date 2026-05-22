@@ -17,6 +17,7 @@ from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.constants import WARNING_MARK
 from eva.discord.clear_commands import handle_clear_command
+from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
 from eva.discord.delivery import (
@@ -29,19 +30,17 @@ from eva.discord.delivery import (
     safe_send,
 )
 from eva.discord.download_commands import handle_download_command
-from eva.discord.formatting import (
-    build_loading_text,
-    build_plain_response_chunks,
-    build_response_chunk_layout,
-    build_response_chunks,
-    format_response_chunks,
-)
+from eva.discord.formatting import build_loading_text, build_plain_response_chunks
 from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
 from eva.discord.reminder_commands import handle_reminder_command
 from eva.discord.summarize_commands import handle_summarize_command, is_summarize_command
 from eva.discord.terminal_commands import handle_terminal_command
 from eva.discord.triggers import TriggerDecision as TriggerDecision
-from eva.discord.triggers import is_tracked_reply_trigger, parse_trigger
+from eva.discord.triggers import (
+    decide_standalone_trigger,
+    is_tracked_reply_trigger,
+    parse_trigger,
+)
 from eva.discord.user_metadata import build_requester_context
 from eva.downloads import DownloadService
 from eva.state import (
@@ -106,150 +105,24 @@ class SelfbotMessageHandler:
         if channel_id is None:
             return
 
-        if is_standalone:
-            clear_response = await handle_clear_command(
-                content=original_content,
-                user_id=message.author.id,
-                is_owner=is_owner,
-                trigger_prefix=self._settings.trigger_prefix,
-            )
-            if clear_response.handled:
-                if clear_response.should_clear:
-                    self._clear_channel_memory(channel_id)
-                await self._deliver_command_response(
-                    message=message,
-                    is_owner=is_owner,
-                    original_content=original_content,
-                    content=clear_response.content,
-                )
-                return
-
-            if is_owner:
-                return
-        else:
+        if not is_standalone:
             is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
             if not is_admin and not self._whitelist.contains(message.author.id):
                 return
 
-            clear_response = await handle_clear_command(
-                content=original_content,
-                user_id=message.author.id,
-                is_owner=is_owner,
-                trigger_prefix=self._settings.trigger_prefix,
-            )
-            if clear_response.handled:
-                if clear_response.should_clear:
-                    self._clear_channel_memory(channel_id)
-                await self._deliver_command_response(
-                    message=message,
-                    is_owner=is_owner,
-                    original_content=original_content,
-                    content=clear_response.content,
-                )
-                return
-
-        if not is_standalone:
-            handled = await handle_whitelist_command(
-                message=message,
-                content=original_content,
-                is_owner=is_owner,
-                trigger_prefix=self._settings.trigger_prefix,
-                whitelist=self._whitelist,
-                reply_or_edit=safe_reply_or_edit,
-            )
-            if handled:
-                return
-
-        terminal_response = await handle_terminal_command(
-            content=original_content,
-            user_id=message.author.id,
-            is_owner=is_owner,
-            trigger_prefix=self._settings.trigger_prefix,
-            terminal_service=self._terminal_service,
-        )
-        if terminal_response.handled:
-            await self._deliver_command_response(
-                message=message,
-                is_owner=is_owner,
-                original_content=original_content,
-                content=terminal_response.content,
-            )
-            return
-
-        download_response = await handle_download_command(
+        if await self._dispatch_commands(
             message=message,
-            content=original_content,
             is_owner=is_owner,
-            trigger_prefix=self._settings.trigger_prefix,
-            whitelist=self._whitelist,
-            download_service=self._download_service,
-        )
-        if download_response.handled:
-            await self._deliver_command_response(
-                message=message,
-                is_owner=is_owner,
-                original_content=original_content,
-                content=download_response.content,
-                attachments=download_response.attachments,
-            )
-            return
-
-        reminder_response = await handle_reminder_command(
-            message=message,
-            content=original_content,
-            trigger_prefix=self._settings.trigger_prefix,
-            reminder_store=self._reminder_store,
-        )
-        if reminder_response.handled:
-            await self._deliver_command_response(
-                message=message,
-                is_owner=is_owner,
-                original_content=original_content,
-                content=reminder_response.content,
-            )
-            return
-
-        memory_response = await handle_memory_command(
-            content=original_content,
-            user_id=message.author.id,
-            trigger_prefix=self._settings.trigger_prefix,
-            memory_store=self._user_memory,
-        )
-        if memory_response.handled:
-            await self._deliver_command_response(
-                message=message,
-                is_owner=is_owner,
-                original_content=original_content,
-                content=memory_response.content,
-            )
-            return
-
-        if is_summarize_command(
-            content=original_content,
-            trigger_prefix=self._settings.trigger_prefix,
+            is_standalone=is_standalone,
+            original_content=original_content,
+            channel_id=channel_id,
         ):
-            if not self._consume_rate_limit(user_id=message.author.id, is_owner=is_owner):
-                interaction_logger.info(
-                    "rate_limited summarize channel_id=%s author_id=%s",
-                    channel_id,
-                    message.author.id,
-                )
-                return
-            summarize_response = await handle_summarize_command(
-                message=message,
-                content=original_content,
-                trigger_prefix=self._settings.trigger_prefix,
-                summarization_service=self._summarization_service,
-                requester_context=self._build_requester_context_with_memory(message),
-            )
-            if summarize_response.handled:
-                await self._deliver_command_response(
-                    message=message,
-                    is_owner=is_owner,
-                    original_content=original_content,
-                    content=summarize_response.content,
-                )
-                return
+            return
+
+        # In standalone mode the bot account *is* the owner — own messages stop here
+        # unless they were a command (handled above).
+        if is_standalone and is_owner:
+            return
 
         is_reply_trigger = is_tracked_reply_trigger(
             message=message,
@@ -295,28 +168,181 @@ class SelfbotMessageHandler:
             original_content,
         )
 
-        if not is_standalone and is_owner:
-            await self._process_response_flow(
-                client=client,
-                message=message,
-                original_content=original_content,
-                channel_id=channel_id,
-                user_query=decision.user_query,
-                reply_context=reply_context,
-                allow_image_generation=not decision.is_reply_trigger,
-                requester_context=requester_context,
-            )
-            return
-
-        await self._process_whitelisted_user_flow(
+        await self._process_reply_flow(
             client=client,
             message=message,
+            original_content=original_content,
             channel_id=channel_id,
             user_query=decision.user_query,
             reply_context=reply_context,
             allow_image_generation=not decision.is_reply_trigger,
             requester_context=requester_context,
+            is_owner=is_owner,
+            is_standalone=is_standalone,
         )
+
+    async def _dispatch_commands(
+        self,
+        *,
+        message: discord.Message,
+        is_owner: bool,
+        is_standalone: bool,
+        original_content: str,
+        channel_id: int,
+    ) -> bool:
+        clear_outcome = await handle_clear_command(
+            content=original_content,
+            user_id=message.author.id,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+        )
+        if await self._handle_command_outcome(
+            outcome=clear_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        if not is_standalone and await handle_whitelist_command(
+            message=message,
+            content=original_content,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            whitelist=self._whitelist,
+            reply_or_edit=safe_reply_or_edit,
+        ):
+            return True
+
+        terminal_outcome = await handle_terminal_command(
+            content=original_content,
+            user_id=message.author.id,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            terminal_service=self._terminal_service,
+        )
+        if await self._handle_command_outcome(
+            outcome=terminal_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        download_outcome = await handle_download_command(
+            message=message,
+            content=original_content,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            whitelist=self._whitelist,
+            download_service=self._download_service,
+        )
+        if await self._handle_command_outcome(
+            outcome=download_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        reminder_outcome = await handle_reminder_command(
+            message=message,
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+            reminder_store=self._reminder_store,
+        )
+        if await self._handle_command_outcome(
+            outcome=reminder_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        memory_outcome = await handle_memory_command(
+            content=original_content,
+            user_id=message.author.id,
+            trigger_prefix=self._settings.trigger_prefix,
+            memory_store=self._user_memory,
+        )
+        if await self._handle_command_outcome(
+            outcome=memory_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        return await self._dispatch_summarize_command(
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        )
+
+    async def _dispatch_summarize_command(
+        self,
+        *,
+        message: discord.Message,
+        is_owner: bool,
+        original_content: str,
+        channel_id: int,
+    ) -> bool:
+        if not is_summarize_command(
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+        ):
+            return False
+
+        if not self._consume_rate_limit(user_id=message.author.id, is_owner=is_owner):
+            interaction_logger.info(
+                "rate_limited summarize channel_id=%s author_id=%s",
+                channel_id,
+                message.author.id,
+            )
+            return True
+
+        outcome = await handle_summarize_command(
+            message=message,
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+            summarization_service=self._summarization_service,
+            requester_context=self._build_requester_context_with_memory(message),
+        )
+        return await self._handle_command_outcome(
+            outcome=outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        )
+
+    async def _handle_command_outcome(
+        self,
+        *,
+        outcome: CommandOutcome,
+        message: discord.Message,
+        is_owner: bool,
+        original_content: str,
+        channel_id: int,
+    ) -> bool:
+        if not outcome.handled:
+            return False
+        if outcome.should_clear:
+            self._clear_channel_memory(channel_id)
+        await self._deliver_command_response(
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            content=outcome.content,
+            attachments=outcome.attachments,
+        )
+        return True
 
     def _decide_trigger(
         self,
@@ -327,9 +353,10 @@ class SelfbotMessageHandler:
         mention_user_id: int,
     ) -> TriggerDecision:
         if self._is_standalone_mode():
-            return self._decide_standalone_trigger(
+            return decide_standalone_trigger(
                 message=message,
                 content=content,
+                trigger_prefix=self._settings.trigger_prefix,
                 is_reply_trigger=is_reply_trigger,
                 mention_user_id=mention_user_id,
             )
@@ -348,53 +375,13 @@ class SelfbotMessageHandler:
         is_reply_trigger: bool,
         mention_user_id: int,
     ) -> TriggerDecision:
-        text = content.strip()
-        if not text:
-            return TriggerDecision(should_process=False)
-
-        if self._is_dm_channel(message.channel):
-            return TriggerDecision(should_process=True, user_query=text)
-
-        if is_reply_trigger:
-            return TriggerDecision(
-                should_process=True,
-                user_query=text,
-                is_reply_trigger=True,
-            )
-
-        prefixed = parse_trigger(
+        return decide_standalone_trigger(
+            message=message,
             content=content,
             trigger_prefix=self._settings.trigger_prefix,
-            is_reply_trigger=False,
-            mention_user_id=None,
+            is_reply_trigger=is_reply_trigger,
+            mention_user_id=mention_user_id,
         )
-        if prefixed.should_process:
-            return prefixed
-
-        if self._message_mentions_user(message, mention_user_id):
-            query = self._strip_user_mentions(content, mention_user_id).strip()
-            if query:
-                return TriggerDecision(should_process=True, user_query=query)
-
-        return TriggerDecision(should_process=False)
-
-    @staticmethod
-    def _is_dm_channel(channel: discord.abc.Messageable) -> bool:
-        return getattr(channel, "guild", None) is None
-
-    @staticmethod
-    def _message_mentions_user(message: discord.Message, user_id: int) -> bool:
-        raw_mentions = getattr(message, "raw_mentions", None)
-        if isinstance(raw_mentions, list) and user_id in raw_mentions:
-            return True
-        content = getattr(message, "content", "")
-        return f"<@{user_id}>" in content or f"<@!{user_id}>" in content
-
-    @staticmethod
-    def _strip_user_mentions(content: str, user_id: int) -> str:
-        stripped = content.replace(f"<@{user_id}>", " ")
-        stripped = stripped.replace(f"<@!{user_id}>", " ")
-        return " ".join(stripped.split())
 
     def _is_standalone_mode(self) -> bool:
         return getattr(self._settings, "account_mode", "assistant") == "standalone"
@@ -411,7 +398,7 @@ class SelfbotMessageHandler:
             return base
         return f"{base}\n\n{memories}"
 
-    async def _process_response_flow(
+    async def _process_reply_flow(
         self,
         *,
         client: discord.Client,
@@ -422,6 +409,8 @@ class SelfbotMessageHandler:
         reply_context: str | None,
         allow_image_generation: bool,
         requester_context: str,
+        is_owner: bool,
+        is_standalone: bool,
     ) -> None:
         response_context = await fetch_channel_context(
             message.channel,
@@ -431,9 +420,10 @@ class SelfbotMessageHandler:
         history_messages = self._history_store.get(channel_id)
         previous_response_id = self._response_store.get(channel_id)
 
-        loading_text = build_loading_text(original_content)
-        edit_started = time.monotonic()
-        await safe_edit(message, loading_text)
+        use_owner_edit = is_owner and not is_standalone
+        edit_started = time.monotonic() if use_owner_edit else None
+        if use_owner_edit:
+            await safe_edit(message, build_loading_text(original_content))
 
         try:
             async with message.channel.typing():
@@ -452,16 +442,18 @@ class SelfbotMessageHandler:
             logger.exception("AI response generation failed")
             ai_reply = ReplyOutput(content=f"{WARNING_MARK} AI error: {exc}", attachments=[])
 
-        elapsed = time.monotonic() - edit_started
-        min_loading_seconds = getattr(self._settings, "min_loading_seconds", 1.0)
-        if elapsed < min_loading_seconds:
-            await asyncio.sleep(min_loading_seconds - elapsed)
+        if edit_started is not None:
+            elapsed = time.monotonic() - edit_started
+            min_loading_seconds = getattr(self._settings, "min_loading_seconds", 1.0)
+            if elapsed < min_loading_seconds:
+                await asyncio.sleep(min_loading_seconds - elapsed)
 
-        delivery_result = await deliver_owner_response(
+        delivery_result = await self._deliver_ai_reply(
             message=message,
             original_content=original_content,
-            reply_content=ai_reply.content,
-            reply_attachments=ai_reply.attachments,
+            ai_reply=ai_reply,
+            is_owner=is_owner,
+            is_standalone=is_standalone,
         )
         for message_id in delivery_result.tracked_message_ids:
             self._tracked_messages.add(message_id)
@@ -484,73 +476,31 @@ class SelfbotMessageHandler:
             ai_reply.content,
         )
 
-    async def _process_whitelisted_user_flow(
+    async def _deliver_ai_reply(
         self,
         *,
-        client: discord.Client,
         message: discord.Message,
-        channel_id: int,
-        user_query: str,
-        reply_context: str | None,
-        allow_image_generation: bool,
-        requester_context: str,
-    ) -> None:
-        response_context = await fetch_channel_context(
-            message.channel,
-            limit=self._settings.response_context_messages,
-            exclude_message_id=message.id,
-        )
-        history_messages = self._history_store.get(channel_id)
-        previous_response_id = self._response_store.get(channel_id)
-
-        try:
-            async with message.channel.typing():
-                ai_reply = await self._reply_generation_service.generate_reply(
-                    channel=message.channel,
-                    client=client,
-                    context_messages=response_context,
-                    history_messages=history_messages,
-                    user_message=user_query,
-                    reply_context=reply_context,
-                    allow_image_generation=allow_image_generation,
-                    requester_context=requester_context,
-                    previous_response_id=previous_response_id,
-                )
-        except AIClientError as exc:
-            logger.exception("AI response generation failed")
-            ai_reply = ReplyOutput(content=f"{WARNING_MARK} AI error: {exc}", attachments=[])
-
-        if self._is_standalone_mode():
-            delivery_result = await self._deliver_standalone_reply_response(
+        original_content: str,
+        ai_reply: ReplyOutput,
+        is_owner: bool,
+        is_standalone: bool,
+    ) -> DeliveryResult:
+        if is_owner and not is_standalone:
+            return await deliver_owner_response(
                 message=message,
-                reply=ai_reply,
-            )
-        else:
-            delivery_result = await deliver_reply_response(
-                message=message,
+                original_content=original_content,
                 reply_content=ai_reply.content,
                 reply_attachments=ai_reply.attachments,
             )
-
-        for message_id in delivery_result.tracked_message_ids:
-            self._tracked_messages.add(message_id)
-
-        if delivery_result.primary_delivered:
-            stored_user_message = _build_stored_user_message(
-                user_query,
-                reply_context,
-                requester_context,
+        if is_standalone:
+            return await self._deliver_standalone_reply_response(
+                message=message,
+                reply=ai_reply,
             )
-            self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
-            self._store_channel_response_id(channel_id, ai_reply.response_id)
-
-        interaction_logger.info(
-            "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
-            channel_id,
-            message.id,
-            delivery_result.primary_delivered,
-            len(delivery_result.tracked_message_ids),
-            ai_reply.content,
+        return await deliver_reply_response(
+            message=message,
+            reply_content=ai_reply.content,
+            reply_attachments=ai_reply.attachments,
         )
 
     async def _deliver_standalone_reply_response(
@@ -607,24 +557,6 @@ class SelfbotMessageHandler:
             self._response_store.clear(channel_id)
             return
         self._response_store.set(channel_id, response_id)
-
-    async def _build_owner_response_chunks(
-        self,
-        original_content: str,
-        ai_reply: str,
-    ) -> list[str]:
-        if not self._is_standalone_mode() or self._response_split_service is None:
-            return build_response_chunks(original_content, ai_reply)
-
-        layout = build_response_chunk_layout(original_content)
-        planned_chunks = await self._response_split_service.split_reply(
-            reply_content=ai_reply,
-            first_limit=layout.first_body_limit,
-            continuation_limit=layout.continuation_body_limit,
-        )
-        if planned_chunks is None:
-            return build_response_chunks(original_content, ai_reply)
-        return format_response_chunks(original_content, planned_chunks)
 
     async def _build_plain_response_chunks(self, ai_reply: str) -> list[str]:
         if not self._is_standalone_mode() or self._response_split_service is None:

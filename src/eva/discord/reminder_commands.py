@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import discord
 
 from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
+from eva.discord.command_outcome import CommandOutcome
 from eva.reminders import (
     ReminderParseError,
     format_duration,
@@ -24,22 +24,16 @@ _FORGET_REMINDER_VERB = "forget"
 _FORGET_REMINDER_TARGET = "reminder"
 
 
-@dataclass(frozen=True, slots=True)
-class ReminderCommandResponse:
-    handled: bool
-    content: str = ""
-
-
 async def handle_reminder_command(
     *,
     message: discord.Message,
     content: str,
     trigger_prefix: str,
     reminder_store: ReminderStore,
-) -> ReminderCommandResponse:
+) -> CommandOutcome:
     parsed = _parse_command(content=content, trigger_prefix=trigger_prefix)
     if parsed is None:
-        return ReminderCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     verb, argument = parsed
     user_id = message.author.id
@@ -51,7 +45,7 @@ async def handle_reminder_command(
         return _forget_reminder(reminder_store, user_id=user_id, argument=argument)
     if verb in _REMIND_ALIASES:
         if channel_id is None:
-            return ReminderCommandResponse(
+            return CommandOutcome(
                 handled=True,
                 content=f"{X_MARK} I can't set a reminder here.",
             )
@@ -62,7 +56,7 @@ async def handle_reminder_command(
             argument=argument,
         )
 
-    return ReminderCommandResponse(handled=False)
+    return CommandOutcome.not_handled()
 
 
 def _schedule_reminder(
@@ -71,11 +65,11 @@ def _schedule_reminder(
     user_id: int,
     channel_id: int,
     argument: str,
-) -> ReminderCommandResponse:
+) -> CommandOutcome:
     try:
         parsed = parse_reminder_command(argument)
     except ReminderParseError as exc:
-        return ReminderCommandResponse(handled=True, content=f"{WARNING_MARK} {exc}")
+        return CommandOutcome(handled=True, content=f"{WARNING_MARK} {exc}")
 
     fire_at = datetime.now(UTC) + parsed.duration
     try:
@@ -86,15 +80,15 @@ def _schedule_reminder(
             text=parsed.text,
         )
     except ReminderError as exc:
-        return ReminderCommandResponse(handled=True, content=f"{WARNING_MARK} {exc}")
+        return CommandOutcome(handled=True, content=f"{WARNING_MARK} {exc}")
     except ReminderPersistenceError:
-        return ReminderCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Failed to persist your reminder. Try again later.",
         )
 
     pretty_duration = format_duration(parsed.duration)
-    return ReminderCommandResponse(
+    return CommandOutcome(
         handled=True,
         content=(
             f"{CHECK_MARK} Reminder #{reminder.id} set for in {pretty_duration} — "
@@ -107,10 +101,10 @@ def _list_reminders(
     reminder_store: ReminderStore,
     *,
     user_id: int,
-) -> ReminderCommandResponse:
+) -> CommandOutcome:
     reminders = reminder_store.list_for_user(user_id)
     if not reminders:
-        return ReminderCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} You have no active reminders.",
         )
@@ -124,7 +118,7 @@ def _list_reminders(
             else f"in {format_duration(remaining)}"
         )
         lines.append(f"#{reminder.id} ({when}): {reminder.text}")
-    return ReminderCommandResponse(handled=True, content="\n".join(lines))
+    return CommandOutcome(handled=True, content="\n".join(lines))
 
 
 def _forget_reminder(
@@ -132,14 +126,14 @@ def _forget_reminder(
     *,
     user_id: int,
     argument: str,
-) -> ReminderCommandResponse:
+) -> CommandOutcome:
     normalized = argument.strip().lower()
     if not normalized.startswith(_FORGET_REMINDER_TARGET):
-        return ReminderCommandResponse(handled=False)
+        return CommandOutcome.not_handled()
 
     after_target = normalized[len(_FORGET_REMINDER_TARGET) :].strip()
     if not after_target:
-        return ReminderCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} Usage: `forget reminder <id>`.",
         )
@@ -147,7 +141,7 @@ def _forget_reminder(
     try:
         reminder_id = int(after_target)
     except ValueError:
-        return ReminderCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} Usage: `forget reminder <id>`.",
         )
@@ -155,20 +149,20 @@ def _forget_reminder(
     try:
         removed = reminder_store.remove(user_id=user_id, reminder_id=reminder_id)
     except ReminderPersistenceError:
-        return ReminderCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Failed to persist your reminder change. Try again later.",
         )
     if removed is None:
-        return ReminderCommandResponse(
+        return CommandOutcome(
             handled=True,
             content=f"{WARNING_MARK} No reminder #{reminder_id} of yours.",
         )
     return _format_removed(removed)
 
 
-def _format_removed(reminder: Reminder) -> ReminderCommandResponse:
-    return ReminderCommandResponse(
+def _format_removed(reminder: Reminder) -> CommandOutcome:
+    return CommandOutcome(
         handled=True,
         content=f"{CHECK_MARK} Forgot reminder #{reminder.id}: \"{reminder.text}\"",
     )
