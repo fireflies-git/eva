@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import discord
 
@@ -77,7 +77,7 @@ def _schedule_reminder(
     except ReminderParseError as exc:
         return ReminderCommandResponse(handled=True, content=f"{WARNING_MARK} {exc}")
 
-    fire_at = datetime.now(timezone.utc) + parsed.duration
+    fire_at = datetime.now(UTC) + parsed.duration
     try:
         reminder = reminder_store.add(
             user_id=user_id,
@@ -114,7 +114,7 @@ def _list_reminders(
             handled=True,
             content=f"{WARNING_MARK} You have no active reminders.",
         )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lines = [f"{CHECK_MARK} Your reminders:"]
     for reminder in reminders:
         remaining = reminder.fire_at - now

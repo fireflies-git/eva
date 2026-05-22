@@ -19,10 +19,6 @@ from eva.constants import WARNING_MARK
 from eva.discord.clear_commands import handle_clear_command
 from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
-from eva.discord.download_commands import handle_download_command
-from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
-from eva.discord.reminder_commands import handle_reminder_command
-from eva.discord.summarize_commands import handle_summarize_command, is_summarize_command
 from eva.discord.delivery import (
     DeliveryResult,
     deliver_owner_response,
@@ -32,6 +28,7 @@ from eva.discord.delivery import (
     safe_reply_or_edit,
     safe_send,
 )
+from eva.discord.download_commands import handle_download_command
 from eva.discord.formatting import (
     build_loading_text,
     build_plain_response_chunks,
@@ -39,11 +36,14 @@ from eva.discord.formatting import (
     build_response_chunks,
     format_response_chunks,
 )
+from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
+from eva.discord.reminder_commands import handle_reminder_command
+from eva.discord.summarize_commands import handle_summarize_command, is_summarize_command
 from eva.discord.terminal_commands import handle_terminal_command
-from eva.downloads import DownloadService
 from eva.discord.triggers import TriggerDecision as TriggerDecision
 from eva.discord.triggers import is_tracked_reply_trigger, parse_trigger
 from eva.discord.user_metadata import build_requester_context
+from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
     ChannelResponseStore,

@@ -12,7 +12,7 @@ def test_build_response_chunks_respect_discord_limit() -> None:
 
 def test_build_response_chunks_contains_quote_prefix() -> None:
     chunks = build_response_chunks("eva test", "response")
-    assert chunks[0].startswith("-# > eva test\n ")
+    assert chunks[0].startswith("> eva test\n ")
 
 
 def test_build_response_chunks_create_continuations() -> None:

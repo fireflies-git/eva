@@ -92,9 +92,9 @@ class TerminalService:
             "function": {
                 "name": _AUTONOMOUS_TOOL_NAME,
                 "description": (
-                    "Run a read-only terminal command inside the current Docker container to inspect "
-                    "files, directories, and git state. Never use it to modify files, install "
-                    "packages, reveal secrets, or run interactive commands."
+                    "Run a read-only terminal command inside the current Docker container "
+                    "to inspect files, directories, and git state. Never use it to modify "
+                    "files, install packages, reveal secrets, or run interactive commands."
                 ),
                 "parameters": {
                     "type": "object",
@@ -215,11 +215,13 @@ class TerminalService:
             lowered = token.lower()
             if any(marker in lowered for marker in _SENSITIVE_PATH_MARKERS):
                 raise TerminalCommandRejectedError(
-                    "Autonomous terminal access cannot inspect secret-bearing paths like .env or keys."
+                    "Autonomous terminal access cannot inspect secret-bearing paths "
+                    "like .env or keys."
                 )
             if lowered.endswith(_SENSITIVE_SUFFIXES):
                 raise TerminalCommandRejectedError(
-                    "Autonomous terminal access cannot inspect secret-bearing paths like .env or keys."
+                    "Autonomous terminal access cannot inspect secret-bearing paths "
+                    "like .env or keys."
                 )
 
 

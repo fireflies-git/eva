@@ -1,6 +1,6 @@
 from eva.reminders.parser import (
-    ReminderParseError,
     ParsedReminder,
+    ReminderParseError,
     format_duration,
     parse_duration,
     parse_reminder_command,

@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import discord
 
@@ -60,7 +60,7 @@ class ReminderRunner:
                         self._stop_event.wait(),
                         timeout=self._check_interval,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
         except asyncio.CancelledError:
             raise
@@ -69,7 +69,7 @@ class ReminderRunner:
 
     async def _fire_due_reminders(self) -> None:
         try:
-            due = self._store.pop_due(now=datetime.now(timezone.utc))
+            due = self._store.pop_due(now=datetime.now(UTC))
         except ReminderPersistenceError:
             logger.warning("Failed to persist reminder firings; retrying next tick")
             return
