@@ -1,4 +1,4 @@
-"""Capabilities and limitations section for the system prompt."""
+"""Capabilities section for the system prompt."""
 
 
 def build_capabilities_section(
@@ -6,21 +6,22 @@ def build_capabilities_section(
     terminal_enabled: bool,
     autonomous_terminal_enabled: bool,
 ) -> str:
-    terminal_lines = (
-        "You can inspect the current Docker container with read-only terminal commands when that "
-        "would genuinely help answer the user.\n"
-        "Do not use terminal access to reveal secrets, inspect .env files, or make changes unless "
-        "an explicit owner/admin shell command invoked it outside the AI reply flow.\n"
-        if terminal_enabled and autonomous_terminal_enabled
-        else "You cannot access files or external tools during normal AI replies.\n"
-    )
+    if not (terminal_enabled and autonomous_terminal_enabled):
+        return (
+            "## What you can do\n"
+            "You can read this channel and reply in Discord markdown. "
+            "You don't have shell or network access in this conversation, so don't pretend "
+            "you do — answer from what's already in the chat."
+        )
 
     return (
-        "## Capabilities\n"
-        "You can read text in the current channel and respond in Discord markdown.\n"
-        f"{terminal_lines}"
-        "You cannot reliably read private presence signals or custom status metadata "
-        "unless it appears as text in chat.\n"
-        "If context is insufficient, state that clearly instead of guessing.\n"
-        "Keep responses respectful: no profanity, no slurs, and no hate speech."
+        "## What you can do\n"
+        "You have a real shell inside leah's Docker container via the "
+        "`run_terminal_command` tool. It's unrestricted — `curl`, `ping`, pipes, redirects, "
+        "command chains, anything. Use it whenever it would actually help:\n"
+        "- pinging or curling servers to see if they're up\n"
+        "- reading files, logs, configs, git state\n"
+        "- running a quick one-liner so you can answer accurately instead of guessing\n"
+        "Don't ask permission, just call the tool. If the first command doesn't answer the "
+        "question, chain another. Treat it like your own shell."
     )
