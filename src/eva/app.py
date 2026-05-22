@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from eva.ai import (
@@ -9,14 +10,25 @@ from eva.ai import (
     ResponseService,
     ResponseSplitService,
     SearchResponseService,
+    SummarizationService,
     TOSCheckService,
 )
 from eva.config import Settings
 from eva.discord import SelfbotMessageHandler, create_discord_client
+from eva.discord.commands import ALLOWED_ADMIN_IDS
 from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
+from eva.reminders import ReminderRunner
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
-from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
+from eva.state import (
+    ChannelHistoryStore,
+    ChannelResponseStore,
+    RateLimiter,
+    ReminderStore,
+    TrackedMessageStore,
+    UserMemoryStore,
+    WhitelistStore,
+)
 from eva.terminal import TerminalService
 
 logger = logging.getLogger(__name__)
@@ -98,6 +110,10 @@ class EvaApp:
             client=self._ai_client,
             model_name=settings.split_model_name,
         )
+        self._summarization_service = SummarizationService(
+            client=self._ai_client,
+            model_name=settings.model_name,
+        )
         self._reply_generation_service = ReplyGenerationService(
             account_mode=settings.account_mode,
             response_service=self._response_service,
@@ -112,6 +128,13 @@ class EvaApp:
         self._response_store = ChannelResponseStore()
         self._tracked_messages = TrackedMessageStore()
         self._whitelist = WhitelistStore()
+        self._user_memory = UserMemoryStore()
+        self._reminder_store = ReminderStore()
+        self._rate_limiter = RateLimiter(
+            max_requests=settings.rate_limit_max_requests,
+            window_seconds=settings.rate_limit_window_seconds,
+            exempt_user_ids=set(ALLOWED_ADMIN_IDS),
+        )
         self._message_handler = SelfbotMessageHandler(
             settings=settings,
             reply_generation_service=self._reply_generation_service,
@@ -120,10 +143,18 @@ class EvaApp:
             response_store=self._response_store,
             tracked_messages=self._tracked_messages,
             whitelist=self._whitelist,
+            user_memory=self._user_memory,
+            reminder_store=self._reminder_store,
+            rate_limiter=self._rate_limiter,
+            summarization_service=self._summarization_service,
             terminal_service=self._terminal_service,
             download_service=self._download_service,
         )
         self._discord_client = create_discord_client(self._message_handler)
+        self._reminder_runner = ReminderRunner(
+            store=self._reminder_store,
+            client_provider=lambda: self._discord_client,
+        )
 
     def run(self) -> None:
         asyncio.run(self._run())
@@ -135,9 +166,12 @@ class EvaApp:
             await self._image_client.start()
         if self._search_client is not None:
             await self._search_client.start()
+        self._reminder_runner.start()
         try:
             await self._discord_client.start(self._settings.discord_token)
         finally:
+            with contextlib.suppress(Exception):
+                await self._reminder_runner.stop()
             if self._search_client is not None:
                 await self._search_client.close()
             if self._image_client is not None:

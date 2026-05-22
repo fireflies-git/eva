@@ -37,6 +37,8 @@ SETTINGS_DEFAULTS = {
     "terminal_shell": "/bin/sh",
     "terminal_timeout_seconds": 15.0,
     "terminal_max_output_chars": 6000,
+    "rate_limit_max_requests": 20,
+    "rate_limit_window_seconds": 60.0,
 }
 RESPONSE_CONTEXT_MESSAGES_MIN = 1
 RESPONSE_CONTEXT_MESSAGES_MAX = 100
@@ -46,6 +48,10 @@ TERMINAL_TIMEOUT_SECONDS_MIN = 1.0
 TERMINAL_TIMEOUT_SECONDS_MAX = 120.0
 TERMINAL_MAX_OUTPUT_CHARS_MIN = 200
 TERMINAL_MAX_OUTPUT_CHARS_MAX = 20000
+RATE_LIMIT_MAX_REQUESTS_MIN = 1
+RATE_LIMIT_MAX_REQUESTS_MAX = 10000
+RATE_LIMIT_WINDOW_SECONDS_MIN = 1.0
+RATE_LIMIT_WINDOW_SECONDS_MAX = 3600.0
 ACCOUNT_MODES = {"assistant", "standalone"}
 
 
@@ -81,6 +87,8 @@ class Settings:
     terminal_shell: str
     terminal_timeout_seconds: float
     terminal_max_output_chars: int
+    rate_limit_max_requests: int
+    rate_limit_window_seconds: float
 
 
 def get_runtime_base_dir() -> Path:
@@ -253,6 +261,18 @@ def load_settings() -> Settings:
                 default=SETTINGS_DEFAULTS["terminal_max_output_chars"],
                 minimum=TERMINAL_MAX_OUTPUT_CHARS_MIN,
                 maximum=TERMINAL_MAX_OUTPUT_CHARS_MAX,
+            ),
+            rate_limit_max_requests=_optional_int(
+                "RATE_LIMIT_MAX_REQUESTS",
+                default=SETTINGS_DEFAULTS["rate_limit_max_requests"],
+                minimum=RATE_LIMIT_MAX_REQUESTS_MIN,
+                maximum=RATE_LIMIT_MAX_REQUESTS_MAX,
+            ),
+            rate_limit_window_seconds=_optional_float(
+                "RATE_LIMIT_WINDOW_SECONDS",
+                default=SETTINGS_DEFAULTS["rate_limit_window_seconds"],
+                minimum=RATE_LIMIT_WINDOW_SECONDS_MIN,
+                maximum=RATE_LIMIT_WINDOW_SECONDS_MAX,
             ),
         )
     except ConfigError as exc:
