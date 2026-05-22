@@ -26,8 +26,8 @@ from eva.terminal import TerminalClientError, TerminalCommandRejectedError, Term
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
 TOS_MODERATION_MODEL = "llama3.3-70b-instruct"
-MAX_TERMINAL_TOOL_ROUNDS = 3
-MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 3
+MAX_TERMINAL_TOOL_ROUNDS = 5
+MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
 
 
 @dataclass(frozen=True, slots=True)

@@ -32,7 +32,25 @@ def test_build_system_prompt_changes_identity_by_account_mode() -> None:
     assert "standalone Discord assistant account" in standalone_prompt
     assert "Account mode: assistant" in assistant_prompt
     assert "Account mode: standalone" in standalone_prompt
-    assert "read-only terminal commands" in assistant_prompt
+
+
+def test_build_system_prompt_advertises_terminal_tool_when_enabled() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=True,
+        autonomous_terminal_enabled=True,
+    )
+
+    assert "run_terminal_command" in prompt
+    assert "unrestricted" in prompt
 
 
 def test_build_system_prompt_omits_terminal_capability_when_disabled() -> None:
@@ -50,4 +68,45 @@ def test_build_system_prompt_omits_terminal_capability_when_disabled() -> None:
         autonomous_terminal_enabled=False,
     )
 
-    assert "cannot access files or external tools during normal AI replies" in prompt
+    assert "run_terminal_command" not in prompt
+    assert "don't have shell or network access" in prompt
+
+
+def test_build_system_prompt_includes_home_network() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=True,
+        autonomous_terminal_enabled=True,
+    )
+
+    assert "boston" in prompt
+    assert "10.0.0.2" in prompt
+    assert "seattle" in prompt
+    assert "10.0.0.187" in prompt
+
+
+def test_build_system_prompt_drops_old_security_section() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=True,
+        autonomous_terminal_enabled=True,
+    )
+
+    assert "Security Rules" not in prompt
+    assert "UNDER NO CIRCUMSTANCES" not in prompt

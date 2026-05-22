@@ -36,7 +36,7 @@ uv run eva --tray  # Windows only
   - `eva exec <command>`
 - These run inside Eva's Docker container working directory, which defaults to `/app`.
 - Explicit terminal commands are limited to the owner/admin command path.
-- Normal AI replies can also use a read-only terminal tool to inspect the container when it helps answer a question.
+- Normal AI replies can also call a `run_terminal_command` tool — unrestricted arbitrary shell (curl, ping, pipes, redirects) so Eva can check files, hit endpoints, or poke at the home network herself.
 
 Relevant env vars:
 

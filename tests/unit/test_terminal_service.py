@@ -53,7 +53,7 @@ def test_terminal_service_marks_timeout(tmp_path: Path) -> None:
     assert result.exit_code is None
 
 
-def test_terminal_service_rejects_mutating_autonomous_commands(tmp_path: Path) -> None:
+def test_run_read_only_allows_pipes(tmp_path: Path) -> None:
     service = TerminalService(
         workdir=tmp_path,
         shell="/bin/sh",
@@ -61,11 +61,13 @@ def test_terminal_service_rejects_mutating_autonomous_commands(tmp_path: Path) -
         max_output_chars=200,
     )
 
-    with pytest.raises(TerminalCommandRejectedError, match="Only a single read-only command"):
-        asyncio.run(service.run_read_only("ls && touch nope"))
+    result = asyncio.run(service.run_read_only("printf 'a\\nb\\nc\\n' | head -n 1"))
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "a"
 
 
-def test_terminal_service_rejects_sensitive_autonomous_paths(tmp_path: Path) -> None:
+def test_run_read_only_allows_command_chains(tmp_path: Path) -> None:
     service = TerminalService(
         workdir=tmp_path,
         shell="/bin/sh",
@@ -73,5 +75,35 @@ def test_terminal_service_rejects_sensitive_autonomous_paths(tmp_path: Path) -> 
         max_output_chars=200,
     )
 
-    with pytest.raises(TerminalCommandRejectedError, match="secret-bearing paths"):
-        asyncio.run(service.run_read_only("cat .env"))
+    result = asyncio.run(service.run_read_only("true && printf 'ok'"))
+
+    assert result.exit_code == 0
+    assert result.stdout == "ok"
+
+
+def test_run_read_only_rejects_empty_command(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    with pytest.raises(TerminalCommandRejectedError):
+        asyncio.run(service.run_read_only("   "))
+
+
+def test_autonomous_tool_definition_advertises_arbitrary_shell(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    definition = service.build_autonomous_tool_definition()
+    description = definition["function"]["description"]  # type: ignore[index]
+
+    assert "curl" in description
+    assert "ping" in description
+    assert "pipes" in description
