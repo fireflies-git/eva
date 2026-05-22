@@ -13,6 +13,7 @@ from eva.ai.respond import (
     TOSCheckService,
 )
 from eva.ai.splitting import ResponseSplitService
+from eva.ai.summarize import SummarizationEmptyError, SummarizationService
 
 __all__ = [
     "AIClientError",
@@ -24,6 +25,8 @@ __all__ = [
     "ResponsesClient",
     "ResponseSplitService",
     "SearchResponseService",
+    "SummarizationEmptyError",
+    "SummarizationService",
     "TOSCheckService",
     "ToolChatCompletionClient",
 ]

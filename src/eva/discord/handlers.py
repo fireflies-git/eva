@@ -7,7 +7,12 @@ import time
 
 import discord
 
-from eva.ai import AIClientError, ReplyGenerationService, ResponseSplitService
+from eva.ai import (
+    AIClientError,
+    ReplyGenerationService,
+    ResponseSplitService,
+    SummarizationService,
+)
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.constants import WARNING_MARK
@@ -15,6 +20,9 @@ from eva.discord.clear_commands import handle_clear_command
 from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
 from eva.discord.download_commands import handle_download_command
+from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
+from eva.discord.reminder_commands import handle_reminder_command
+from eva.discord.summarize_commands import handle_summarize_command, is_summarize_command
 from eva.discord.delivery import (
     DeliveryResult,
     deliver_owner_response,
@@ -36,7 +44,15 @@ from eva.downloads import DownloadService
 from eva.discord.triggers import TriggerDecision as TriggerDecision
 from eva.discord.triggers import is_tracked_reply_trigger, parse_trigger
 from eva.discord.user_metadata import build_requester_context
-from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
+from eva.state import (
+    ChannelHistoryStore,
+    ChannelResponseStore,
+    RateLimiter,
+    ReminderStore,
+    TrackedMessageStore,
+    UserMemoryStore,
+    WhitelistStore,
+)
 from eva.terminal import TerminalService
 
 logger = logging.getLogger(__name__)
@@ -55,6 +71,10 @@ class SelfbotMessageHandler:
         response_store: ChannelResponseStore,
         tracked_messages: TrackedMessageStore,
         whitelist: WhitelistStore,
+        user_memory: UserMemoryStore,
+        reminder_store: ReminderStore,
+        rate_limiter: RateLimiter,
+        summarization_service: SummarizationService | None,
         terminal_service: TerminalService | None,
         download_service: DownloadService | None,
         response_split_service: ResponseSplitService | None = None,
@@ -65,6 +85,10 @@ class SelfbotMessageHandler:
         self._response_store = response_store
         self._tracked_messages = tracked_messages
         self._whitelist = whitelist
+        self._user_memory = user_memory
+        self._reminder_store = reminder_store
+        self._rate_limiter = rate_limiter
+        self._summarization_service = summarization_service
         self._terminal_service = terminal_service
         self._download_service = download_service
         self._response_split_service = response_split_service
@@ -170,6 +194,63 @@ class SelfbotMessageHandler:
             )
             return
 
+        reminder_response = await handle_reminder_command(
+            message=message,
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+            reminder_store=self._reminder_store,
+        )
+        if reminder_response.handled:
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=reminder_response.content,
+            )
+            return
+
+        memory_response = await handle_memory_command(
+            content=original_content,
+            user_id=message.author.id,
+            trigger_prefix=self._settings.trigger_prefix,
+            memory_store=self._user_memory,
+        )
+        if memory_response.handled:
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=memory_response.content,
+            )
+            return
+
+        if is_summarize_command(
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+        ):
+            if not self._consume_rate_limit(user_id=message.author.id, is_owner=is_owner):
+                interaction_logger.info(
+                    "rate_limited summarize channel_id=%s author_id=%s",
+                    channel_id,
+                    message.author.id,
+                )
+                return
+            summarize_response = await handle_summarize_command(
+                message=message,
+                content=original_content,
+                trigger_prefix=self._settings.trigger_prefix,
+                summarization_service=self._summarization_service,
+                requester_context=self._build_requester_context_with_memory(message),
+            )
+            if summarize_response.handled:
+                await self._deliver_command_response(
+                    message=message,
+                    is_owner=is_owner,
+                    original_content=original_content,
+                    content=summarize_response.content,
+                )
+                return
+
         is_reply_trigger = is_tracked_reply_trigger(
             message=message,
             tracked_messages=self._tracked_messages,
@@ -185,8 +266,17 @@ class SelfbotMessageHandler:
         if not decision.should_process:
             return
 
+        if not self._consume_rate_limit(user_id=message.author.id, is_owner=is_owner):
+            interaction_logger.info(
+                "rate_limited channel_id=%s message_id=%s author_id=%s",
+                channel_id,
+                message.id,
+                message.author.id,
+            )
+            return
+
         reply_context = await fetch_reply_context(message)
-        requester_context = build_requester_context(message)
+        requester_context = self._build_requester_context_with_memory(message)
         interaction_logger.info(
             (
                 "incoming channel_id=%s message_id=%s author_id=%s "
@@ -308,6 +398,18 @@ class SelfbotMessageHandler:
 
     def _is_standalone_mode(self) -> bool:
         return getattr(self._settings, "account_mode", "assistant") == "standalone"
+
+    def _consume_rate_limit(self, *, user_id: int, is_owner: bool) -> bool:
+        if is_owner or is_admin_user(user_id=user_id, is_owner=is_owner):
+            return True
+        return self._rate_limiter.check_and_consume(user_id)
+
+    def _build_requester_context_with_memory(self, message: discord.Message) -> str:
+        base = build_requester_context(message)
+        memories = format_memories_for_prompt(self._user_memory.get(message.author.id))
+        if not memories:
+            return base
+        return f"{base}\n\n{memories}"
 
     async def _process_response_flow(
         self,

@@ -32,8 +32,7 @@ main.dist
 main.build/
 main.dist/
 main.onefile-build/
-eva
-eva.exe
+/eva.exe
 
 
 # Installer logs
@@ -212,4 +211,7 @@ __marimo__/
 
 # Bot Thingys
 whitelist.json
+tracked_messages.json
+user_memory.json
+reminders.json
 eva.exe # eva windows build

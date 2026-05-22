@@ -10,8 +10,20 @@ from eva.ai import ReplyGenerationService, ResponseGenerationResult, ResponseSpl
 from eva.config import Settings
 from eva.discord.handlers import SelfbotMessageHandler, TriggerDecision
 from eva.downloads import DownloadService
-from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
+from eva.state import (
+    ChannelHistoryStore,
+    ChannelResponseStore,
+    RateLimiter,
+    ReminderStore,
+    TrackedMessageStore,
+    UserMemoryStore,
+    WhitelistStore,
+)
 from eva.terminal import TerminalService
+
+
+def _permissive_rate_limiter() -> RateLimiter:
+    return RateLimiter(max_requests=1_000_000, window_seconds=1.0)
 
 
 class DummyResponseService:
@@ -78,6 +90,8 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         terminal_shell="/bin/sh",
         terminal_timeout_seconds=15.0,
         terminal_max_output_chars=6000,
+        rate_limit_max_requests=20,
+        rate_limit_window_seconds=60.0,
     )
     reply_generation_service = ReplyGenerationService(
         account_mode=settings.account_mode,
@@ -96,8 +110,12 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         response_split_service=response_split_service,
         history_store=ChannelHistoryStore(),
         response_store=ChannelResponseStore(),
-        tracked_messages=TrackedMessageStore(),
+        tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
+        user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
+        reminder_store=ReminderStore(path=tmp_path / "reminders.json"),
+        rate_limiter=_permissive_rate_limiter(),
+        summarization_service=None,
         terminal_service=None,
         download_service=None,
     )
@@ -247,6 +265,8 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         terminal_shell="/bin/sh",
         terminal_timeout_seconds=5.0,
         terminal_max_output_chars=200,
+        rate_limit_max_requests=20,
+        rate_limit_window_seconds=60.0,
     )
     terminal_service = TerminalService(
         workdir=tmp_path,
@@ -259,8 +279,12 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
         history_store=ChannelHistoryStore(),
         response_store=ChannelResponseStore(),
-        tracked_messages=TrackedMessageStore(),
+        tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
+        user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
+        reminder_store=ReminderStore(path=tmp_path / "reminders.json"),
+        rate_limiter=_permissive_rate_limiter(),
+        summarization_service=None,
         terminal_service=terminal_service,
         download_service=None,
     )
@@ -328,6 +352,8 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         terminal_shell="/bin/sh",
         terminal_timeout_seconds=5.0,
         terminal_max_output_chars=200,
+        rate_limit_max_requests=20,
+        rate_limit_window_seconds=60.0,
     )
     whitelist = WhitelistStore(tmp_path / "whitelist.json")
     whitelist.add(2)
@@ -336,8 +362,12 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
         history_store=ChannelHistoryStore(),
         response_store=ChannelResponseStore(),
-        tracked_messages=TrackedMessageStore(),
+        tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
         whitelist=whitelist,
+        user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
+        reminder_store=ReminderStore(path=tmp_path / "reminders.json"),
+        rate_limiter=_permissive_rate_limiter(),
+        summarization_service=None,
         terminal_service=None,
         download_service=cast(DownloadService, FakeDownloadService()),
     )

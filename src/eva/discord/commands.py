@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 import discord
 
 from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
-from eva.state import WhitelistStore
+from eva.state import WhitelistPersistenceError, WhitelistStore
 
 _MENTION_RE = re.compile(r"<@!?(\d+)>")
 ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137, 1202356249975595068}
@@ -102,7 +102,16 @@ async def _handle_add_command(
         )
         return
 
-    added = whitelist.add(target_id)
+    try:
+        added = whitelist.add(target_id)
+    except WhitelistPersistenceError:
+        await reply_or_edit(
+            message,
+            is_owner,
+            f"{X_MARK} Failed to persist whitelist update for <@{target_id}>.",
+        )
+        return
+
     if added:
         await reply_or_edit(message, is_owner, f"{CHECK_MARK} <@{target_id}> added to whitelist.")
         return
@@ -130,7 +139,16 @@ async def _handle_remove_command(
         )
         return
 
-    removed = whitelist.remove(target_id)
+    try:
+        removed = whitelist.remove(target_id)
+    except WhitelistPersistenceError:
+        await reply_or_edit(
+            message,
+            is_owner,
+            f"{X_MARK} Failed to persist whitelist update for <@{target_id}>.",
+        )
+        return
+
     if removed:
         await reply_or_edit(
             message,

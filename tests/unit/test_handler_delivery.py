@@ -12,7 +12,19 @@ from eva.ai import ReplyGenerationService
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.discord.delivery import DeliveryResult
-from eva.state import ChannelHistoryStore, ChannelResponseStore, TrackedMessageStore, WhitelistStore
+from eva.state import (
+    ChannelHistoryStore,
+    ChannelResponseStore,
+    RateLimiter,
+    ReminderStore,
+    TrackedMessageStore,
+    UserMemoryStore,
+    WhitelistStore,
+)
+
+
+def _permissive_rate_limiter() -> RateLimiter:
+    return RateLimiter(max_requests=1_000_000, window_seconds=1.0)
 
 
 class StubReplyGenerationService:
@@ -53,12 +65,13 @@ class DummyClient:
 @pytest.mark.parametrize("is_owner", [True, False])
 def test_handler_does_not_append_history_when_primary_delivery_fails(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
     is_owner: bool,
 ) -> None:
     history_store = ChannelHistoryStore()
     response_store = ChannelResponseStore()
-    tracked_messages = TrackedMessageStore()
-    whitelist = WhitelistStore()
+    tracked_messages = TrackedMessageStore(path=tmp_path / "tracked.json")
+    whitelist = WhitelistStore(tmp_path / "whitelist.json")
 
     owner_id = 1
     user_id = owner_id if is_owner else 2
@@ -79,6 +92,10 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
         response_store=response_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
+        user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
+        reminder_store=ReminderStore(path=tmp_path / "reminders.json"),
+        rate_limiter=_permissive_rate_limiter(),
+        summarization_service=None,
         terminal_service=None,
         download_service=None,
     )
@@ -126,11 +143,12 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
 
 def test_handler_stores_response_id_when_primary_delivery_succeeds(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     history_store = ChannelHistoryStore()
     response_store = ChannelResponseStore()
-    tracked_messages = TrackedMessageStore()
-    whitelist = WhitelistStore()
+    tracked_messages = TrackedMessageStore(path=tmp_path / "tracked.json")
+    whitelist = WhitelistStore(tmp_path / "whitelist.json")
     whitelist.add(2)
 
     handler = handlers.SelfbotMessageHandler(
@@ -147,6 +165,10 @@ def test_handler_stores_response_id_when_primary_delivery_succeeds(
         response_store=response_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
+        user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
+        reminder_store=ReminderStore(path=tmp_path / "reminders.json"),
+        rate_limiter=_permissive_rate_limiter(),
+        summarization_service=None,
         terminal_service=None,
         download_service=None,
     )
