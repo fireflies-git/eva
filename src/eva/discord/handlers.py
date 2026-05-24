@@ -437,6 +437,8 @@ class SelfbotMessageHandler:
                     allow_image_generation=allow_image_generation,
                     requester_context=requester_context,
                     previous_response_id=previous_response_id,
+                    user_id=message.author.id,
+                    channel_id=channel_id,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")

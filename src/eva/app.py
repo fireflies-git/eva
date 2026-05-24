@@ -18,7 +18,7 @@ from eva.discord import SelfbotMessageHandler, create_discord_client
 from eva.discord.commands import ALLOWED_ADMIN_IDS
 from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
-from eva.reminders import ReminderRunner
+from eva.reminders import ReminderDetector, ReminderRunner, ReminderScheduler
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
 from eva.state import (
     ChannelHistoryStore,
@@ -114,22 +114,30 @@ class EvaApp:
             client=self._ai_client,
             model_name=settings.model_name,
         )
-        self._reply_generation_service = ReplyGenerationService(
-            account_mode=settings.account_mode,
-            response_service=self._response_service,
-            image_service=self._image_service,
-            search_service=self._search_service,
-            search_response_service=self._search_response_service,
-            tos_check_service=self._tos_check_service,
-            terminal_enabled=settings.terminal_enabled,
-            autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
-        )
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
         self._response_store = ChannelResponseStore()
         self._tracked_messages = TrackedMessageStore()
         self._whitelist = WhitelistStore()
         self._user_memory = UserMemoryStore()
         self._reminder_store = ReminderStore()
+        self._reminder_scheduler = ReminderScheduler(
+            detector=ReminderDetector(
+                client=self._ai_client,
+                model_name=settings.model_name,
+            ),
+            store=self._reminder_store,
+        )
+        self._reply_generation_service = ReplyGenerationService(
+            account_mode=settings.account_mode,
+            response_service=self._response_service,
+            image_service=self._image_service,
+            search_service=self._search_service,
+            search_response_service=self._search_response_service,
+            reminder_scheduler=self._reminder_scheduler,
+            tos_check_service=self._tos_check_service,
+            terminal_enabled=settings.terminal_enabled,
+            autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
+        )
         self._rate_limiter = RateLimiter(
             max_requests=settings.rate_limit_max_requests,
             window_seconds=settings.rate_limit_window_seconds,

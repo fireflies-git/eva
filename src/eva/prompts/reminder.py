@@ -1,0 +1,45 @@
+"""Prompt helpers for AI-driven reminder detection."""
+
+from __future__ import annotations
+
+
+def build_reminder_detection_prompt(*, current_time_iso: str) -> str:
+    return (
+        "You decide whether a Discord message is asking to schedule a one-time "
+        "future reminder (a ping the user wants delivered later), and if so, "
+        "extract WHEN it should fire and WHAT to remind them about.\n\n"
+        f"The current time is {current_time_iso} (ISO 8601, UTC). Use this as "
+        "your anchor for any relative time like \"in 5m\", \"tomorrow\", "
+        "\"tonight\", \"next monday\".\n\n"
+        "Reply with strict JSON, nothing else. No prose. No markdown fences. "
+        "No leading or trailing characters.\n\n"
+        "Schema when it IS a reminder request:\n"
+        "  {\"is_reminder\": true, \"fire_at_iso\": \"<ISO 8601 UTC>\", "
+        "\"text\": \"<short reminder text>\"}\n\n"
+        "Schema when it is NOT a reminder request:\n"
+        '  {"is_reminder": false}\n\n'
+        "Rules:\n"
+        "- fire_at_iso MUST be strictly in the future relative to the current "
+        "time. If the user names a time of day (\"at 7am\", \"at 3pm\") that has "
+        "already passed today, roll forward to that time tomorrow. If you still "
+        "can't pin a future time, return is_reminder: false.\n"
+        "- fire_at_iso MUST be UTC and ISO 8601, e.g. \"2026-05-25T14:30:00+00:00\".\n"
+        "- For \"next <weekday>\", pick the next occurrence of that weekday (if today "
+        "is sunday, \"next monday\" is tomorrow). If no time-of-day is given, default "
+        "to 09:00 UTC.\n"
+        "- For \"tomorrow\" with no time, default to 09:00 UTC.\n"
+        "- For \"tonight\" with no time, default to 21:00 UTC.\n"
+        "- text is what to remind the user about, with the time phrase stripped. "
+        "Keep it short and imperative or noun-phrase.\n"
+        "  Example: \"remind me in 5m to take out the trash\" -> text: \"take out the trash\".\n"
+        "  Example: \"ping me tomorrow at 9 about the meeting\" -> text: \"the meeting\".\n"
+        "  Example: \"don't let me forget to email mom tonight\" -> text: \"email mom\".\n"
+        "- Be conservative. These are NOT reminder requests:\n"
+        "  - casual time mentions: \"i'll be there in 5\", \"see you tomorrow\"\n"
+        "  - questions: \"what time is it\", \"when does X start\"\n"
+        "  - statements of fact: \"the meeting is at 3pm\"\n"
+        "  - recurring requests (\"every day at 9am\") — we don't support recurring, "
+        "return is_reminder: false.\n"
+        "- If the user's intent is ambiguous, return is_reminder: false. A false "
+        "negative is much better than a false positive."
+    )

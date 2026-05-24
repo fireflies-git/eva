@@ -13,6 +13,7 @@ from eva.ai.schemas import ChatMessage
 from eva.constants import MAX_IMAGE_URLS, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_search_system_prompt, build_system_prompt
+from eva.reminders import ReminderConfirmation
 from eva.search import SearchClientError, SearchResultBundle
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,16 @@ class TOSChecker(Protocol):
     async def check_tos_violation(self, text: str) -> bool: ...
 
 
+class ReminderRunner(Protocol):
+    async def schedule_if_needed(
+        self,
+        *,
+        user_message: str,
+        user_id: int,
+        channel_id: int,
+    ) -> ReminderConfirmation | None: ...
+
+
 class ReplyGenerationService:
     def __init__(
         self,
@@ -91,6 +102,7 @@ class ReplyGenerationService:
         image_service: ImageRunner | None = None,
         search_service: SearchRunner | None = None,
         search_response_service: SearchResponseGenerator | None = None,
+        reminder_scheduler: ReminderRunner | None = None,
         terminal_enabled: bool = False,
         autonomous_terminal_enabled: bool = False,
     ) -> None:
@@ -99,6 +111,7 @@ class ReplyGenerationService:
         self._image_service = image_service
         self._search_service = search_service
         self._search_response_service = search_response_service
+        self._reminder_scheduler = reminder_scheduler
         self._tos_check_service = tos_check_service
         self._terminal_enabled = terminal_enabled
         self._autonomous_terminal_enabled = autonomous_terminal_enabled
@@ -115,7 +128,20 @@ class ReplyGenerationService:
         allow_image_generation: bool = True,
         requester_context: str | None = None,
         previous_response_id: str | None = None,
+        user_id: int | None = None,
+        channel_id: int | None = None,
     ) -> ReplyOutput:
+        reminder_confirmation = await self._schedule_reminder_if_needed(
+            user_message=user_message,
+            user_id=user_id,
+            channel_id=channel_id,
+        )
+        if reminder_confirmation is not None:
+            return ReplyOutput(
+                content=reminder_confirmation.content,
+                attachments=[],
+            )
+
         image_results = await self._run_image_if_needed(
             context_messages=context_messages,
             user_message=user_message,
@@ -180,6 +206,27 @@ class ReplyGenerationService:
             )
 
         return reply
+
+    async def _schedule_reminder_if_needed(
+        self,
+        *,
+        user_message: str,
+        user_id: int | None,
+        channel_id: int | None,
+    ) -> ReminderConfirmation | None:
+        if self._reminder_scheduler is None:
+            return None
+        if user_id is None or channel_id is None:
+            return None
+        try:
+            return await self._reminder_scheduler.schedule_if_needed(
+                user_message=user_message,
+                user_id=user_id,
+                channel_id=channel_id,
+            )
+        except Exception:
+            logger.exception("Reminder scheduler raised")
+            return None
 
     async def _run_image_if_needed(
         self,
