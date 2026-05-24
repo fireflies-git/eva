@@ -110,3 +110,21 @@ def test_build_system_prompt_drops_old_security_section() -> None:
 
     assert "Security Rules" not in prompt
     assert "UNDER NO CIRCUMSTANCES" not in prompt
+
+
+def test_build_system_prompt_enforces_brevity_default() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=True,
+        autonomous_terminal_enabled=True,
+    )
+
+    assert "Short is the default" in prompt

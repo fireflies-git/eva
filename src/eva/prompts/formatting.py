@@ -4,6 +4,9 @@
 def build_formatting_section() -> str:
     return (
         "## Formatting\n"
-        "Discord markdown. Fenced code blocks for code or terminal output. Bullets only "
-        "when you actually have a list. Skip meta-commentary."
+        "Discord markdown, but plain text most of the time. No headers in a chat reply. "
+        "No bullet lists for fewer than four items — just say it. Fenced code blocks only "
+        "for actual code or multi-line terminal output; one-line commands go in `inline "
+        "ticks`. No trailing \"let me know if you need more\" or \"hope that helps\". "
+        "Skip meta-commentary."
     )

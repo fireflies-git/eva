@@ -28,6 +28,9 @@ MANIFEST
 main.dist
 /eva
 
+# Local throwaway scripts (prompt-testing harnesses, etc.)
+/scripts/
+
 # Nuikta
 main.build/
 main.dist/
