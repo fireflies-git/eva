@@ -4,7 +4,9 @@ import asyncio
 import contextlib
 import logging
 
+from eva.account_updates import PendingAccountUpdateStore
 from eva.ai import (
+    AccountUpdatePlanner,
     OpenAICompatibleClient,
     ReplyGenerationService,
     ResponseService,
@@ -22,7 +24,6 @@ from eva.reminders import ReminderDetector, ReminderRunner, ReminderScheduler
 from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
 from eva.state import (
     ChannelHistoryStore,
-    ChannelResponseStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -114,8 +115,12 @@ class EvaApp:
             client=self._ai_client,
             model_name=settings.model_name,
         )
+        self._account_update_planner = AccountUpdatePlanner(
+            client=self._ai_client,
+            model_name=settings.model_name,
+        )
+        self._pending_account_updates = PendingAccountUpdateStore()
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
-        self._response_store = ChannelResponseStore()
         self._tracked_messages = TrackedMessageStore()
         self._whitelist = WhitelistStore()
         self._user_memory = UserMemoryStore()
@@ -148,7 +153,6 @@ class EvaApp:
             reply_generation_service=self._reply_generation_service,
             response_split_service=self._response_split_service,
             history_store=self._history_store,
-            response_store=self._response_store,
             tracked_messages=self._tracked_messages,
             whitelist=self._whitelist,
             user_memory=self._user_memory,
@@ -157,6 +161,8 @@ class EvaApp:
             summarization_service=self._summarization_service,
             terminal_service=self._terminal_service,
             download_service=self._download_service,
+            account_update_planner=self._account_update_planner,
+            pending_account_updates=self._pending_account_updates,
         )
         self._discord_client = create_discord_client(self._message_handler)
         self._reminder_runner = ReminderRunner(

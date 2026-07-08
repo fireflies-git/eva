@@ -14,7 +14,6 @@ from eva.config import Settings
 from eva.discord.delivery import DeliveryResult
 from eva.state import (
     ChannelHistoryStore,
-    ChannelResponseStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -29,7 +28,7 @@ def _permissive_rate_limiter() -> RateLimiter:
 
 class StubReplyGenerationService:
     async def generate_reply(self, **kwargs: object) -> ReplyOutput:
-        return ReplyOutput(content="generated reply", attachments=[], response_id="resp-123")
+        return ReplyOutput(content="generated reply", attachments=[])
 
 
 class DummyTypingContext:
@@ -69,7 +68,6 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
     is_owner: bool,
 ) -> None:
     history_store = ChannelHistoryStore()
-    response_store = ChannelResponseStore()
     tracked_messages = TrackedMessageStore(path=tmp_path / "tracked.json")
     whitelist = WhitelistStore(tmp_path / "whitelist.json")
 
@@ -89,7 +87,6 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
         ),
         reply_generation_service=cast(ReplyGenerationService, StubReplyGenerationService()),
         history_store=history_store,
-        response_store=response_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
         user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
@@ -138,15 +135,13 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
     )
 
     assert history_store.get(99) == []
-    assert response_store.get(99) is None
 
 
-def test_handler_stores_response_id_when_primary_delivery_succeeds(
+def test_handler_appends_history_when_primary_delivery_succeeds(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
     history_store = ChannelHistoryStore()
-    response_store = ChannelResponseStore()
     tracked_messages = TrackedMessageStore(path=tmp_path / "tracked.json")
     whitelist = WhitelistStore(tmp_path / "whitelist.json")
     whitelist.add(2)
@@ -162,7 +157,6 @@ def test_handler_stores_response_id_when_primary_delivery_succeeds(
         ),
         reply_generation_service=cast(ReplyGenerationService, StubReplyGenerationService()),
         history_store=history_store,
-        response_store=response_store,
         tracked_messages=tracked_messages,
         whitelist=whitelist,
         user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
@@ -202,4 +196,4 @@ def test_handler_stores_response_id_when_primary_delivery_succeeds(
     )
 
     assert len(history_store.get(99)) == 2
-    assert response_store.get(99) == "resp-123"
+    assert history_store.get(99)[1]["content"] == "generated reply"

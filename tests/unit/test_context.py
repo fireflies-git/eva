@@ -28,8 +28,8 @@ class FakeReplyChannel:
 
 
 def test_fetch_channel_context_includes_user_and_mentions() -> None:
-    mention = SimpleNamespace(id=2, name="trinity", display_name="Trinity", pronouns="she/her")
-    author = SimpleNamespace(id=1, name="neo", display_name="Neo", pronouns="he/him")
+    mention = SimpleNamespace(id=2, name="trinity", display_name="Trinity")
+    author = SimpleNamespace(id=1, name="neo", display_name="Neo")
     message = SimpleNamespace(
         id=10,
         content="hello there",
@@ -50,13 +50,13 @@ def test_fetch_channel_context_includes_user_and_mentions() -> None:
     assert len(context) == 1
     assert "username=neo" in context[0]["content"]
     assert "display_name=Neo" in context[0]["content"]
-    assert "pronouns=he/him" in context[0]["content"]
+    assert "pronouns=" not in context[0]["content"]
     assert "mentions:" in context[0]["content"]
     assert "username=trinity" in context[0]["content"]
 
 
 def test_fetch_reply_context_includes_user_metadata() -> None:
-    reply_author = SimpleNamespace(id=7, name="neo", display_name="Neo", pronouns="he/him")
+    reply_author = SimpleNamespace(id=7, name="neo", display_name="Neo")
     referenced_message = SimpleNamespace(
         content="previous message", author=reply_author, mentions=[]
     )
@@ -70,5 +70,5 @@ def test_fetch_reply_context_includes_user_metadata() -> None:
 
     assert reply_context is not None
     assert "username=neo" in reply_context
-    assert "pronouns=he/him" in reply_context
+    assert "pronouns=" not in reply_context
     assert "previous message" in reply_context

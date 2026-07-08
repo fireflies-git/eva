@@ -4,9 +4,17 @@ import asyncio
 import logging
 import random
 import time
+from typing import Protocol
 
 import discord
 
+from eva.account_updates import (
+    AccountUpdatePlan,
+    PendingAccountUpdateStore,
+    format_account_update_applied,
+    format_account_update_cancelled,
+    format_account_update_confirmation,
+)
 from eva.ai import (
     AIClientError,
     ReplyGenerationService,
@@ -15,7 +23,8 @@ from eva.ai import (
 )
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
-from eva.constants import WARNING_MARK
+from eva.constants import WARNING_MARK, X_MARK
+from eva.discord.account_updates import AccountUpdateApplyError, apply_account_update
 from eva.discord.clear_commands import handle_clear_command
 from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import handle_whitelist_command, is_admin_user
@@ -45,7 +54,6 @@ from eva.discord.user_metadata import build_requester_context
 from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
-    ChannelResponseStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -60,6 +68,10 @@ interaction_logger = logging.getLogger("eva.interaction")
 __all__ = ["SelfbotMessageHandler", "TriggerDecision", "parse_trigger"]
 
 
+class AccountUpdatePlanner(Protocol):
+    async def plan_update(self, user_message: str) -> AccountUpdatePlan | None: ...
+
+
 class SelfbotMessageHandler:
     def __init__(
         self,
@@ -67,7 +79,6 @@ class SelfbotMessageHandler:
         settings: Settings,
         reply_generation_service: ReplyGenerationService,
         history_store: ChannelHistoryStore,
-        response_store: ChannelResponseStore,
         tracked_messages: TrackedMessageStore,
         whitelist: WhitelistStore,
         user_memory: UserMemoryStore,
@@ -77,11 +88,12 @@ class SelfbotMessageHandler:
         terminal_service: TerminalService | None,
         download_service: DownloadService | None,
         response_split_service: ResponseSplitService | None = None,
+        account_update_planner: AccountUpdatePlanner | None = None,
+        pending_account_updates: PendingAccountUpdateStore | None = None,
     ) -> None:
         self._settings = settings
         self._reply_generation_service = reply_generation_service
         self._history_store = history_store
-        self._response_store = response_store
         self._tracked_messages = tracked_messages
         self._whitelist = whitelist
         self._user_memory = user_memory
@@ -91,6 +103,8 @@ class SelfbotMessageHandler:
         self._terminal_service = terminal_service
         self._download_service = download_service
         self._response_split_service = response_split_service
+        self._account_update_planner = account_update_planner
+        self._pending_account_updates = pending_account_updates
 
     async def on_message(self, client: discord.Client, message: discord.Message) -> None:
         user = client.user
@@ -109,6 +123,16 @@ class SelfbotMessageHandler:
             is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
             if not is_admin and not self._whitelist.contains(message.author.id):
                 return
+
+        if await self._handle_account_update_confirmation(
+            client=client,
+            message=message,
+            is_owner=is_owner,
+            is_standalone=is_standalone,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return
 
         if await self._dispatch_commands(
             message=message,
@@ -146,6 +170,16 @@ class SelfbotMessageHandler:
                 message.id,
                 message.author.id,
             )
+            return
+
+        if await self._handle_account_update_request(
+            message=message,
+            user_query=decision.user_query,
+            is_owner=is_owner,
+            is_standalone=is_standalone,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
             return
 
         reply_context = await fetch_reply_context(message)
@@ -398,6 +432,136 @@ class SelfbotMessageHandler:
             return base
         return f"{base}\n\n{memories}"
 
+    async def _handle_account_update_confirmation(
+        self,
+        *,
+        client: discord.Client,
+        message: discord.Message,
+        is_owner: bool,
+        is_standalone: bool,
+        original_content: str,
+        channel_id: int,
+    ) -> bool:
+        decision = _parse_account_update_confirmation(original_content)
+        if decision is None or self._pending_account_updates is None:
+            return False
+
+        pending = self._pending_account_updates.get(
+            user_id=message.author.id,
+            channel_id=channel_id,
+        )
+        if pending is None:
+            return False
+
+        if not self._can_manage_account_updates(
+            user_id=message.author.id,
+            is_owner=is_owner,
+            is_standalone=is_standalone,
+        ):
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=f"{X_MARK} You don't have permission to change Eva's account.",
+            )
+            return True
+
+        if not decision:
+            self._pending_account_updates.pop(user_id=message.author.id, channel_id=channel_id)
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=format_account_update_cancelled(),
+            )
+            return True
+
+        try:
+            await apply_account_update(client=client, draft=pending.draft)
+        except AccountUpdateApplyError as exc:
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=f"{X_MARK} Account update failed: {exc}",
+            )
+            return True
+
+        self._pending_account_updates.pop(user_id=message.author.id, channel_id=channel_id)
+        await self._deliver_command_response(
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            content=format_account_update_applied(pending.draft),
+        )
+        return True
+
+    async def _handle_account_update_request(
+        self,
+        *,
+        message: discord.Message,
+        user_query: str,
+        is_owner: bool,
+        is_standalone: bool,
+        original_content: str,
+        channel_id: int,
+    ) -> bool:
+        if self._account_update_planner is None or self._pending_account_updates is None:
+            return False
+
+        plan = await self._account_update_planner.plan_update(user_query)
+        if plan is None:
+            return False
+
+        if not self._can_manage_account_updates(
+            user_id=message.author.id,
+            is_owner=is_owner,
+            is_standalone=is_standalone,
+        ):
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=f"{X_MARK} You don't have permission to change Eva's account.",
+            )
+            return True
+
+        if plan.error is not None:
+            await self._deliver_command_response(
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                content=f"{X_MARK} Account update rejected: {plan.error}",
+            )
+            return True
+
+        if plan.draft is None:
+            return False
+
+        self._pending_account_updates.set(
+            user_id=message.author.id,
+            channel_id=channel_id,
+            draft=plan.draft,
+        )
+        await self._deliver_command_response(
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            content=format_account_update_confirmation(plan.draft),
+        )
+        return True
+
+    def _can_manage_account_updates(
+        self,
+        *,
+        user_id: int,
+        is_owner: bool,
+        is_standalone: bool,
+    ) -> bool:
+        if is_standalone:
+            return is_admin_user(user_id=user_id, is_owner=is_owner)
+        return is_owner
+
     async def _process_reply_flow(
         self,
         *,
@@ -418,7 +582,6 @@ class SelfbotMessageHandler:
             exclude_message_id=message.id,
         )
         history_messages = self._history_store.get(channel_id)
-        previous_response_id = self._response_store.get(channel_id)
 
         use_owner_edit = is_owner and not is_standalone
         edit_started = time.monotonic() if use_owner_edit else None
@@ -436,7 +599,6 @@ class SelfbotMessageHandler:
                     reply_context=reply_context,
                     allow_image_generation=allow_image_generation,
                     requester_context=requester_context,
-                    previous_response_id=previous_response_id,
                     user_id=message.author.id,
                     channel_id=channel_id,
                 )
@@ -467,7 +629,6 @@ class SelfbotMessageHandler:
                 requester_context,
             )
             self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
-            self._store_channel_response_id(channel_id, ai_reply.response_id)
 
         interaction_logger.info(
             "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
@@ -552,13 +713,6 @@ class SelfbotMessageHandler:
 
     def _clear_channel_memory(self, channel_id: int) -> None:
         self._history_store.clear(channel_id)
-        self._response_store.clear(channel_id)
-
-    def _store_channel_response_id(self, channel_id: int, response_id: str | None) -> None:
-        if response_id is None:
-            self._response_store.clear(channel_id)
-            return
-        self._response_store.set(channel_id, response_id)
 
     async def _build_plain_response_chunks(self, ai_reply: str) -> list[str]:
         if not self._is_standalone_mode() or self._response_split_service is None:
@@ -616,3 +770,12 @@ def _build_stored_user_message(
         sections.append(f'[Replying to message: "{reply_context}"]')
     sections.append(user_query)
     return "\n\n".join(sections)
+
+
+def _parse_account_update_confirmation(content: str) -> bool | None:
+    normalized = content.strip().lower()
+    if normalized == "y":
+        return True
+    if normalized == "n":
+        return False
+    return None

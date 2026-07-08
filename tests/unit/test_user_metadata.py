@@ -12,12 +12,11 @@ from eva.discord.user_metadata import (
 )
 
 
-def test_user_metadata_uses_explicit_pronouns() -> None:
+def test_user_metadata_uses_supported_profile_fields() -> None:
     user = SimpleNamespace(
         id=123,
         name="neo",
         display_name="Neo",
-        pronouns="he/him",
         bio="The One",
     )
 
@@ -26,34 +25,36 @@ def test_user_metadata_uses_explicit_pronouns() -> None:
     assert metadata.user_id == 123
     assert metadata.username == "neo"
     assert metadata.display_name == "Neo"
-    assert metadata.pronouns == "he/him"
     assert metadata.bio == "The One"
 
 
-def test_user_metadata_falls_back_to_inferred_pronouns() -> None:
+def test_user_metadata_ignores_unavailable_pronoun_attributes() -> None:
     user = SimpleNamespace(
         id=999,
         name="sarah_7",
         display_name="Sarah",
-        pronouns="coffee lover",
+        pronouns="she/her",
+        pronoun="she/her",
     )
 
     metadata = build_user_metadata(user)
 
-    assert metadata.pronouns == "she/her"
+    assert format_user_metadata(metadata) == (
+        "user(id=999, username=sarah_7, display_name=Sarah, bio=unknown)"
+    )
 
 
-def test_user_metadata_defaults_to_they_them_when_unknown() -> None:
-    user = SimpleNamespace(id=999, name="x9z1", display_name="x9z1", pronouns="")
+def test_user_metadata_does_not_infer_pronouns_from_names() -> None:
+    user = SimpleNamespace(id=999, name="sarah_7", display_name="Sarah")
 
     metadata = build_user_metadata(user)
 
-    assert metadata.pronouns == "they/them"
+    assert "pronouns=" not in format_user_metadata(metadata)
 
 
 def test_build_requester_context_includes_mentions() -> None:
-    author = SimpleNamespace(id=1, name="neo", display_name="Neo", pronouns="he/him")
-    mention = SimpleNamespace(id=2, name="trinity", display_name="Trinity", pronouns="she/her")
+    author = SimpleNamespace(id=1, name="neo", display_name="Neo")
+    mention = SimpleNamespace(id=2, name="trinity", display_name="Trinity")
     message = SimpleNamespace(author=author, mentions=[mention])
 
     context = build_requester_context(cast(discord.Message, message))

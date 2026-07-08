@@ -6,7 +6,6 @@ from eva.state.reminders import (
     ReminderPersistenceError,
     ReminderStore,
 )
-from eva.state.responses import ChannelResponseStore
 from eva.state.tracked_messages import TrackedMessageStore
 from eva.state.user_memory import (
     UserMemoryError,
@@ -17,7 +16,6 @@ from eva.state.whitelist import WhitelistPersistenceError, WhitelistStore
 
 __all__ = [
     "ChannelHistoryStore",
-    "ChannelResponseStore",
     "RateLimiter",
     "Reminder",
     "ReminderError",

@@ -1,8 +1,8 @@
+from eva.ai.account_updates import AccountUpdatePlanner
 from eva.ai.client import (
     AIClientError,
     ChatCompletionClient,
     OpenAICompatibleClient,
-    ResponsesClient,
     ToolChatCompletionClient,
 )
 from eva.ai.orchestrator import ReplyGenerationService
@@ -17,12 +17,12 @@ from eva.ai.summarize import SummarizationEmptyError, SummarizationService
 
 __all__ = [
     "AIClientError",
+    "AccountUpdatePlanner",
     "ChatCompletionClient",
     "OpenAICompatibleClient",
     "ReplyGenerationService",
     "ResponseGenerationResult",
     "ResponseService",
-    "ResponsesClient",
     "ResponseSplitService",
     "SearchResponseService",
     "SummarizationEmptyError",

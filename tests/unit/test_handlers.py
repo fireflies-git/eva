@@ -12,7 +12,6 @@ from eva.discord.handlers import SelfbotMessageHandler, TriggerDecision
 from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
-    ChannelResponseStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -109,7 +108,6 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         reply_generation_service=reply_generation_service,
         response_split_service=response_split_service,
         history_store=ChannelHistoryStore(),
-        response_store=ChannelResponseStore(),
         tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
         user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
@@ -278,7 +276,6 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         settings=settings,
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
         history_store=ChannelHistoryStore(),
-        response_store=ChannelResponseStore(),
         tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
         whitelist=WhitelistStore(tmp_path / "whitelist.json"),
         user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
@@ -361,7 +358,6 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         settings=settings,
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
         history_store=ChannelHistoryStore(),
-        response_store=ChannelResponseStore(),
         tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
         whitelist=whitelist,
         user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
@@ -420,8 +416,6 @@ def test_clear_command_clears_only_current_channel_memory(monkeypatch, tmp_path)
     handler = _build_handler(tmp_path, account_mode="assistant")
     handler._history_store.append_exchange(1, "hello", "hi")
     handler._history_store.append_exchange(2, "yo", "sup")
-    handler._response_store.set(1, "resp-1")
-    handler._response_store.set(2, "resp-2")
 
     delivered: list[str] = []
 
@@ -451,6 +445,4 @@ def test_clear_command_clears_only_current_channel_memory(monkeypatch, tmp_path)
 
     assert delivered == ["✔ Cleared memory for this channel."]
     assert handler._history_store.get(1) == []
-    assert handler._response_store.get(1) is None
     assert len(handler._history_store.get(2)) == 2
-    assert handler._response_store.get(2) == "resp-2"

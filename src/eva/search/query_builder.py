@@ -67,7 +67,7 @@ class SearchQueryBuilder:
     def _build_rewrite_prompt(self) -> str:
         return (
             "Rewrite the user's request into one standalone Google search query. "
-            "Resolve pronouns and references using the provided chat context when needed. "
+            "Resolve references using the provided chat context when needed. "
             "Return only the query text."
         )
 

@@ -27,7 +27,6 @@ _IMAGE_ANSWER_PREFIX = "media generated:"
 class ReplyOutput:
     content: str
     attachments: list[tuple[str, bytes]]
-    response_id: str | None = None
 
 
 class ResponseGenerator(Protocol):
@@ -40,7 +39,6 @@ class ResponseGenerator(Protocol):
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-        previous_response_id: str | None = None,
     ) -> ResponseGenerationResult: ...
 
 
@@ -74,7 +72,6 @@ class SearchResponseGenerator(Protocol):
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-        previous_response_id: str | None = None,
     ) -> ResponseGenerationResult: ...
 
 
@@ -127,7 +124,6 @@ class ReplyGenerationService:
         reply_context: str | None,
         allow_image_generation: bool = True,
         requester_context: str | None = None,
-        previous_response_id: str | None = None,
         user_id: int | None = None,
         channel_id: int | None = None,
     ) -> ReplyOutput:
@@ -166,12 +162,10 @@ class ReplyGenerationService:
                     user_message=user_message,
                     reply_context=reply_context,
                     requester_context=requester_context,
-                    previous_response_id=previous_response_id,
                 )
                 reply = ReplyOutput(
                     content=content.content,
                     attachments=[],
-                    response_id=content.response_id,
                 )
             else:
                 system_prompt = build_system_prompt(
@@ -188,12 +182,10 @@ class ReplyGenerationService:
                     user_message=user_message,
                     reply_context=reply_context,
                     requester_context=requester_context,
-                    previous_response_id=previous_response_id,
                 )
                 reply = ReplyOutput(
                     content=content.content,
                     attachments=[],
-                    response_id=content.response_id,
                 )
 
         is_violation = await self._tos_check_service.check_tos_violation(reply.content)
@@ -303,7 +295,6 @@ class ReplyGenerationService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-        previous_response_id: str | None,
     ) -> ResponseGenerationResult:
         if search_results.is_error:
             return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
@@ -325,7 +316,6 @@ class ReplyGenerationService:
                 user_message=user_message,
                 reply_context=reply_context,
                 requester_context=requester_context,
-                previous_response_id=previous_response_id,
             )
         except AIClientError:
             logger.exception("Search response generation failed")

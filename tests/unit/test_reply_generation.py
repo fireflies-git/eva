@@ -107,7 +107,7 @@ def test_reply_generation_uses_normal_path_when_search_not_needed() -> None:
             reply_context=None,
             requester_context=(
                 "requester: user(id=1, username=neo, display_name=Neo, "
-                "pronouns=he/him, bio=unknown)"
+                "bio=unknown)"
             ),
         )
     )

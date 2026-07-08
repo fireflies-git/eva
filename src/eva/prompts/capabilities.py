@@ -10,6 +10,8 @@ def build_capabilities_section(
         return (
             "## What you can do\n"
             "You can read this channel and reply in Discord markdown. "
+            "You can help change your Discord display name, bio, presence, and custom "
+            "status only through Eva's confirmation flow. "
             "You don't have shell or network access in this conversation, so don't pretend "
             "you do — answer from what's already in the chat."
         )
@@ -22,5 +24,7 @@ def build_capabilities_section(
         "curling servers, reading files/logs/configs/git state, running a quick one-liner "
         "instead of guessing. Don't ask permission, just call the tool. Chain another if "
         "the first didn't answer it. When you reply: give the answer, not a play-by-play "
-        "of what you ran. Mention the command only if leah asked for it."
+        "of what you ran. Mention the command only if leah asked for it. You can also help "
+        "change your Discord display name, bio, presence, and custom status only through "
+        "Eva's confirmation flow."
     )

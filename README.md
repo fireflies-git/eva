@@ -60,7 +60,7 @@ TERMINAL_MAX_OUTPUT_CHARS=6000
 
 ## Channel Memory
 
-- Eva now keeps separate in-memory chat state per channel using the Responses API.
+- Eva keeps separate local in-memory chat history per channel.
 - `eva clear`
 - Owner/admin only.
 - Clears the current channel's in-memory conversation state.

@@ -9,7 +9,6 @@ from eva.ai.client import (
     AIClientError,
     ChatCompletionClient,
     ModelToolCall,
-    ResponsesClient,
     ToolChatCompletionClient,
 )
 from eva.ai.parsing import parse_strict_yes_no
@@ -33,7 +32,6 @@ MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
 @dataclass(frozen=True, slots=True)
 class ResponseGenerationResult:
     content: str
-    response_id: str | None = None
 
 
 def _build_user_message(
@@ -73,26 +71,16 @@ class ResponseService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-        previous_response_id: str | None = None,
     ) -> ResponseGenerationResult:
-        reseed_messages = _build_conversation_messages(
+        conversation_messages = _build_conversation_messages(
             history_messages=history_messages,
             context_messages=context_messages,
             user_message=user_message,
             reply_context=reply_context,
             requester_context=requester_context,
-            include_history=True,
-        )
-        response_messages = _build_conversation_messages(
-            history_messages=history_messages,
-            context_messages=context_messages,
-            user_message=user_message,
-            reply_context=reply_context,
-            requester_context=requester_context,
-            include_history=previous_response_id is None,
         )
         tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
-        tool_messages.extend(response_messages)
+        tool_messages.extend(conversation_messages)
 
         tool_reply = await _generate_reply_with_terminal_tool(
             client=self._client,
@@ -106,22 +94,10 @@ class ResponseService:
         if tool_reply is not None:
             return ResponseGenerationResult(content=tool_reply)
 
-        if isinstance(self._client, ResponsesClient):
-            return await _create_stored_response(
-                client=self._client,
-                instructions=system_prompt,
-                initial_messages=response_messages,
-                reseed_messages=reseed_messages,
-                model_name=self._model_name,
-                temperature=0.7,
-                max_output_tokens=REPLY_MAX_TOKENS,
-                previous_response_id=previous_response_id,
-            )
-
-        fallback_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
-        fallback_messages.extend(reseed_messages)
+        messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
+        messages.extend(conversation_messages)
         content = await self._client.chat_completion(
-            messages=fallback_messages,
+            messages=messages,
             model=self._model_name,
             temperature=0.7,
             max_tokens=REPLY_MAX_TOKENS,
@@ -153,7 +129,6 @@ class SearchResponseService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
-        previous_response_id: str | None = None,
     ) -> ResponseGenerationResult:
         search_input = self._build_search_input(
             search_results=search_results,
@@ -178,27 +153,10 @@ class SearchResponseService:
         if tool_reply is not None:
             return ResponseGenerationResult(content=tool_reply)
 
-        if isinstance(self._client, ResponsesClient):
-            return await _create_stored_response(
-                client=self._client,
-                instructions=system_prompt,
-                initial_messages=response_messages,
-                reseed_messages=response_messages,
-                model_name=self._model_name,
-                temperature=0.2,
-                max_output_tokens=SEARCH_REPLY_MAX_TOKENS,
-                previous_response_id=previous_response_id,
-            )
-
-        fallback_messages: list[ChatMessage] = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": search_input,
-            },
-        ]
+        messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
+        messages.extend(response_messages)
         content = await self._client.chat_completion(
-            messages=fallback_messages,
+            messages=messages,
             model=self._model_name,
             temperature=0.2,
             max_tokens=SEARCH_REPLY_MAX_TOKENS,
@@ -360,11 +318,9 @@ def _build_conversation_messages(
     user_message: str,
     reply_context: str | None,
     requester_context: str | None,
-    include_history: bool,
 ) -> list[ChatMessage]:
     messages: list[ChatMessage] = []
-    if include_history:
-        messages.extend(history_messages)
+    messages.extend(history_messages)
     messages.extend(context_messages)
     messages.append(
         {
@@ -373,50 +329,6 @@ def _build_conversation_messages(
         }
     )
     return messages
-
-
-async def _create_stored_response(
-    *,
-    client: ResponsesClient,
-    instructions: str,
-    initial_messages: Sequence[ChatMessage],
-    reseed_messages: Sequence[ChatMessage],
-    model_name: str,
-    temperature: float,
-    max_output_tokens: int,
-    previous_response_id: str | None,
-) -> ResponseGenerationResult:
-    try:
-        output = await client.create_response(
-            instructions=instructions,
-            messages=initial_messages,
-            model=model_name,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            previous_response_id=previous_response_id,
-            allow_reasoning_fallback=True,
-        )
-    except AIClientError as exc:
-        if previous_response_id is None or not _should_retry_without_previous_response_id(exc):
-            raise
-
-        logger.warning("Responses API rejected previous response id; reseeding channel history")
-        output = await client.create_response(
-            instructions=instructions,
-            messages=reseed_messages,
-            model=model_name,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            previous_response_id=None,
-            allow_reasoning_fallback=True,
-        )
-
-    return ResponseGenerationResult(content=output.content, response_id=output.response_id)
-
-
-def _should_retry_without_previous_response_id(exc: AIClientError) -> bool:
-    message = str(exc).lower()
-    return "previous_response_id" in message or "previous response" in message
 
 
 def _build_assistant_tool_message(
