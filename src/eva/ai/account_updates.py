@@ -26,9 +26,12 @@ _ACCOUNT_UPDATE_SYSTEM_PROMPT = (
     '  "custom_status": {"action": "none|set|clear", "value": string|null}\n'
     "}\n\n"
     "Only set is_account_update true when the user is explicitly asking to change Eva's "
-    "own display name, bio/about-me, online presence, or custom status. Questions about "
-    "status/profile, jokes, or requests about another user are false. For clearing a field, "
-    "use action clear. Do not include markdown."
+    "own Discord account details: display name, bio/about-me, online presence, or custom "
+    "status. Eva runs as the user's Discord account, so first-person wording like 'my "
+    "display name' or second-person wording like 'your display name' can both refer to "
+    "Eva's account when phrased as a change request. Questions about status/profile, "
+    "jokes, or requests about another user are false. For clearing a field, use action "
+    "clear. Do not include markdown."
 )
 
 _ACCOUNT_UPDATE_TARGETS = (

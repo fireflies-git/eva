@@ -9,6 +9,7 @@ import discord
 import eva.discord.handlers as handlers
 from eva.account_updates import AccountUpdateDraft, AccountUpdatePlan, PendingAccountUpdateStore
 from eva.ai import ReplyGenerationService
+from eva.ai.account_updates import AccountUpdatePlanner
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
 from eva.discord.delivery import DeliveryResult
@@ -50,6 +51,28 @@ class FakePlanner:
     async def plan_update(self, user_message: str) -> AccountUpdatePlan | None:
         self.calls.append(user_message)
         return self.plan
+
+
+class FakePlannerClient:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.calls: list[dict[str, object]] = []
+
+    async def chat_completion(self, **kwargs: object) -> str:
+        self.calls.append(kwargs)
+        return self.response
+
+
+def _account_update_response(*, display_name: str) -> str:
+    return (
+        "{"
+        '"is_account_update": true,'
+        f'"display_name": {{"action": "set", "value": "{display_name}"}},'
+        '"bio": {"action": "none", "value": null},'
+        '"presence": {"action": "none", "value": null},'
+        '"custom_status": {"action": "none", "value": null}'
+        "}"
+    )
 
 
 class FakeReplyGenerationService:
@@ -109,7 +132,7 @@ def _build_handler(
     tmp_path,
     *,
     account_mode: str = "assistant",
-    planner: FakePlanner | None = None,
+    planner: handlers.AccountUpdatePlanner | None = None,
     pending_store: PendingAccountUpdateStore | None = None,
     reply_generation_service: object | None = None,
     whitelist: WhitelistStore | None = None,
@@ -169,6 +192,52 @@ def test_authorized_account_update_request_creates_pending_confirmation(
     assert pending.draft == draft
     assert "Pending account update" in delivered[0]
     assert "Reply y to apply or n to cancel." in delivered[0]
+
+
+def test_authorized_my_display_name_request_uses_confirmation_flow(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    planner_client = FakePlannerClient(
+        _account_update_response(display_name="nerrou lover"),
+    )
+    planner = AccountUpdatePlanner(
+        client=planner_client,
+        model_name="model",
+    )
+    pending_store = PendingAccountUpdateStore()
+    handler = _build_handler(
+        tmp_path,
+        planner=planner,
+        pending_store=pending_store,
+    )
+    delivered: list[str] = []
+
+    async def fake_deliver_owner_response(**kwargs: object) -> DeliveryResult:
+        delivered.append(cast(str, kwargs["reply_content"]))
+        return DeliveryResult(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "deliver_owner_response", fake_deliver_owner_response)
+
+    message = DummyMessage(
+        author_id=1,
+        channel=DummyChannel(99),
+        content="eva change my display name to nerrou lover",
+    )
+
+    asyncio.run(
+        handler.on_message(
+            cast(discord.Client, DummyClient()),
+            cast(discord.Message, message),
+        )
+    )
+
+    pending = pending_store.get(user_id=1, channel_id=99)
+    assert pending is not None
+    assert pending.draft == AccountUpdateDraft(display_name="nerrou lover")
+    assert len(planner_client.calls) == 1
+    assert "Pending account update" in delivered[0]
+    assert "Display name -> 'nerrou lover'" in delivered[0]
 
 
 def test_confirmation_y_applies_and_clears_pending(monkeypatch, tmp_path) -> None:

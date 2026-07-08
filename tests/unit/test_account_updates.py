@@ -50,6 +50,28 @@ def test_account_update_planner_parses_valid_update() -> None:
     assert len(client.calls) == 1
 
 
+def test_account_update_planner_asks_model_for_my_display_name_update() -> None:
+    client = FakePlannerClient(
+        """
+        {
+          "is_account_update": true,
+          "display_name": {"action": "set", "value": "nerrou lover"},
+          "bio": {"action": "none", "value": null},
+          "presence": {"action": "none", "value": null},
+          "custom_status": {"action": "none", "value": null}
+        }
+        """
+    )
+    planner = AccountUpdatePlanner(client=client, model_name="model")
+
+    plan = asyncio.run(planner.plan_update("change my display name to nerrou lover"))
+
+    assert plan is not None
+    assert plan.error is None
+    assert plan.draft == AccountUpdateDraft(display_name="nerrou lover")
+    assert len(client.calls) == 1
+
+
 def test_account_update_planner_skips_no_action_request() -> None:
     client = FakePlannerClient(
         """
