@@ -251,6 +251,7 @@ The repo is intentionally split by responsibility:
   - `context.py`: Discord read-side context fetches
   - `delivery.py`: Discord write-side send/edit/reply behavior
   - `formatting.py`: Discord output chunking / loading text
+  - `code_attachments.py`: extract fenced code blocks into Discord file attachments
 - `src/eva/ai/*`
   AI transport, orchestration, response shaping, moderation/search decision parsing.
 - `src/eva/search/*`
@@ -284,6 +285,8 @@ Keep file roles sharp. Avoid “convenience” code that blurs module boundaries
   `src/eva/discord/context.py`
 - Send/edit/reply behavior and delivery result handling:
   `src/eva/discord/delivery.py`
+- Code block extraction into file attachments:
+  `src/eva/discord/code_attachments.py`
 - Top-level Discord flow orchestration only:
   `src/eva/discord/handlers.py`
 - Prompt wording, tone, security rules, search-response format:
@@ -613,6 +616,7 @@ The same applies to `src/eva/images/client.py`:
 - moderation sequencing
 - fail-open vs fail-closed behavior at the orchestration level
 - final image reply text shaping for Discord
+- code-block extraction (after TOS check, before reply return)
 
 If you change fallback behavior, do it deliberately and update tests.
 

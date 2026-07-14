@@ -324,3 +324,32 @@ def test_reply_generation_skips_image_path_for_reply_trigger() -> None:
     assert reply.attachments == []
     assert image_service.calls == []
     assert len(response_service.calls) == 1
+
+
+def test_reply_generation_extracts_code_blocks_into_attachments() -> None:
+    response = "Here is the code:\n\n```py\nprint('hello world')\n```\n\nRun it."
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(response),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="write a python hello world",
+            reply_context=None,
+        )
+    )
+
+    assert reply.attachments == [("code.py", b"print('hello world')\n")]
+    assert "`code.py`" in reply.content
+    assert "```py" not in reply.content
+    assert "```" not in reply.content
+    assert "Run it." in reply.content

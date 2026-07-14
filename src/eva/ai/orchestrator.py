@@ -197,6 +197,13 @@ class ReplyGenerationService:
                 attachments=[],
             )
 
+        modified_content, code_attachments = _extract_code_blocks_from_reply(reply.content)
+        if code_attachments:
+            reply = ReplyOutput(
+                content=modified_content,
+                attachments=[*reply.attachments, *code_attachments],
+            )
+
         return reply
 
     async def _schedule_reminder_if_needed(
@@ -340,3 +347,9 @@ def _strip_wrapping_quotes(text: str) -> str:
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
         return text[1:-1].strip()
     return text
+
+
+def _extract_code_blocks_from_reply(text: str) -> tuple[str, list[tuple[str, bytes]]]:
+    from eva.discord.code_attachments import extract_code_blocks
+
+    return extract_code_blocks(text)
