@@ -21,7 +21,6 @@ class ChatCompletionClient(Protocol):
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
-        allow_reasoning_fallback: bool = False,
     ) -> str: ...
 
 
@@ -48,7 +47,6 @@ class ToolChatCompletionClient(Protocol):
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
-        allow_reasoning_fallback: bool = False,
     ) -> ChatCompletionOutput: ...
 
 
@@ -91,7 +89,6 @@ class OpenAICompatibleClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
-        allow_reasoning_fallback: bool = False,
     ) -> str:
         payload = {
             "model": model or self._default_model,
@@ -111,11 +108,6 @@ class OpenAICompatibleClient:
         if isinstance(content, str) and content.strip():
             return content.strip()
 
-        if allow_reasoning_fallback:
-            reasoning_content = message.get("reasoning_content")
-            if isinstance(reasoning_content, str) and reasoning_content.strip():
-                return reasoning_content.strip()
-
         raise AIClientError("Model returned empty response content")
 
     async def chat_completion_with_tools(
@@ -126,7 +118,6 @@ class OpenAICompatibleClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
-        allow_reasoning_fallback: bool = False,
     ) -> ChatCompletionOutput:
         payload = {
             "model": model or self._default_model,
@@ -148,10 +139,6 @@ class OpenAICompatibleClient:
         resolved_content: str | None = None
         if isinstance(content, str) and content.strip():
             resolved_content = content.strip()
-        elif allow_reasoning_fallback:
-            reasoning_content = message.get("reasoning_content")
-            if isinstance(reasoning_content, str) and reasoning_content.strip():
-                resolved_content = reasoning_content.strip()
 
         return ChatCompletionOutput(
             content=resolved_content,

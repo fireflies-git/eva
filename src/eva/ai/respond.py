@@ -20,7 +20,7 @@ from eva.constants import (
     SEARCH_REPLY_MAX_TOKENS,
 )
 from eva.search.schemas import SearchResultBundle
-from eva.terminal import TerminalClientError, TerminalCommandRejectedError, TerminalService
+from eva.tools import ToolService
 
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
@@ -54,13 +54,11 @@ class ResponseService:
         *,
         client: ChatCompletionClient,
         model_name: str,
-        terminal_service: TerminalService | None = None,
-        autonomous_terminal_access: bool = False,
+        tool_services: Sequence[ToolService] = (),
     ) -> None:
         self._client = client
         self._model_name = model_name
-        self._terminal_service = terminal_service
-        self._autonomous_terminal_access = autonomous_terminal_access
+        self._tool_services = list(tool_services)
 
     async def generate_reply(
         self,
@@ -82,12 +80,11 @@ class ResponseService:
         tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         tool_messages.extend(conversation_messages)
 
-        tool_reply = await _generate_reply_with_terminal_tool(
+        tool_reply = await _generate_reply_with_tools(
             client=self._client,
             model_name=self._model_name,
             messages=tool_messages,
-            terminal_service=self._terminal_service,
-            autonomous_terminal_access=self._autonomous_terminal_access,
+            tool_services=self._tool_services,
             temperature=0.7,
             max_tokens=REPLY_MAX_TOKENS,
         )
@@ -101,7 +98,6 @@ class ResponseService:
             model=self._model_name,
             temperature=0.7,
             max_tokens=REPLY_MAX_TOKENS,
-            allow_reasoning_fallback=True,
         )
         return ResponseGenerationResult(content=content)
 
@@ -112,13 +108,11 @@ class SearchResponseService:
         *,
         client: ChatCompletionClient,
         model_name: str,
-        terminal_service: TerminalService | None = None,
-        autonomous_terminal_access: bool = False,
+        tool_services: Sequence[ToolService] = (),
     ) -> None:
         self._client = client
         self._model_name = model_name
-        self._terminal_service = terminal_service
-        self._autonomous_terminal_access = autonomous_terminal_access
+        self._tool_services = list(tool_services)
 
     async def generate_reply(
         self,
@@ -141,12 +135,11 @@ class SearchResponseService:
         tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         tool_messages.extend(response_messages)
 
-        tool_reply = await _generate_reply_with_terminal_tool(
+        tool_reply = await _generate_reply_with_tools(
             client=self._client,
             model_name=self._model_name,
             messages=tool_messages,
-            terminal_service=self._terminal_service,
-            autonomous_terminal_access=self._autonomous_terminal_access,
+            tool_services=self._tool_services,
             temperature=0.2,
             max_tokens=SEARCH_REPLY_MAX_TOKENS,
         )
@@ -160,7 +153,6 @@ class SearchResponseService:
             model=self._model_name,
             temperature=0.2,
             max_tokens=SEARCH_REPLY_MAX_TOKENS,
-            allow_reasoning_fallback=True,
         )
         return ResponseGenerationResult(content=content)
 
@@ -261,34 +253,33 @@ class TOSCheckService:
         return decision
 
 
-async def _generate_reply_with_terminal_tool(
+async def _generate_reply_with_tools(
     *,
     client: ChatCompletionClient,
     model_name: str,
     messages: Sequence[ChatMessage],
-    terminal_service: TerminalService | None,
-    autonomous_terminal_access: bool,
+    tool_services: Sequence[ToolService],
     temperature: float,
     max_tokens: int,
 ) -> str | None:
-    if terminal_service is None or not autonomous_terminal_access:
+    if not tool_services:
         return None
     if not isinstance(client, ToolChatCompletionClient):
         return None
 
     tool_client = cast(ToolChatCompletionClient, client)
     tool_messages: list[ChatMessage] = list(messages)
-    tool_definition = terminal_service.build_autonomous_tool_definition()
+    tool_definitions = [svc.build_autonomous_tool_definition() for svc in tool_services]
+    name_to_service = {svc.autonomous_tool_name: svc for svc in tool_services}
 
     try:
         for _ in range(MAX_TERMINAL_TOOL_ROUNDS):
             response = await tool_client.chat_completion_with_tools(
                 messages=tool_messages,
-                tools=[tool_definition],
+                tools=tool_definitions,
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                allow_reasoning_fallback=True,
             )
 
             if not response.tool_calls:
@@ -300,14 +291,26 @@ async def _generate_reply_with_terminal_tool(
             tool_messages.append(assistant_message)
 
             for tool_call in response.tool_calls[:MAX_TERMINAL_TOOL_CALLS_PER_ROUND]:
+                service = name_to_service.get(tool_call.name)
+                if service is None:
+                    result = f"Tool error: unknown tool '{tool_call.name}'."
+                else:
+                    try:
+                        result = await service.run_autonomous_tool(tool_call.arguments)
+                    except Exception as exc:
+                        result = f"Tool error: {exc}"
+
                 tool_messages.append(
-                    await _execute_terminal_tool_call(
-                        terminal_service=terminal_service, tool_call=tool_call
-                    )
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_call.name,
+                        "content": result,
+                    }
                 )
-        raise AIClientError("Model exceeded terminal tool-call limit")
+        raise AIClientError("Model exceeded tool-call limit")
     except AIClientError:
-        logger.exception("Autonomous terminal tool flow failed; falling back to plain reply")
+        logger.exception("Autonomous tool flow failed; falling back to plain reply")
         return None
 
 
@@ -321,7 +324,13 @@ def _build_conversation_messages(
 ) -> list[ChatMessage]:
     messages: list[ChatMessage] = []
     messages.extend(history_messages)
-    messages.extend(context_messages)
+
+    # Deduplicate context against history so the model doesn't see exchanges twice
+    seen_content = {msg.get("content", "") for msg in history_messages}
+    for ctx_msg in context_messages:
+        if ctx_msg.get("content", "") not in seen_content:
+            messages.append(ctx_msg)
+
     messages.append(
         {
             "role": "user",
@@ -353,24 +362,3 @@ def _build_assistant_tool_message(
     }
 
 
-async def _execute_terminal_tool_call(
-    *,
-    terminal_service: TerminalService,
-    tool_call: ModelToolCall,
-) -> ChatMessage:
-    if tool_call.name != terminal_service.autonomous_tool_name:
-        result = f"Tool error: unknown tool '{tool_call.name}'."
-    else:
-        try:
-            result = await terminal_service.run_autonomous_tool(tool_call.arguments)
-        except TerminalCommandRejectedError as exc:
-            result = f"Tool error: {exc}"
-        except TerminalClientError as exc:
-            result = f"Tool error: {exc}"
-
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "name": tool_call.name,
-        "content": result,
-    }

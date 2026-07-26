@@ -4,7 +4,7 @@ import random
 import re
 from dataclasses import dataclass
 
-from eva.constants import DISCORD_MESSAGE_LIMIT, LOADING_MESSAGES
+from eva.constants import DISCORD_MESSAGE_LIMIT, LOADING_MESSAGES, SPLIT_TRIGGER
 
 EMPTY_RESPONSE = "(empty response)"
 QUOTE_PREFIX = "> "
@@ -161,6 +161,18 @@ def split_message_content(
     )
 
 
+def split_on_text_triggers(content: str) -> list[str]:
+    """Split content at each SPLIT_TRIGGER boundary.
+
+    Returns a list of non-empty segments. If no trigger is found,
+    returns [content].
+    """
+    if SPLIT_TRIGGER not in content:
+        return [content]
+    parts = content.split(SPLIT_TRIGGER)
+    return [part.strip() for part in parts if part.strip()]
+
+
 def build_response_chunk_layout(
     original_content: str,
     *,
@@ -214,7 +226,12 @@ def build_plain_response_chunks(
     *,
     message_limit: int = DISCORD_MESSAGE_LIMIT,
 ) -> list[str]:
-    return split_message_content(reply_content, message_limit=message_limit)
+    segments = split_on_text_triggers(reply_content)
+    all_chunks: list[str] = []
+    for segment in segments:
+        segment_chunks = split_message_content(segment, message_limit=message_limit)
+        all_chunks.extend(segment_chunks)
+    return all_chunks
 
 
 def build_plain_reply_chunks(

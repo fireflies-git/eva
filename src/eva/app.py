@@ -31,6 +31,7 @@ from eva.state import (
     WhitelistStore,
 )
 from eva.terminal import TerminalService
+from eva.tools import Context7Service, PlaywrightService, ToolService
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,30 @@ class EvaApp:
                 max_output_chars=settings.terminal_max_output_chars,
             )
         self._download_service = DownloadService(client=YtDLPDownloadClient())
+
+        self._tool_services: list[ToolService] = []
+        if self._terminal_service is not None and settings.terminal_autonomous_enabled:
+            self._tool_services.append(self._terminal_service)
+
+        self._playwright_service: PlaywrightService | None = None
+        if settings.playwright_enabled:
+            self._playwright_service = PlaywrightService(
+                timeout_seconds=settings.playwright_timeout_seconds,
+                max_content_chars=settings.playwright_max_content_chars,
+            )
+            self._tool_services.append(self._playwright_service)
+
+        self._context7_service: Context7Service | None = None
+        if settings.context7_api_key:
+            self._context7_service = Context7Service(
+                api_key=settings.context7_api_key,
+            )
+            self._tool_services.append(self._context7_service)
+
         self._response_service = ResponseService(
             client=self._ai_client,
             model_name=settings.model_name,
-            terminal_service=self._terminal_service,
-            autonomous_terminal_access=settings.terminal_autonomous_enabled,
+            tool_services=self._tool_services,
         )
 
         self._image_client: ImageClient | None = None
@@ -101,8 +121,7 @@ class EvaApp:
             self._search_response_service = SearchResponseService(
                 client=self._ai_client,
                 model_name=settings.model_name,
-                terminal_service=self._terminal_service,
-                autonomous_terminal_access=settings.terminal_autonomous_enabled,
+                tool_services=self._tool_services,
             )
         self._tos_check_service = TOSCheckService(
             client=self._ai_client,
@@ -142,6 +161,8 @@ class EvaApp:
             tos_check_service=self._tos_check_service,
             terminal_enabled=settings.terminal_enabled,
             autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
+            playwright_enabled=settings.playwright_enabled,
+            context7_enabled=settings.context7_api_key is not None,
         )
         self._rate_limiter = RateLimiter(
             max_requests=settings.rate_limit_max_requests,
@@ -180,12 +201,20 @@ class EvaApp:
             await self._image_client.start()
         if self._search_client is not None:
             await self._search_client.start()
+        if self._playwright_service is not None:
+            await self._playwright_service.start()
+        if self._context7_service is not None:
+            await self._context7_service.start()
         self._reminder_runner.start()
         try:
             await self._discord_client.start(self._settings.discord_token)
         finally:
             with contextlib.suppress(Exception):
                 await self._reminder_runner.stop()
+            if self._context7_service is not None:
+                await self._context7_service.close()
+            if self._playwright_service is not None:
+                await self._playwright_service.close()
             if self._search_client is not None:
                 await self._search_client.close()
             if self._image_client is not None:

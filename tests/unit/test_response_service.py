@@ -8,6 +8,7 @@ from typing import Any, cast
 from eva.ai.client import ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
 from eva.terminal import TerminalService
+from eva.tools import ToolService
 
 
 class FakeToolClient:
@@ -47,8 +48,7 @@ def test_response_service_uses_terminal_tool_loop(tmp_path: Path) -> None:
     service = ResponseService(
         client=client,
         model_name="model",
-        terminal_service=terminal_service,
-        autonomous_terminal_access=True,
+        tool_services=[terminal_service],
     )
 
     reply = asyncio.run(

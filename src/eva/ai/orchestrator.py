@@ -9,8 +9,9 @@ import discord
 
 from eva.ai.client import AIClientError
 from eva.ai.respond import ResponseGenerationResult
+from eva.ai.sanitize import sanitize_response
 from eva.ai.schemas import ChatMessage
-from eva.constants import MAX_IMAGE_URLS, WARNING_MARK
+from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_search_system_prompt, build_system_prompt
 from eva.reminders import ReminderConfirmation
@@ -102,6 +103,8 @@ class ReplyGenerationService:
         reminder_scheduler: ReminderRunner | None = None,
         terminal_enabled: bool = False,
         autonomous_terminal_enabled: bool = False,
+        playwright_enabled: bool = False,
+        context7_enabled: bool = False,
     ) -> None:
         self._account_mode = account_mode
         self._response_service = response_service
@@ -112,6 +115,8 @@ class ReplyGenerationService:
         self._tos_check_service = tos_check_service
         self._terminal_enabled = terminal_enabled
         self._autonomous_terminal_enabled = autonomous_terminal_enabled
+        self._playwright_enabled = playwright_enabled
+        self._context7_enabled = context7_enabled
 
     async def generate_reply(
         self,
@@ -174,6 +179,8 @@ class ReplyGenerationService:
                     account_mode=self._account_mode,
                     terminal_enabled=self._terminal_enabled,
                     autonomous_terminal_enabled=self._autonomous_terminal_enabled,
+                    playwright_enabled=self._playwright_enabled,
+                    context7_enabled=self._context7_enabled,
                 )
                 content = await self._response_service.generate_reply(
                     system_prompt=system_prompt,
@@ -204,6 +211,7 @@ class ReplyGenerationService:
                 attachments=[*reply.attachments, *code_attachments],
             )
 
+        reply = _sanitize_and_watermark(reply)
         return reply
 
     async def _schedule_reminder_if_needed(
@@ -314,6 +322,8 @@ class ReplyGenerationService:
             account_mode=self._account_mode,
             terminal_enabled=self._terminal_enabled,
             autonomous_terminal_enabled=self._autonomous_terminal_enabled,
+            playwright_enabled=self._playwright_enabled,
+            context7_enabled=self._context7_enabled,
         )
         try:
             return await self._search_response_service.generate_reply(
@@ -353,3 +363,13 @@ def _extract_code_blocks_from_reply(text: str) -> tuple[str, list[tuple[str, byt
     from eva.discord.code_attachments import extract_code_blocks
 
     return extract_code_blocks(text)
+
+
+def _sanitize_and_watermark(reply: ReplyOutput) -> ReplyOutput:
+    """Strip thinking artifacts and append watermark to reply content."""
+    cleaned = sanitize_response(reply.content)
+    watermarked = f"{cleaned}\n\n{RESPONSE_WATERMARK}" if cleaned else cleaned
+    return ReplyOutput(
+        content=watermarked,
+        attachments=reply.attachments,
+    )

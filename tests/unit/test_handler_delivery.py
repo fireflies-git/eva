@@ -102,6 +102,7 @@ def test_handler_does_not_append_history_when_primary_delivery_fails(
         *,
         limit: int,
         exclude_message_id: int | None = None,
+        bot_user_id: int | None = None,
     ) -> list[dict[str, str]]:
         return []
 
@@ -172,6 +173,7 @@ def test_handler_appends_history_when_primary_delivery_succeeds(
         *,
         limit: int,
         exclude_message_id: int | None = None,
+        bot_user_id: int | None = None,
     ) -> list[dict[str, str]]:
         return []
 

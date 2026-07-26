@@ -9,8 +9,11 @@ from eva.ai.orchestrator import (
     SEARCH_FAILURE_MESSAGE,
     ReplyGenerationService,
 )
+from eva.constants import RESPONSE_WATERMARK
 from eva.images import GeneratedImage, GeneratedImageAsset, ImageClientError, ImageResultBundle
 from eva.search import SearchClientError, SearchResultBundle
+
+_WM = "\n\n-# -eva"
 
 
 class StubResponseService:
@@ -112,7 +115,7 @@ def test_reply_generation_uses_normal_path_when_search_not_needed() -> None:
         )
     )
 
-    assert reply.content == "normal"
+    assert reply.content == f"normal{_WM}"
     assert reply.attachments == []
     assert len(response_service.calls) == 1
     assert response_service.calls[0]["requester_context"] is not None
@@ -143,7 +146,7 @@ def test_reply_generation_uses_search_path_when_results_exist() -> None:
         )
     )
 
-    assert reply.content == "search"
+    assert reply.content == f"search{_WM}"
     assert reply.attachments == []
     assert len(search_response_service.calls) == 1
     assert response_service.calls == []
@@ -171,7 +174,7 @@ def test_reply_generation_fails_closed_when_search_errors() -> None:
         )
     )
 
-    assert reply.content == SEARCH_FAILURE_MESSAGE
+    assert reply.content == f"{SEARCH_FAILURE_MESSAGE}{_WM}"
     assert reply.attachments == []
 
 
@@ -229,7 +232,7 @@ def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
         )
     )
 
-    assert reply.content == "> fox"
+    assert reply.content == f"> fox{_WM}"
     assert reply.attachments == [("fox.png", b"png-bytes")]
     assert response_service.calls == []
     assert search_response_service.calls == []
@@ -264,6 +267,7 @@ def test_reply_generation_formats_image_url_fallback_as_blockquote() -> None:
     assert (
         reply.content
         == "> A realistic chocolate chip cookie on a wooden table\nhttps://example.com/cookie.png"
+        + _WM
     )
     assert reply.attachments == []
 
@@ -288,7 +292,7 @@ def test_reply_generation_fails_closed_when_image_generation_errors() -> None:
         )
     )
 
-    assert reply.content == IMAGE_FAILURE_MESSAGE
+    assert reply.content == f"{IMAGE_FAILURE_MESSAGE}{_WM}"
     assert reply.attachments == []
 
 
@@ -320,7 +324,7 @@ def test_reply_generation_skips_image_path_for_reply_trigger() -> None:
         )
     )
 
-    assert reply.content == "normal"
+    assert reply.content == f"normal{_WM}"
     assert reply.attachments == []
     assert image_service.calls == []
     assert len(response_service.calls) == 1

@@ -86,11 +86,9 @@ def test_fetch_channel_context_includes_user_and_mentions() -> None:
     )
 
     assert len(context) == 1
-    assert "username=neo" in context[0]["content"]
-    assert "display_name=Neo" in context[0]["content"]
-    assert "pronouns=" not in context[0]["content"]
+    assert "@Neo (neo)" in context[0]["content"]
     assert "mentions:" in context[0]["content"]
-    assert "username=trinity" in context[0]["content"]
+    assert "@Trinity (trinity)" in context[0]["content"]
 
 
 def test_fetch_reply_context_includes_user_metadata() -> None:
@@ -112,8 +110,7 @@ def test_fetch_reply_context_includes_user_metadata() -> None:
     reply_context = asyncio.run(fetch_reply_context(cast(discord.Message, message)))
 
     assert reply_context is not None
-    assert "username=neo" in reply_context
-    assert "pronouns=" not in reply_context
+    assert "@Neo (neo)" in reply_context
     assert "previous message" in reply_context
 
 

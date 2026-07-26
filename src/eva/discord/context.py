@@ -20,6 +20,7 @@ async def fetch_channel_context(
     *,
     limit: int,
     exclude_message_id: int | None = None,
+    bot_user_id: int | None = None,
 ) -> list[ChatMessage]:
     if not hasattr(channel, "history"):
         return []
@@ -41,7 +42,8 @@ async def fetch_channel_context(
     output: list[ChatMessage] = []
     for msg in reversed(raw_messages):
         serialized = _serialize_context_message(msg, id_to_name)
-        output.append({"role": "user", "content": serialized})
+        role = _context_message_role(msg, bot_user_id)
+        output.append({"role": role, "content": serialized})
 
     return output
 
@@ -177,3 +179,9 @@ def _format_reply_context_extras(msg: discord.Message) -> str | None:
         pieces.append(reactions)
 
     return " | ".join(pieces) if pieces else None
+
+
+def _context_message_role(msg: discord.Message, bot_user_id: int | None) -> str:
+    if bot_user_id is not None and getattr(msg.author, "id", None) == bot_user_id:
+        return "assistant"
+    return "user"

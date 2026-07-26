@@ -5,9 +5,12 @@ import discord
 
 from eva.ai import ResponseGenerationResult
 from eva.ai.orchestrator import ReplyGenerationService
+from eva.constants import RESPONSE_WATERMARK
 from eva.images import GeneratedImageAsset, ImageResultBundle
 from eva.reminders import ReminderConfirmation
 from eva.search import SearchResultBundle
+
+_WM = "\n\n-# -eva"
 
 
 class StubResponseService:
@@ -160,7 +163,7 @@ def test_reminder_branch_falls_through_when_scheduler_returns_none() -> None:
         )
     )
 
-    assert reply.content == "normal"
+    assert reply.content == f"normal{_WM}"
     assert len(scheduler.calls) == 1
     assert len(response_service.calls) == 1
 
@@ -186,7 +189,7 @@ def test_reminder_branch_skipped_when_user_id_missing() -> None:
         )
     )
 
-    assert reply.content == "normal"
+    assert reply.content == f"normal{_WM}"
     assert scheduler.calls == []
     assert len(response_service.calls) == 1
 
@@ -215,5 +218,5 @@ def test_reminder_branch_skipped_when_no_scheduler_configured() -> None:
         )
     )
 
-    assert reply.content == "normal"
+    assert reply.content == f"normal{_WM}"
     assert len(response_service.calls) == 1

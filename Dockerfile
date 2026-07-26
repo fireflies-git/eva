@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 
+# Install Playwright system deps and Chromium browser
+RUN uv run playwright install-deps chromium
+RUN uv run playwright install chromium
+
 # Copy source code
 COPY src/ src/
 

@@ -17,6 +17,7 @@ def test_user_metadata_uses_supported_profile_fields() -> None:
         id=123,
         name="neo",
         display_name="Neo",
+        global_name="Neo",
         bio="The One",
     )
 
@@ -25,6 +26,8 @@ def test_user_metadata_uses_supported_profile_fields() -> None:
     assert metadata.user_id == 123
     assert metadata.username == "neo"
     assert metadata.display_name == "Neo"
+    assert metadata.global_name == "Neo"
+    assert metadata.server_name is None
     assert metadata.bio == "The One"
 
 
@@ -39,9 +42,7 @@ def test_user_metadata_ignores_unavailable_pronoun_attributes() -> None:
 
     metadata = build_user_metadata(user)
 
-    assert format_user_metadata(metadata) == (
-        "user(id=999, username=sarah_7, display_name=Sarah, bio=unknown)"
-    )
+    assert format_user_metadata(metadata) == "@Sarah (sarah_7)"
 
 
 def test_user_metadata_does_not_infer_pronouns_from_names() -> None:

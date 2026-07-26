@@ -576,10 +576,12 @@ class SelfbotMessageHandler:
         is_owner: bool,
         is_standalone: bool,
     ) -> None:
+        bot_user_id = client.user.id if client.user else None
         response_context = await fetch_channel_context(
             message.channel,
             limit=self._settings.response_context_messages,
             exclude_message_id=message.id,
+            bot_user_id=bot_user_id,
         )
         history_messages = self._history_store.get(channel_id)
 

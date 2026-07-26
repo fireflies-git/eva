@@ -381,6 +381,7 @@ def test_unrelated_y_without_pending_falls_through_normally(monkeypatch, tmp_pat
         *,
         limit: int,
         exclude_message_id: int | None = None,
+        bot_user_id: int | None = None,
     ) -> list[dict[str, str]]:
         return []
 

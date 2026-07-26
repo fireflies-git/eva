@@ -11,6 +11,8 @@ class UserMetadata:
     user_id: int | None
     username: str
     display_name: str
+    global_name: str
+    server_name: str | None
     bio: str
 
 
@@ -18,26 +20,45 @@ def build_user_metadata(user: object) -> UserMetadata:
     user_id = _optional_int_attr(user, "id")
     username = _string_attr(user, "name", default="unknown")
     display_name = _string_attr(user, "display_name", default=username)
+    global_name = _string_attr(user, "global_name", default=display_name)
+    server_name = _optional_server_name(user, display_name)
     bio = _read_bio(user)
 
     return UserMetadata(
         user_id=user_id,
         username=username,
         display_name=display_name,
+        global_name=global_name,
+        server_name=server_name,
         bio=bio,
     )
 
 
 def format_user_metadata(metadata: UserMetadata) -> str:
-    user_id = str(metadata.user_id) if metadata.user_id is not None else "unknown"
-    return (
-        "user("
-        f"id={user_id}, "
-        f"username={metadata.username}, "
-        f"display_name={metadata.display_name}, "
-        f"bio={metadata.bio}"
-        ")"
-    )
+    """Format user as a compact readable label for AI context.
+
+    Produces forms like:
+        @Leah (leah)             -- server nick == global name
+        @DevLeah (leah)          -- server nick differs, shown as display
+        @Leah | sr:DevLeah (leah)  -- server nick differs from display name
+    """
+    user_id = str(metadata.user_id) if metadata.user_id is not None else "0"
+    primary = metadata.display_name
+    extras: list[str] = []
+
+    if metadata.server_name is not None and metadata.server_name != primary:
+        extras.append(f"sr:{metadata.server_name}")
+    if metadata.global_name != primary:
+        extras.append(f"gl:{metadata.global_name}")
+
+    tag = metadata.username
+    if tag == "unknown":
+        tag = user_id
+
+    base = f"@{primary}"
+    if extras:
+        base += " | " + " ".join(extras)
+    return f"{base} ({tag})"
 
 
 def format_mentions_metadata(mentions: Sequence[object]) -> str | None:
@@ -55,6 +76,13 @@ def build_requester_context(message: discord.Message) -> str:
     if mentions:
         lines.append(mentions)
     return "\n".join(lines)
+
+
+def _optional_server_name(user: object, display_name: str) -> str | None:
+    nick = getattr(user, "nick", None)
+    if isinstance(nick, str) and nick.strip() and nick.strip() != display_name:
+        return nick.strip()
+    return None
 
 
 def _optional_int_attr(obj: object, name: str) -> int | None:
