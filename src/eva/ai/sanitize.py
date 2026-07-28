@@ -21,6 +21,24 @@ _THINK_EMPTY_RE = re.compile(
 # Match lines that are purely separators (common reasoning artifact)
 _SEPARATOR_LINE_RE = re.compile(r"^\s*---+\s*$", re.MULTILINE)
 
+# Channel-context serialization the model sometimes echoes back as its own
+# reply: "[HH:MM] @Name (tag) reply to @X: ..." — the "(tag)" group is always
+# present in the serializer output, so requiring it here keeps genuine
+# "@name:" mentions intact.
+_TRANSCRIPT_LINE_RE = re.compile(
+    r"^\s*(?:\[\d{1,2}:\d{2}\]\s+)?"  # optional [HH:MM] timestamp
+    r"@[^:\s()]+"  # @name
+    r"(?:\s+\|\s+[^()\n|]+)*"  # optional " | sr:x" style segments
+    r"\s*\([^()\n]*\)"  # (tag) — always present in serialized context
+    r"[^:\n]*"  # optional extras (reply to @X, edited, ...)
+    r":\s*",
+)
+
+# Trailing "(mentions: @A (a); @B (b))" annotation copied from context lines.
+_TRANSCRIPT_MENTIONS_TRAILER_RE = re.compile(
+    r"\s*\(mentions?:\s+(?:[^()]|\([^()]*\))*\)\s*$",
+)
+
 
 def sanitize_response(content: str) -> str:
     """Strip chain-of-thought / reasoning artifacts from AI output.
@@ -42,6 +60,23 @@ def sanitize_response(content: str) -> str:
     # Collapse runs of 3+ blank lines to 2
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
+    return cleaned.strip()
+
+
+def strip_context_echo(content: str) -> str:
+    """Strip echoed channel-context transcript framing from model output.
+
+    The model sees serialized context lines like
+    ``[18:51] @eva (tag) reply to @user: ... (mentions: ...)`` and sometimes
+    regurgitates the framing as its own message. The ``(tag)`` group is always
+    present in the serializer, so requiring it here keeps genuine ``@name:``
+    mentions intact.
+    """
+    if not content:
+        return content
+
+    cleaned = "\n".join(_TRANSCRIPT_LINE_RE.sub("", line) for line in content.split("\n"))
+    cleaned = _TRANSCRIPT_MENTIONS_TRAILER_RE.sub("", cleaned)
     return cleaned.strip()
 
 
