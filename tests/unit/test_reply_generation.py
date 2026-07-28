@@ -384,6 +384,34 @@ def test_reply_generation_deduplicates_model_emitted_watermark() -> None:
     assert reply.content.count(RESPONSE_WATERMARK) == 1
 
 
+def test_reply_generation_strips_context_echo_framing() -> None:
+    echoed = (
+        "[18:51] @eva (pseudophilanthropic) reply to @NeDIAD: still not gonna work "
+        "(mentions: @NeDIAD (submissive.cunt))"
+    )
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(echoed),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.content == f"still not gonna work{_WM}"
+
+
 def test_reply_generation_deduplicates_watermark_after_split_trigger() -> None:
     response = f"first part\n/// split\nsecond part\n{RESPONSE_WATERMARK}"
     reply_service = ReplyGenerationService(

@@ -9,7 +9,7 @@ import discord
 
 from eva.ai.client import AIClientError
 from eva.ai.respond import ResponseGenerationResult
-from eva.ai.sanitize import sanitize_response, strip_response_watermark
+from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
 from eva.ai.schemas import ChatMessage
 from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
@@ -378,9 +378,10 @@ def _extract_code_blocks_from_reply(text: str) -> tuple[str, list[tuple[str, byt
 def _sanitize_and_watermark(reply: ReplyOutput) -> ReplyOutput:
     """Strip thinking artifacts and append exactly one watermark to reply content."""
     cleaned = sanitize_response(reply.content)
+    cleaned = strip_context_echo(cleaned)
     cleaned = strip_response_watermark(cleaned)
     cleaned = _strip_trailing_split_trigger(cleaned)
-    watermarked = f"{cleaned}\n\n{RESPONSE_WATERMARK}" if cleaned else cleaned
+    watermarked = f"{cleaned}\n{RESPONSE_WATERMARK}" if cleaned else cleaned
     return ReplyOutput(
         content=watermarked,
         attachments=reply.attachments,
