@@ -125,6 +125,7 @@ class EvaApp:
             )
         self._tos_check_service = TOSCheckService(
             client=self._ai_client,
+            model_name=settings.tos_model_name,
         )
         self._response_split_service = ResponseSplitService(
             client=self._ai_client,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -24,9 +25,22 @@ from eva.tools import ToolService
 
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
-TOS_MODERATION_MODEL = "llama3.3-70b-instruct"
+DISCORD_MINIMUM_AGE = 13
+# Reasoning models spend reasoning tokens from the same max_tokens budget, so a
+# tiny budget starves the YES/NO verdict and silently fails open on empty output.
+TOS_MODERATION_MAX_TOKENS = 256
 MAX_TERMINAL_TOOL_ROUNDS = 5
 MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
+
+_UNDERAGE_STATUS_RE = re.compile(
+    r"\b(?:i['’]?m|i\s+am)\s+(?:a\s+)?(?:minor|underage|under\s*13)\b",
+    re.IGNORECASE,
+)
+_UNDERAGE_AGE_RE = re.compile(
+    r"\b(?:i['’]?m|i\s+am)\s+(?:only\s+|like\s+)?(\d{1,2})"
+    r"(?!\s*[/%.])\s*(?:years?\s*old|yrs?|y/?o)?\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,22 +223,41 @@ class SearchResponseService:
         return "\n".join(lines)
 
 
+def contains_underage_claim(text: str) -> bool:
+    """Deterministic backstop for first-person underage claims.
+
+    Runs without any model call so the reply is still blocked when the AI
+    moderation layer is unreachable or misconfigured.
+    """
+    if _UNDERAGE_STATUS_RE.search(text):
+        return True
+    for match in _UNDERAGE_AGE_RE.finditer(text):
+        if int(match.group(1)) < DISCORD_MINIMUM_AGE:
+            return True
+    return False
+
+
 class TOSCheckService:
-    def __init__(self, *, client: ChatCompletionClient) -> None:
+    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
         self._client = client
+        self._model_name = model_name
 
     async def check_tos_violation(self, text: str) -> bool:
+        if contains_underage_claim(text):
+            logger.warning("Reply blocked by local underage-claim check")
+            return True
+
         system_prompt = (
             "You are a strict Discord TOS moderator. Analyze the following text and "
-            "determine if it violates Discord's Terms of Service, "
-            "specifically checking for:\n"
-            "1. Claims of being underage (e.g. 'I am 12', 'im 11', etc.)\n"
-            "2. The hard-R n-word.\n"
-            "3. Extreme hate speech or illegal content.\n\n"
-            "Note: General swearing and mild slurs (like 'faggot' or 'retard') are "
-            "permitted by the owner in this context. "
-            "Only flag strict TOS violations like underage claims, the hard-R n-word, "
-            "or extreme illegal/harmful content.\n\n"
+            "determine if it violates any of these rules:\n"
+            "1. First-person claims of being underage (e.g. 'I am 12', 'im 11', "
+            "'i'm a minor').\n"
+            "2. Promoting hatred, dehumanization, or violence against any group of "
+            "people, including calls for a group to be hurt, killed, or excluded.\n"
+            "3. Extreme illegal content.\n\n"
+            "Note: Swearing and slurs (including the hard-R n-word) are permitted by "
+            "the owner in this context and are NOT violations by themselves. Only "
+            "flag text that matches the three rules above.\n\n"
             "Reply with exactly 'YES' if it violates these rules, or 'NO' if it is "
             "acceptable. Say nothing else."
         )
@@ -235,9 +268,9 @@ class TOSCheckService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text},
                 ],
-                model=TOS_MODERATION_MODEL,
+                model=self._model_name,
                 temperature=0.0,
-                max_tokens=10,
+                max_tokens=TOS_MODERATION_MAX_TOKENS,
             )
         except AIClientError as exc:
             if str(exc) == EMPTY_RESPONSE_ERROR:

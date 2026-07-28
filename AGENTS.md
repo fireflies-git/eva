@@ -637,6 +637,14 @@ Use `src/eva/ai/parsing.py` and preserve the `bool | None` contract for ambiguou
 Today:
 - search failures fail closed to a warning message
 - moderation model failures fail open by returning `False`
+- first-person underage claims fail closed via a deterministic local check
+  (`contains_underage_claim()` in `src/eva/ai/respond.py`) that runs before the AI
+  moderation call, so they are blocked even when moderation is unreachable or misconfigured
+- the moderation model is env-driven (`TOS_MODEL_NAME`, defaulting to `MODEL_NAME`) because
+  a hardcoded model name silently disabled the check on providers that don't host it
+- the moderation call uses a generous `max_tokens` (`TOS_MODERATION_MAX_TOKENS`) because
+  reasoning models spend reasoning tokens from the same budget; a tiny budget starves the
+  YES/NO verdict and silently fails open on empty output
 - image API failures fail closed to a warning message
 - image download failures fall back to URL-only image results when the payload still looks valid
   (those replies set `ReplyOutput.allow_embeds` so delivery does not suppress the embeds

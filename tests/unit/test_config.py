@@ -74,3 +74,25 @@ def test_load_settings_falls_back_when_prefix_empty(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.trigger_prefix == "eva "
+
+
+def test_load_settings_defaults_tos_model_to_main_model(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("MODEL_NAME", "deepseek-v4-flash")
+    monkeypatch.delenv("TOS_MODEL_NAME", raising=False)
+
+    settings = load_settings()
+
+    assert settings.tos_model_name == "deepseek-v4-flash"
+
+
+def test_load_settings_reads_tos_model_override(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("MODEL_NAME", "deepseek-v4-flash")
+    monkeypatch.setenv("TOS_MODEL_NAME", "some-moderation-model")
+
+    settings = load_settings()
+
+    assert settings.tos_model_name == "some-moderation-model"

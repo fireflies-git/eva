@@ -77,6 +77,7 @@ class Settings:
     account_mode: str
     model_name: str
     split_model_name: str
+    tos_model_name: str
     trigger_prefix: str
     max_history_messages: int
     response_context_messages: int
@@ -212,6 +213,8 @@ def load_settings() -> Settings:
         maximum=FOLLOWUP_DELAY_SECONDS_MAX,
     )
 
+    model_name = _optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"])
+
     try:
         return Settings(
             discord_token=_required_env("DISCORD_TOKEN"),
@@ -224,11 +227,14 @@ def load_settings() -> Settings:
                 default=SETTINGS_DEFAULTS["account_mode"],
                 choices=ACCOUNT_MODES,
             ),
-            model_name=_optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"]),
+            model_name=model_name,
             split_model_name=_optional_env(
                 "SPLIT_MODEL_NAME",
                 default=SETTINGS_DEFAULTS["split_model_name"],
             ),
+            # TOS_MODEL_NAME defaults to the main model: the moderation check must
+            # work out of the box on whatever provider is configured.
+            tos_model_name=_optional_env("TOS_MODEL_NAME", default=model_name),
             trigger_prefix=_optional_prefix_env(
                 "TRIGGER_PREFIX",
                 default=SETTINGS_DEFAULTS["trigger_prefix"],
