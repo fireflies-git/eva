@@ -54,6 +54,10 @@ def decide_standalone_trigger(
 
 
 def _is_dm_channel(channel: discord.abc.Messageable) -> bool:
+    # Group DMs also have guild=None; only 1:1 DMs get auto-reply. Group chats
+    # fall through to the mention/prefix/reply rules like server channels.
+    if getattr(channel, "type", None) == discord.ChannelType.group:
+        return False
     return getattr(channel, "guild", None) is None
 
 

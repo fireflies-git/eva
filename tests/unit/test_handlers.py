@@ -177,6 +177,65 @@ def test_standalone_dm_trigger_accepts_any_non_empty_message(tmp_path) -> None:
     assert decision == TriggerDecision(should_process=True, user_query="help me with this")
 
 
+def test_standalone_group_chat_ignores_plain_messages(tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    group_channel = SimpleNamespace(guild=None, type=discord.ChannelType.group)
+    message = cast(
+        discord.Message,
+        SimpleNamespace(channel=group_channel, content="hello everyone", raw_mentions=[]),
+    )
+
+    decision = handler._decide_trigger(
+        message=message,
+        content="hello everyone",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    assert decision == TriggerDecision(should_process=False)
+
+
+def test_standalone_group_chat_uses_mentions_replies_and_prefix(tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    group_channel = SimpleNamespace(guild=None, type=discord.ChannelType.group)
+
+    prefix_message = cast(discord.Message, SimpleNamespace(channel=group_channel))
+    prefix_decision = handler._decide_trigger(
+        message=prefix_message,
+        content="eva hi",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    mention_message = cast(
+        discord.Message,
+        SimpleNamespace(channel=group_channel, raw_mentions=[123], content="<@123> hi"),
+    )
+    mention_decision = handler._decide_trigger(
+        message=mention_message,
+        content="<@123> hi",
+        is_reply_trigger=False,
+        mention_user_id=123,
+    )
+
+    reply_message = cast(discord.Message, SimpleNamespace(channel=group_channel))
+    reply_decision = handler._decide_trigger(
+        message=reply_message,
+        content="continue",
+        is_reply_trigger=True,
+        mention_user_id=123,
+    )
+
+    assert prefix_decision == TriggerDecision(should_process=True, user_query="hi")
+    assert mention_decision.should_process is True
+    assert mention_decision.user_query == "hi"
+    assert reply_decision == TriggerDecision(
+        should_process=True,
+        user_query="continue",
+        is_reply_trigger=True,
+    )
+
+
 def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) -> None:
     handler = _build_handler(tmp_path)
     server_channel = SimpleNamespace(guild=SimpleNamespace(id=1))
