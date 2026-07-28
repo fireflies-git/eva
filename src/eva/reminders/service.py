@@ -52,20 +52,22 @@ class ReminderRunner:
         self._task = None
 
     async def _run(self) -> None:
-        try:
-            while not self._stop_event.is_set():
+        while not self._stop_event.is_set():
+            try:
                 await self._fire_due_reminders()
-                try:
-                    await asyncio.wait_for(
-                        self._stop_event.wait(),
-                        timeout=self._check_interval,
-                    )
-                except TimeoutError:
-                    continue
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Reminder runner crashed")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A bad tick (e.g. one corrupt store entry) must not kill
+                # reminders for the rest of the process lifetime.
+                logger.exception("Reminder tick failed; continuing")
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self._check_interval,
+                )
+            except TimeoutError:
+                continue
 
     async def _fire_due_reminders(self) -> None:
         try:

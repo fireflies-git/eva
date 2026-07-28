@@ -34,6 +34,24 @@ def test_code_block_without_language_falls_back_to_txt() -> None:
     assert "`code.txt`" in result
 
 
+def test_cpp_code_block_extracts_as_cpp_file() -> None:
+    text = "```c++\nint main() { return 0; }\n```"
+
+    result, attachments = extract_code_blocks(text)
+
+    assert attachments == [("code.cpp", b"int main() { return 0; }\n")]
+    assert "`code.cpp`" in result
+
+
+def test_csharp_code_block_extracts_as_cs_file() -> None:
+    text = "```c#\nConsole.WriteLine(1);\n```"
+
+    result, attachments = extract_code_blocks(text)
+
+    assert attachments == [("code.cs", b"Console.WriteLine(1);\n")]
+    assert "`code.cs`" in result
+
+
 def test_empty_code_block_kept_inline() -> None:
     text = "before\n\n```py\n\n```\n\nafter"
 

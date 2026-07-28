@@ -287,10 +287,13 @@ async def _generate_reply_with_tools(
                     raise AIClientError(EMPTY_RESPONSE_ERROR)
                 return response.content
 
-            assistant_message = _build_assistant_tool_message(response.content, response.tool_calls)
+            # Only the calls we actually answer may appear on the assistant
+            # message, otherwise the next round 400s on unanswered tool_call_ids.
+            answered_tool_calls = response.tool_calls[:MAX_TERMINAL_TOOL_CALLS_PER_ROUND]
+            assistant_message = _build_assistant_tool_message(response.content, answered_tool_calls)
             tool_messages.append(assistant_message)
 
-            for tool_call in response.tool_calls[:MAX_TERMINAL_TOOL_CALLS_PER_ROUND]:
+            for tool_call in answered_tool_calls:
                 service = name_to_service.get(tool_call.name)
                 if service is None:
                     result = f"Tool error: unknown tool '{tool_call.name}'."

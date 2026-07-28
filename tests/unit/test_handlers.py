@@ -134,7 +134,7 @@ def test_calculate_followup_delay_scales_with_length(monkeypatch, tmp_path) -> N
     assert long_delay == pytest.approx(1.5)
 
 
-def test_send_followup_messages_waits_and_tracks_sent_ids(monkeypatch, tmp_path) -> None:
+def test_send_followup_messages_waits_and_returns_sent_ids(monkeypatch, tmp_path) -> None:
     handler = _build_handler(tmp_path)
     channel = DummyChannel()
     sleeps: list[float] = []
@@ -146,7 +146,7 @@ def test_send_followup_messages_waits_and_tracks_sent_ids(monkeypatch, tmp_path)
 
     monkeypatch.setattr("eva.discord.handlers.asyncio.sleep", fake_sleep)
 
-    asyncio.run(
+    sent_ids, had_failures = asyncio.run(
         handler._send_followup_messages(
             cast(discord.abc.Messageable, channel),
             ["short", "x" * 1200],
@@ -158,15 +158,15 @@ def test_send_followup_messages_waits_and_tracks_sent_ids(monkeypatch, tmp_path)
         pytest.approx(1.5),
     ]
     assert channel.sent == [("short", True), ("x" * 1200, True)]
-    assert handler._tracked_messages.contains(101)
-    assert handler._tracked_messages.contains(102)
+    assert sent_ids == [101, 102]
+    assert had_failures is False
 
 
 def test_standalone_dm_trigger_accepts_any_non_empty_message(tmp_path) -> None:
     handler = _build_handler(tmp_path)
     message = cast(discord.Message, SimpleNamespace(channel=SimpleNamespace(guild=None)))
 
-    decision = handler._decide_standalone_trigger(
+    decision = handler._decide_trigger(
         message=message,
         content="help me with this",
         is_reply_trigger=False,
@@ -184,7 +184,7 @@ def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) ->
         discord.Message,
         SimpleNamespace(channel=server_channel, raw_mentions=[123], content="hey <@123> help me"),
     )
-    mention_decision = handler._decide_standalone_trigger(
+    mention_decision = handler._decide_trigger(
         message=mention_message,
         content="hey <@123> help me",
         is_reply_trigger=False,
@@ -192,21 +192,21 @@ def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) ->
     )
 
     reply_message = cast(discord.Message, SimpleNamespace(channel=server_channel))
-    reply_decision = handler._decide_standalone_trigger(
+    reply_decision = handler._decide_trigger(
         message=reply_message,
         content="continue",
         is_reply_trigger=True,
         mention_user_id=123,
     )
 
-    prefix_decision = handler._decide_standalone_trigger(
+    prefix_decision = handler._decide_trigger(
         message=reply_message,
         content="eva summarize this",
         is_reply_trigger=False,
         mention_user_id=123,
     )
 
-    chatter_decision = handler._decide_standalone_trigger(
+    chatter_decision = handler._decide_trigger(
         message=reply_message,
         content="random chatter",
         is_reply_trigger=False,
@@ -320,6 +320,40 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
 
     assert len(delivered) == 1
     assert "Terminal result" in delivered[0]
+
+
+def test_summarize_without_service_does_not_consume_rate_limit(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    handler._rate_limiter = RateLimiter(max_requests=1, window_seconds=60.0)
+
+    delivered: list[str] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(cast(str, kwargs["reply_content"]))
+        return SimpleNamespace(
+            primary_delivered=True, tracked_message_ids=[], had_continuation_failures=False
+        )
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))
+    message = cast(
+        discord.Message,
+        SimpleNamespace(
+            author=SimpleNamespace(id=2, display_name="user"),
+            channel=SimpleNamespace(id=1, guild=SimpleNamespace(id=7)),
+            content="eva summarize",
+            id=123,
+            reference=None,
+        ),
+    )
+
+    asyncio.run(handler.on_message(client, message))
+
+    assert len(delivered) == 1
+    assert "not available" in delivered[0]
+    # The unavailable-service reply must not charge the user any quota.
+    assert 2 not in handler._rate_limiter._events
 
 
 def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:

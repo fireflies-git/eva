@@ -22,6 +22,7 @@ from eva.ai import (
     SummarizationService,
 )
 from eva.ai.orchestrator import ReplyOutput
+from eva.ai.sanitize import strip_response_watermark
 from eva.config import Settings
 from eva.constants import WARNING_MARK, X_MARK
 from eva.discord.account_updates import AccountUpdateApplyError, apply_account_update
@@ -333,7 +334,10 @@ class SelfbotMessageHandler:
         ):
             return False
 
-        if not self._consume_rate_limit(user_id=message.author.id, is_owner=is_owner):
+        # Don't charge quota when summarization isn't even configured.
+        if self._summarization_service is not None and not self._consume_rate_limit(
+            user_id=message.author.id, is_owner=is_owner
+        ):
             interaction_logger.info(
                 "rate_limited summarize channel_id=%s author_id=%s",
                 channel_id,
@@ -401,22 +405,6 @@ class SelfbotMessageHandler:
             mention_user_id=mention_user_id,
         )
 
-    def _decide_standalone_trigger(
-        self,
-        *,
-        message: discord.Message,
-        content: str,
-        is_reply_trigger: bool,
-        mention_user_id: int,
-    ) -> TriggerDecision:
-        return decide_standalone_trigger(
-            message=message,
-            content=content,
-            trigger_prefix=self._settings.trigger_prefix,
-            is_reply_trigger=is_reply_trigger,
-            mention_user_id=mention_user_id,
-        )
-
     def _is_standalone_mode(self) -> bool:
         return getattr(self._settings, "account_mode", "assistant") == "standalone"
 
@@ -476,9 +464,17 @@ class SelfbotMessageHandler:
             )
             return True
 
+        # Pop before applying: a duplicate "y" arriving mid-apply must not
+        # find the entry and apply it twice. Re-set on failure to allow retry.
+        self._pending_account_updates.pop(user_id=message.author.id, channel_id=channel_id)
         try:
             await apply_account_update(client=client, draft=pending.draft)
         except AccountUpdateApplyError as exc:
+            self._pending_account_updates.set(
+                user_id=message.author.id,
+                channel_id=channel_id,
+                draft=pending.draft,
+            )
             await self._deliver_command_response(
                 message=message,
                 is_owner=is_owner,
@@ -487,7 +483,6 @@ class SelfbotMessageHandler:
             )
             return True
 
-        self._pending_account_updates.pop(user_id=message.author.id, channel_id=channel_id)
         await self._deliver_command_response(
             message=message,
             is_owner=is_owner,
@@ -509,7 +504,12 @@ class SelfbotMessageHandler:
         if self._account_update_planner is None or self._pending_account_updates is None:
             return False
 
-        plan = await self._account_update_planner.plan_update(user_query)
+        try:
+            plan = await self._account_update_planner.plan_update(user_query)
+        except Exception:
+            # Planner failures must not swallow the message; fail open to a reply.
+            logger.exception("Account update planning failed")
+            return False
         if plan is None:
             return False
 
@@ -630,7 +630,13 @@ class SelfbotMessageHandler:
                 reply_context,
                 requester_context,
             )
-            self._history_store.append_exchange(channel_id, stored_user_message, ai_reply.content)
+            # History feeds back into the model prompt; store the reply without
+            # the watermark so the model doesn't learn to regurgitate it.
+            self._history_store.append_exchange(
+                channel_id,
+                stored_user_message,
+                strip_response_watermark(ai_reply.content),
+            )
 
         interaction_logger.info(
             "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
@@ -650,12 +656,14 @@ class SelfbotMessageHandler:
         is_owner: bool,
         is_standalone: bool,
     ) -> DeliveryResult:
+        suppress_embeds = not ai_reply.allow_embeds
         if is_owner and not is_standalone:
             return await deliver_owner_response(
                 message=message,
                 original_content=original_content,
                 reply_content=ai_reply.content,
                 reply_attachments=ai_reply.attachments,
+                suppress_embeds=suppress_embeds,
             )
         if is_standalone:
             return await self._deliver_standalone_reply_response(
@@ -666,6 +674,7 @@ class SelfbotMessageHandler:
             message=message,
             reply_content=ai_reply.content,
             reply_attachments=ai_reply.attachments,
+            suppress_embeds=suppress_embeds,
         )
 
     async def _deliver_standalone_reply_response(
@@ -675,7 +684,12 @@ class SelfbotMessageHandler:
         reply: ReplyOutput,
     ) -> DeliveryResult:
         chunks = await self._build_plain_response_chunks(reply.content)
-        first = await safe_reply(message, chunks[0], attachments=reply.attachments)
+        first = await safe_reply(
+            message,
+            chunks[0],
+            attachments=reply.attachments,
+            suppress_embeds=not reply.allow_embeds,
+        )
         if first is None:
             return DeliveryResult(primary_delivered=False)
 
@@ -744,7 +758,8 @@ class SelfbotMessageHandler:
             if sent is None:
                 had_failures = True
                 continue
-            self._tracked_messages.add(sent.id)
+            # IDs are tracked by the caller from the DeliveryResult; adding them
+            # here too would just double the store's disk writes.
             sent_ids.append(sent.id)
 
         return sent_ids, had_failures

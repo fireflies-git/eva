@@ -41,6 +41,17 @@ def test_parse_trigger_non_match() -> None:
     assert result.should_process is False
 
 
+def test_parse_trigger_does_not_fire_on_eva_prefixed_words() -> None:
+    for content in ("evacuate the building", "evaluate this code", "evan said hi"):
+        result = parse_trigger(
+            content=content,
+            trigger_prefix="eva ",
+            is_reply_trigger=False,
+            mention_user_id=123,
+        )
+        assert result.should_process is False, content
+
+
 def test_parse_trigger_empty_query_after_prefix() -> None:
     result = parse_trigger(
         content="eva ",

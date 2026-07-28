@@ -24,9 +24,11 @@ class FakeChannel:
         self._fail_send_calls = fail_send_calls or set()
         self._send_calls = 0
         self._next_generated_id = 1000
+        self.sent_suppress_flags: list[bool] = []
 
     async def send(self, *, content: str, suppress_embeds: bool) -> FakeSentMessage:
         self._send_calls += 1
+        self.sent_suppress_flags.append(suppress_embeds)
         if self._send_calls in self._fail_send_calls:
             raise RuntimeError("send failed")
         if self._send_ids:
@@ -41,8 +43,10 @@ class FakeOwnerMessage:
         self.id = message_id
         self.channel = channel
         self._fail_edit = fail_edit
+        self.edit_suppress_flags: list[bool] = []
 
     async def edit(self, *, content: str, suppress: bool) -> None:
+        self.edit_suppress_flags.append(suppress)
         if self._fail_edit:
             raise RuntimeError("edit failed")
 
@@ -58,8 +62,10 @@ class FakeReplyMessage:
         self.channel = channel
         self._first_reply_id = first_reply_id
         self._fail_reply = fail_reply
+        self.reply_suppress_flags: list[bool] = []
 
     async def reply(self, *, content: str, suppress_embeds: bool) -> FakeSentMessage:
+        self.reply_suppress_flags.append(suppress_embeds)
         if self._fail_reply:
             raise RuntimeError("reply failed")
         return FakeSentMessage(self._first_reply_id)
@@ -146,3 +152,55 @@ def test_deliver_owner_response_marks_continuation_failures_without_tracking_uns
     assert 11 in result.tracked_message_ids
     assert result.tracked_message_ids == [10, 11]
     assert result.had_continuation_failures is True
+
+
+def test_deliver_owner_response_suppresses_embeds_by_default() -> None:
+    channel = FakeChannel(send_ids=[11])
+    message = FakeOwnerMessage(message_id=10, channel=channel)
+
+    result = asyncio.run(
+        deliver_owner_response(
+            message=cast(discord.Message, message),
+            original_content="eva hi",
+            reply_content="x" * 3000,
+        )
+    )
+
+    assert result.primary_delivered is True
+    assert message.edit_suppress_flags == [True]
+    assert channel.sent_suppress_flags and all(channel.sent_suppress_flags)
+
+
+def test_deliver_owner_response_can_allow_embeds() -> None:
+    channel = FakeChannel(send_ids=[11])
+    message = FakeOwnerMessage(message_id=10, channel=channel)
+
+    result = asyncio.run(
+        deliver_owner_response(
+            message=cast(discord.Message, message),
+            original_content="eva make an image",
+            reply_content="https://example.com/img.png\n" + ("x" * 3000),
+            suppress_embeds=False,
+        )
+    )
+
+    assert result.primary_delivered is True
+    assert message.edit_suppress_flags == [False]
+    assert channel.sent_suppress_flags and not any(channel.sent_suppress_flags)
+
+
+def test_deliver_reply_response_can_allow_embeds() -> None:
+    channel = FakeChannel(send_ids=[21])
+    message = FakeReplyMessage(channel=channel, first_reply_id=20)
+
+    result = asyncio.run(
+        deliver_reply_response(
+            message=cast(discord.Message, message),
+            reply_content="https://example.com/img.png\n" + ("x" * 3000),
+            suppress_embeds=False,
+        )
+    )
+
+    assert result.primary_delivered is True
+    assert message.reply_suppress_flags == [False]
+    assert channel.sent_suppress_flags and not any(channel.sent_suppress_flags)

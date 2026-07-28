@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from eva.images.client import ImageClient, ImageClientError
 
 
@@ -90,3 +92,112 @@ def test_image_client_rejects_non_generated_image_results() -> None:
         assert str(exc) == "Image API returned non-generated image results"
     else:
         raise AssertionError("expected ImageClientError for non-generated image results")
+
+
+class _FakeStream:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    def iter_chunked(self, chunk_size: int):
+        async def _gen():
+            for chunk in self._chunks:
+                yield chunk
+
+        return _gen()
+
+
+class _FakeResponse:
+    def __init__(
+        self,
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+        chunks: list[bytes] | None = None,
+    ) -> None:
+        self.status = status
+        self.headers = headers or {}
+        self.content = _FakeStream(chunks or [])
+        self.body_read = False
+
+    async def __aenter__(self) -> "_FakeResponse":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def text(self) -> str:
+        self.body_read = True
+        return "error body"
+
+
+class _FakeSession:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    def get(self, url: str) -> _FakeResponse:
+        return self._response
+
+
+def _download_client(response: _FakeResponse) -> ImageClient:
+    client = ImageClient(
+        api_key="test", base_url="https://example.com/v1", timeout_seconds=30.0
+    )
+    # download_asset only needs .get(); wrap the response accordingly.
+    client._session = _FakeSession(response)  # type: ignore[assignment]
+    return client
+
+
+def test_download_asset_rejects_oversized_content_length_early() -> None:
+    response = _FakeResponse(
+        headers={"Content-Length": str(10_000), "Content-Type": "image/png"},
+        chunks=[b"x" * 10_000],
+    )
+    client = _download_client(response)
+
+    with pytest.raises(ImageClientError, match="exceeds max size"):
+        asyncio.run(
+            client.download_asset(url="https://example.com/big.png", max_bytes=100)
+        )
+
+
+def test_download_asset_aborts_stream_when_body_exceeds_cap() -> None:
+    response = _FakeResponse(
+        headers={"Content-Type": "image/png"},
+        chunks=[b"x" * 60, b"y" * 60],
+    )
+    client = _download_client(response)
+
+    with pytest.raises(ImageClientError, match="exceeds max size"):
+        asyncio.run(
+            client.download_asset(url="https://example.com/stream.png", max_bytes=100)
+        )
+
+
+def test_download_asset_returns_body_within_cap() -> None:
+    response = _FakeResponse(
+        headers={"Content-Type": "image/png"},
+        chunks=[b"png-", b"bytes"],
+    )
+    client = _download_client(response)
+
+    raw, content_type, filename = asyncio.run(
+        client.download_asset(url="https://example.com/ok.png", max_bytes=100)
+    )
+
+    assert raw == b"png-bytes"
+    assert content_type == "image/png"
+    assert filename.endswith(".png")
+
+
+def test_download_asset_ignores_garbage_content_length() -> None:
+    response = _FakeResponse(
+        headers={"Content-Length": "not-a-number", "Content-Type": "image/png"},
+        chunks=[b"ok"],
+    )
+    client = _download_client(response)
+
+    raw, _, _ = asyncio.run(
+        client.download_asset(url="https://example.com/ok.png", max_bytes=100)
+    )
+
+    assert raw == b"ok"

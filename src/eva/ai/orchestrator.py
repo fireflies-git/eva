@@ -9,9 +9,9 @@ import discord
 
 from eva.ai.client import AIClientError
 from eva.ai.respond import ResponseGenerationResult
-from eva.ai.sanitize import sanitize_response
+from eva.ai.sanitize import sanitize_response, strip_response_watermark
 from eva.ai.schemas import ChatMessage
-from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, WARNING_MARK
+from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_search_system_prompt, build_system_prompt
 from eva.reminders import ReminderConfirmation
@@ -28,6 +28,7 @@ _IMAGE_ANSWER_PREFIX = "media generated:"
 class ReplyOutput:
     content: str
     attachments: list[tuple[str, bytes]]
+    allow_embeds: bool = False
 
 
 class ResponseGenerator(Protocol):
@@ -138,10 +139,11 @@ class ReplyGenerationService:
             channel_id=channel_id,
         )
         if reminder_confirmation is not None:
-            return ReplyOutput(
+            reply = ReplyOutput(
                 content=reminder_confirmation.content,
                 attachments=[],
             )
+            return await self._finalize_reply(reply)
 
         image_results = await self._run_image_if_needed(
             context_messages=context_messages,
@@ -195,6 +197,10 @@ class ReplyGenerationService:
                     attachments=[],
                 )
 
+        return await self._finalize_reply(reply)
+
+    async def _finalize_reply(self, reply: ReplyOutput) -> ReplyOutput:
+        """Run the shared reply tail: TOS check, code extraction, watermark."""
         is_violation = await self._tos_check_service.check_tos_violation(reply.content)
         if is_violation:
             logger.warning("Generated reply blocked by TOS check.")
@@ -209,10 +215,10 @@ class ReplyGenerationService:
             reply = ReplyOutput(
                 content=modified_content,
                 attachments=[*reply.attachments, *code_attachments],
+                allow_embeds=reply.allow_embeds,
             )
 
-        reply = _sanitize_and_watermark(reply)
-        return reply
+        return _sanitize_and_watermark(reply)
 
     async def _schedule_reminder_if_needed(
         self,
@@ -277,7 +283,11 @@ class ReplyGenerationService:
                 if (img.download_url or img.url)
             ]
             if urls:
-                return ReplyOutput(content="\n".join([content, *urls]), attachments=[])
+                return ReplyOutput(
+                    content="\n".join([content, *urls]),
+                    attachments=[],
+                    allow_embeds=True,
+                )
 
         return ReplyOutput(content=IMAGE_FAILURE_MESSAGE, attachments=[])
 
@@ -366,10 +376,21 @@ def _extract_code_blocks_from_reply(text: str) -> tuple[str, list[tuple[str, byt
 
 
 def _sanitize_and_watermark(reply: ReplyOutput) -> ReplyOutput:
-    """Strip thinking artifacts and append watermark to reply content."""
+    """Strip thinking artifacts and append exactly one watermark to reply content."""
     cleaned = sanitize_response(reply.content)
+    cleaned = strip_response_watermark(cleaned)
+    cleaned = _strip_trailing_split_trigger(cleaned)
     watermarked = f"{cleaned}\n\n{RESPONSE_WATERMARK}" if cleaned else cleaned
     return ReplyOutput(
         content=watermarked,
         attachments=reply.attachments,
+        allow_embeds=reply.allow_embeds,
     )
+
+
+def _strip_trailing_split_trigger(content: str) -> str:
+    """Drop a trailing ``SPLIT_TRIGGER`` so it can't produce a watermark-only chunk."""
+    stripped = content.rstrip()
+    while stripped.endswith(SPLIT_TRIGGER):
+        stripped = stripped[: -len(SPLIT_TRIGGER)].rstrip()
+    return stripped

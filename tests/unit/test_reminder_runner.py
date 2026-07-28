@@ -88,3 +88,35 @@ def test_skips_when_channel_unreachable(tmp_path: Path) -> None:
 
     # The reminder is consumed (so we don't infinitely retry) but not delivered.
     assert store.list_for_user(42) == []
+
+
+class FlakyStore:
+    """pop_due blows up on the first tick, then behaves."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def pop_due(self, *, now: datetime) -> list[object]:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("boom")
+        return []
+
+
+def test_runner_survives_tick_exception(tmp_path: Path) -> None:
+    store = FlakyStore()
+    runner = ReminderRunner(
+        store=cast(ReminderStore, store),
+        client_provider=lambda: None,
+        check_interval_seconds=0.01,
+    )
+
+    async def run() -> None:
+        runner.start()
+        await asyncio.sleep(0.15)
+        await runner.stop()
+
+    asyncio.run(run())
+
+    # A crashed tick must not kill the runner: it keeps polling afterwards.
+    assert store.calls >= 2

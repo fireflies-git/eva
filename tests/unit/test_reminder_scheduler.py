@@ -118,3 +118,26 @@ def test_scheduler_handles_persistence_failure() -> None:
     )
     assert result is not None
     assert "Couldn't save that reminder" in result.content
+
+
+def test_scheduler_treats_naive_now_as_utc(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    naive_now = _NOW.replace(tzinfo=None)
+    intent = ReminderIntent(fire_at=_NOW + timedelta(minutes=5), text="thing")
+    scheduler = ReminderScheduler(
+        detector=cast(ReminderDetector, StubDetector(intent=intent)),
+        store=store,
+    )
+
+    result = asyncio.run(
+        scheduler.schedule_if_needed(
+            user_message="remind me in 5m",
+            user_id=1,
+            channel_id=2,
+            now=naive_now,
+        )
+    )
+
+    # Naive now is read as UTC, so the displayed remaining time is exact.
+    assert result is not None
+    assert "5m" in result.content

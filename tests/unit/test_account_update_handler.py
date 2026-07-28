@@ -12,6 +12,7 @@ from eva.ai import ReplyGenerationService
 from eva.ai.account_updates import AccountUpdatePlanner
 from eva.ai.orchestrator import ReplyOutput
 from eva.config import Settings
+from eva.discord.account_updates import AccountUpdateApplyError
 from eva.discord.delivery import DeliveryResult
 from eva.state import (
     ChannelHistoryStore,
@@ -276,6 +277,128 @@ def test_confirmation_y_applies_and_clears_pending(monkeypatch, tmp_path) -> Non
     assert "Account update applied" in delivered[0]
 
 
+def test_pending_entry_is_popped_before_applying(monkeypatch, tmp_path) -> None:
+    draft = AccountUpdateDraft(presence="idle")
+    pending_store = PendingAccountUpdateStore()
+    pending_store.set(user_id=1, channel_id=99, draft=draft)
+    handler = _build_handler(tmp_path, pending_store=pending_store)
+    seen_during_apply: list[object] = []
+
+    async def fake_apply_account_update(
+        *,
+        client: discord.Client,
+        draft: AccountUpdateDraft,
+    ) -> None:
+        # A duplicate "y" arriving mid-apply must find nothing pending.
+        seen_during_apply.append(pending_store.get(user_id=1, channel_id=99))
+
+    async def fake_deliver_owner_response(**kwargs: object) -> DeliveryResult:
+        return DeliveryResult(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "apply_account_update", fake_apply_account_update)
+    monkeypatch.setattr(handlers, "deliver_owner_response", fake_deliver_owner_response)
+
+    message = DummyMessage(author_id=1, channel=DummyChannel(99), content="y")
+
+    asyncio.run(
+        handler.on_message(
+            cast(discord.Client, DummyClient()),
+            cast(discord.Message, message),
+        )
+    )
+
+    assert seen_during_apply == [None]
+
+
+def test_failed_apply_restores_pending_entry(monkeypatch, tmp_path) -> None:
+    draft = AccountUpdateDraft(presence="idle")
+    pending_store = PendingAccountUpdateStore()
+    pending_store.set(user_id=1, channel_id=99, draft=draft)
+    handler = _build_handler(tmp_path, pending_store=pending_store)
+
+    async def fake_apply_account_update(
+        *,
+        client: discord.Client,
+        draft: AccountUpdateDraft,
+    ) -> None:
+        raise AccountUpdateApplyError("boom")
+
+    async def fake_deliver_owner_response(**kwargs: object) -> DeliveryResult:
+        return DeliveryResult(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "apply_account_update", fake_apply_account_update)
+    monkeypatch.setattr(handlers, "deliver_owner_response", fake_deliver_owner_response)
+
+    message = DummyMessage(author_id=1, channel=DummyChannel(99), content="y")
+
+    asyncio.run(
+        handler.on_message(
+            cast(discord.Client, DummyClient()),
+            cast(discord.Message, message),
+        )
+    )
+
+    pending = pending_store.get(user_id=1, channel_id=99)
+    assert pending is not None
+    assert pending.draft == draft
+
+
+class ExplodingPlanner:
+    async def plan_update(self, user_message: str) -> AccountUpdatePlan | None:
+        raise RuntimeError("planner boom")
+
+
+def test_planner_exception_fails_open_to_normal_reply(monkeypatch, tmp_path) -> None:
+    reply_service = FakeReplyGenerationService()
+    handler = _build_handler(
+        tmp_path,
+        account_mode="standalone",
+        planner=cast(handlers.AccountUpdatePlanner, ExplodingPlanner()),
+        reply_generation_service=reply_service,
+    )
+
+    async def fake_context(
+        channel: discord.abc.Messageable,
+        *,
+        limit: int,
+        exclude_message_id: int | None = None,
+        bot_user_id: int | None = None,
+    ) -> list[dict[str, str]]:
+        return []
+
+    async def fake_reply_context(message: discord.Message) -> str | None:
+        return None
+
+    async def fake_safe_reply(
+        message: discord.Message,
+        content: str,
+        *,
+        attachments: list[tuple[str, bytes]] | None = None,
+        suppress_embeds: bool = True,
+    ) -> object:
+        return SimpleNamespace(id=556)
+
+    monkeypatch.setattr(handlers, "fetch_channel_context", fake_context)
+    monkeypatch.setattr(handlers, "fetch_reply_context", fake_reply_context)
+    monkeypatch.setattr(handlers, "safe_reply", fake_safe_reply)
+
+    message = DummyMessage(
+        author_id=2,
+        channel=DummyChannel(99),
+        content="eva change your display name to something",
+    )
+
+    asyncio.run(
+        handler.on_message(
+            cast(discord.Client, DummyClient()),
+            cast(discord.Message, message),
+        )
+    )
+
+    # Planner errors must not swallow the message; a normal reply is generated.
+    assert len(reply_service.calls) == 1
+
+
 def test_confirmation_n_cancels_and_clears_pending(monkeypatch, tmp_path) -> None:
     draft = AccountUpdateDraft(bio="new")
     pending_store = PendingAccountUpdateStore()
@@ -393,6 +516,7 @@ def test_unrelated_y_without_pending_falls_through_normally(monkeypatch, tmp_pat
         content: str,
         *,
         attachments: list[tuple[str, bytes]] | None = None,
+        suppress_embeds: bool = True,
     ) -> object:
         return SimpleNamespace(id=555)
 

@@ -52,6 +52,35 @@ def test_persistence(tmp_path: Path) -> None:
     assert store2.list_all() == [111, 222]
 
 
+def test_load_ignores_non_list_top_level(tmp_path: Path) -> None:
+    path = tmp_path / "whitelist.json"
+    # An object like {"123": true} must NOT silently whitelist user 123.
+    path.write_text(json.dumps({"123456789012345678": True}), encoding="utf-8")
+
+    store = WhitelistStore(path)
+
+    assert store.list_all() == []
+    assert store.contains(123456789012345678) is False
+
+
+def test_load_ignores_string_top_level(tmp_path: Path) -> None:
+    path = tmp_path / "whitelist.json"
+    path.write_text(json.dumps("123456789012345678"), encoding="utf-8")
+
+    store = WhitelistStore(path)
+
+    assert store.list_all() == []
+
+
+def test_load_skips_invalid_entries(tmp_path: Path) -> None:
+    path = tmp_path / "whitelist.json"
+    path.write_text(json.dumps([123, "not-a-number", None, 456]), encoding="utf-8")
+
+    store = WhitelistStore(path)
+
+    assert store.list_all() == [123, 456]
+
+
 def test_persistence_file_format(tmp_path: Path) -> None:
     path = tmp_path / "whitelist.json"
     store = WhitelistStore(path)

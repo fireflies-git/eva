@@ -99,11 +99,7 @@ class OpenAICompatibleClient:
         }
         data = await self._request("POST", "/chat/completions", json=payload)
 
-        choices = data.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise AIClientError("No choices returned by model API")
-
-        message = choices[0].get("message", {})
+        message = _extract_response_message(data)
         content = message.get("content")
         if isinstance(content, str) and content.strip():
             return content.strip()
@@ -130,11 +126,7 @@ class OpenAICompatibleClient:
         }
         data = await self._request("POST", "/chat/completions", json=payload)
 
-        choices = data.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise AIClientError("No choices returned by model API")
-
-        message = choices[0].get("message", {})
+        message = _extract_response_message(data)
         content = message.get("content")
         resolved_content: str | None = None
         if isinstance(content, str) and content.strip():
@@ -177,6 +169,20 @@ class OpenAICompatibleClient:
             raise AIClientError("Model API request timed out") from exc
         except aiohttp.ClientError as exc:
             raise AIClientError(f"Model API network error: {exc}") from exc
+
+
+def _extract_response_message(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the first choice's message object, validating the response shape."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise AIClientError("No choices returned by model API")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise AIClientError("Invalid choice shape in model API response")
+    message = first.get("message")
+    if not isinstance(message, dict):
+        raise AIClientError("Invalid message shape in model API response")
+    return message
 
 
 def _parse_tool_calls(message: dict[str, Any]) -> list[ModelToolCall]:

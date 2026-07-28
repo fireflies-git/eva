@@ -5,6 +5,7 @@ from eva.state.reminders import (
     ReminderError,
     ReminderPersistenceError,
     ReminderStore,
+    ensure_utc,
 )
 from eva.state.tracked_messages import TrackedMessageStore
 from eva.state.user_memory import (
@@ -27,4 +28,5 @@ __all__ = [
     "UserMemoryStore",
     "WhitelistPersistenceError",
     "WhitelistStore",
+    "ensure_utc",
 ]

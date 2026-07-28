@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from eva.constants import RESPONSE_WATERMARK
+
 # Match <think>...</think> and <thinking>...</thinking> tags (case-insensitive, multiline)
 _THINK_TAG_RE = re.compile(
     r"</?think(?:ing)?>.*?</think(?:ing)?>",
@@ -40,4 +42,22 @@ def sanitize_response(content: str) -> str:
     # Collapse runs of 3+ blank lines to 2
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
+    return cleaned.strip()
+
+
+def strip_response_watermark(content: str) -> str:
+    """Remove any ``RESPONSE_WATERMARK`` lines from ``content``.
+
+    The model sees Eva's watermarked replies in history/channel context and
+    sometimes regurgitates the watermark itself. Callers that append the
+    watermark must strip pre-existing copies first so exactly one remains.
+    """
+    if not content or RESPONSE_WATERMARK not in content:
+        return content
+
+    kept_lines = [
+        line for line in content.split("\n") if line.strip() != RESPONSE_WATERMARK
+    ]
+    cleaned = "\n".join(kept_lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()

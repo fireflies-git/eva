@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-_CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+_CODE_BLOCK_RE = re.compile(r"```([A-Za-z0-9+#]*)\n(.*?)```", re.DOTALL)
 
 _LANGUAGE_EXTENSIONS: dict[str, str] = {
     "py": ".py",
@@ -35,6 +35,7 @@ _LANGUAGE_EXTENSIONS: dict[str, str] = {
     "cpp": ".cpp",
     "c++": ".cpp",
     "cxx": ".cpp",
+    "c#": ".cs",
     "h": ".h",
     "hpp": ".hpp",
     "cs": ".cs",

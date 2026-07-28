@@ -357,3 +357,130 @@ def test_reply_generation_extracts_code_blocks_into_attachments() -> None:
     assert "```py" not in reply.content
     assert "```" not in reply.content
     assert "Run it." in reply.content
+
+
+def test_reply_generation_deduplicates_model_emitted_watermark() -> None:
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(f"here you go\n\n{RESPONSE_WATERMARK}"),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.content == f"here you go{_WM}"
+    assert reply.content.count(RESPONSE_WATERMARK) == 1
+
+
+def test_reply_generation_deduplicates_watermark_after_split_trigger() -> None:
+    response = f"first part\n/// split\nsecond part\n{RESPONSE_WATERMARK}"
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(response),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.content == f"first part\n/// split\nsecond part{_WM}"
+    assert reply.content.count(RESPONSE_WATERMARK) == 1
+
+
+def test_reply_generation_strips_trailing_split_trigger() -> None:
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService("the whole answer\n/// split"),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.content == f"the whole answer{_WM}"
+
+
+def test_reply_generation_image_url_fallback_allows_embeds() -> None:
+    reply_service = ReplyGenerationService(
+        response_service=StubResponseService("normal"),
+        image_service=StubImageService(
+            result=ImageResultBundle(
+                answer="Media generated: 'fox'",
+                images=[GeneratedImage(url="https://example.com/fox.png")],
+            )
+        ),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="generate an image of a fox",
+            reply_context=None,
+        )
+    )
+
+    assert reply.allow_embeds is True
+
+
+def test_reply_generation_normal_reply_suppresses_embeds() -> None:
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService("normal"),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.allow_embeds is False

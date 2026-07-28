@@ -18,6 +18,7 @@ async def apply_account_update(*, client: discord.Client, draft: AccountUpdateDr
         raise AccountUpdateApplyError("Discord client user is unavailable.")
 
     edit_kwargs = _build_profile_edit_kwargs(draft)
+    profile_applied = False
     if edit_kwargs:
         edit = getattr(user, "edit", None)
         if edit is None:
@@ -26,13 +27,20 @@ async def apply_account_update(*, client: discord.Client, draft: AccountUpdateDr
             await edit(**edit_kwargs)
         except Exception as exc:
             raise AccountUpdateApplyError(f"Discord profile update failed: {exc}") from exc
+        profile_applied = True
 
     presence_kwargs = _build_presence_kwargs(client=client, draft=draft)
     if presence_kwargs:
         try:
             await client.change_presence(**presence_kwargs)
         except Exception as exc:
-            raise AccountUpdateApplyError(f"Discord presence update failed: {exc}") from exc
+            # Don't claim total failure when the profile edit already went through.
+            prefix = (
+                "Profile changes were applied, but the presence update failed"
+                if profile_applied
+                else "Discord presence update failed"
+            )
+            raise AccountUpdateApplyError(f"{prefix}: {exc}") from exc
 
 
 def _build_profile_edit_kwargs(draft: AccountUpdateDraft) -> dict[str, str | None]:

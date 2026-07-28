@@ -393,3 +393,66 @@ def test_channel_context_orders_oldest_first() -> None:
     assert len(context) == 2
     assert "first" in context[0]["content"]
     assert "second" in context[1]["content"]
+
+
+def test_channel_context_strips_watermark_from_bot_messages() -> None:
+    bot = _make_author(id=99, name="eva", display_name="Eva")
+    message = _make_message(
+        msg_id=10,
+        content="generated reply\n\n-# -eva",
+        author=bot,
+    )
+    channel = _FakeHistoryChannel([message])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+            bot_user_id=99,
+        )
+    )
+
+    assert len(context) == 1
+    assert context[0]["role"] == "assistant"
+    assert "generated reply" in context[0]["content"]
+    assert "-# -eva" not in context[0]["content"]
+
+
+def test_channel_context_skips_watermark_only_bot_messages() -> None:
+    bot = _make_author(id=99, name="eva", display_name="Eva")
+    user = _make_author(id=1, name="neo", display_name="Neo")
+    watermark_only = _make_message(msg_id=10, content="-# -eva", author=bot)
+    normal = _make_message(msg_id=11, content="hello", author=user)
+    channel = _FakeHistoryChannel([watermark_only, normal])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+            bot_user_id=99,
+        )
+    )
+
+    assert len(context) == 1
+    assert "hello" in context[0]["content"]
+
+
+def test_channel_context_keeps_watermark_text_in_user_messages() -> None:
+    user = _make_author(id=1, name="neo", display_name="Neo")
+    message = _make_message(
+        msg_id=10,
+        content="what does -# -eva mean?",
+        author=user,
+    )
+    channel = _FakeHistoryChannel([message])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+            bot_user_id=99,
+        )
+    )
+
+    assert len(context) == 1
+    assert "-# -eva" in context[0]["content"]

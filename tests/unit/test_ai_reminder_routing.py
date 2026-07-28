@@ -220,3 +220,61 @@ def test_reminder_branch_skipped_when_no_scheduler_configured() -> None:
 
     assert reply.content == f"normal{_WM}"
     assert len(response_service.calls) == 1
+
+
+def test_reminder_confirmation_is_watermarked() -> None:
+    scheduler = StubReminderScheduler(
+        confirmation=ReminderConfirmation(content="✔ Reminder #1 set for in 5m")
+    )
+    reply_service = _build_service(reminder_scheduler=scheduler)
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="remind me in 5m to stretch",
+            reply_context=None,
+            user_id=42,
+            channel_id=99,
+        )
+    )
+
+    assert reply.content.endswith(RESPONSE_WATERMARK)
+    assert reply.content.count(RESPONSE_WATERMARK) == 1
+
+
+class ViolatingTOSCheckService:
+    async def check_tos_violation(self, text: str) -> bool:
+        return True
+
+
+def test_reminder_confirmation_passes_through_tos_check() -> None:
+    scheduler = StubReminderScheduler(
+        confirmation=ReminderConfirmation(content="✔ Reminder #1 set for in 5m")
+    )
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService("normal"),
+        image_service=StubImageService(result=None),
+        search_service=StubSearchService(result=None),
+        search_response_service=StubSearchResponseService("search"),
+        reminder_scheduler=scheduler,
+        tos_check_service=ViolatingTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="remind me in 5m to stretch",
+            reply_context=None,
+            user_id=42,
+            channel_id=99,
+        )
+    )
+
+    assert "violates my safety or TOS guidelines" in reply.content

@@ -199,3 +199,73 @@ def test_handler_appends_history_when_primary_delivery_succeeds(
 
     assert len(history_store.get(99)) == 2
     assert history_store.get(99)[1]["content"] == "generated reply"
+
+
+class WatermarkedStubReplyGenerationService:
+    async def generate_reply(self, **kwargs: object) -> ReplyOutput:
+        return ReplyOutput(content="generated reply\n\n-# -eva", attachments=[])
+
+
+def test_handler_stores_history_without_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    history_store = ChannelHistoryStore()
+    whitelist = WhitelistStore(tmp_path / "whitelist.json")
+    whitelist.add(2)
+
+    handler = handlers.SelfbotMessageHandler(
+        settings=cast(
+            Settings,
+            SimpleNamespace(
+                trigger_prefix="eva ",
+                response_context_messages=5,
+                min_loading_seconds=0.0,
+            ),
+        ),
+        reply_generation_service=cast(
+            ReplyGenerationService, WatermarkedStubReplyGenerationService()
+        ),
+        history_store=history_store,
+        tracked_messages=TrackedMessageStore(path=tmp_path / "tracked.json"),
+        whitelist=whitelist,
+        user_memory=UserMemoryStore(path=tmp_path / "user_memory.json"),
+        reminder_store=ReminderStore(path=tmp_path / "reminders.json"),
+        rate_limiter=_permissive_rate_limiter(),
+        summarization_service=None,
+        terminal_service=None,
+        download_service=None,
+    )
+
+    async def fake_context(
+        channel: discord.abc.Messageable,
+        *,
+        limit: int,
+        exclude_message_id: int | None = None,
+        bot_user_id: int | None = None,
+    ) -> list[dict[str, str]]:
+        return []
+
+    async def fake_reply_context(message: discord.Message) -> str | None:
+        return None
+
+    async def fake_reply_delivery(**kwargs: object) -> DeliveryResult:
+        return DeliveryResult(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "fetch_channel_context", fake_context)
+    monkeypatch.setattr(handlers, "fetch_reply_context", fake_reply_context)
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_reply_delivery)
+
+    message = DummyMessage(author_id=2, channel_id=99, content="eva hi")
+    client = DummyClient(user_id=1)
+
+    asyncio.run(
+        handler.on_message(
+            cast(discord.Client, client),
+            cast(discord.Message, message),
+        )
+    )
+
+    history = history_store.get(99)
+    assert len(history) == 2
+    assert history[1]["content"] == "generated reply"

@@ -157,8 +157,19 @@ def read_env_values(env_path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
+        values[key.strip()] = _parse_env_value(value.strip())
     return values
+
+
+def _parse_env_value(value: str) -> str:
+    """Parse a raw .env value, honoring quotes and stripping inline comments.
+
+    Mirrors python-dotenv behavior: quoted values keep their inner content
+    verbatim; unquoted values end at the first " #" comment marker.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value.split(" #", 1)[0].rstrip()
 
 
 def write_env_values(env_path: Path, values: dict[str, str]) -> None:

@@ -24,7 +24,9 @@ class ResponseChunkLayout:
 
 def build_loading_text(original_content: str) -> str:
     loading = random.choice(LOADING_MESSAGES)
-    return f"-# > {original_content}\n {loading}"
+    # Truncate like the response layout does so long prompts stay under the limit.
+    safe_original = build_response_chunk_layout(original_content).safe_original
+    return f"-# > {safe_original}\n {loading}"
 
 
 def _take_chunk(text: str, max_len: int) -> tuple[str, str]:
@@ -170,7 +172,8 @@ def split_on_text_triggers(content: str) -> list[str]:
     if SPLIT_TRIGGER not in content:
         return [content]
     parts = content.split(SPLIT_TRIGGER)
-    return [part.strip() for part in parts if part.strip()]
+    segments = [part.strip() for part in parts if part.strip()]
+    return segments or [EMPTY_RESPONSE]
 
 
 def build_response_chunk_layout(
@@ -249,11 +252,18 @@ def build_response_chunks(
     message_limit: int = DISCORD_MESSAGE_LIMIT,
 ) -> list[str]:
     layout = build_response_chunk_layout(original_content, message_limit=message_limit)
-    chunk_bodies = split_reply_for_limits(
-        reply_content,
-        first_limit=layout.first_body_limit,
-        continuation_limit=layout.continuation_body_limit,
-    )
+    chunk_bodies: list[str] = []
+    for segment in split_on_text_triggers(reply_content):
+        # Only the very first body gets the larger first-message room; every
+        # later body (including the first of each new segment) is a continuation.
+        first_limit = layout.continuation_body_limit if chunk_bodies else layout.first_body_limit
+        chunk_bodies.extend(
+            split_reply_for_limits(
+                segment,
+                first_limit=first_limit,
+                continuation_limit=layout.continuation_body_limit,
+            )
+        )
     return format_response_chunks(
         original_content,
         chunk_bodies,

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from eva.constants import CHECK_MARK, X_MARK
 from eva.reminders.detector import ReminderDetector
 from eva.reminders.parser import format_duration
-from eva.state import ReminderError, ReminderPersistenceError, ReminderStore
+from eva.state import ReminderError, ReminderPersistenceError, ReminderStore, ensure_utc
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,9 @@ class ReminderScheduler:
         channel_id: int,
         now: datetime | None = None,
     ) -> ReminderConfirmation | None:
-        current = (now or datetime.now(UTC)).astimezone(UTC)
+        # ensure_utc treats a naive `now` as UTC (astimezone would read it as
+        # system-local), matching the store's own normalization.
+        current = ensure_utc(now or datetime.now(UTC))
         intent = await self._detector.detect(
             user_message=user_message,
             current_time=current,
@@ -57,7 +59,8 @@ class ReminderScheduler:
                 content=f"{X_MARK} Couldn't save that reminder.",
             )
 
-        duration = reminder.fire_at - current
+        # Measure remaining time from after the (slow) AI call, not before it.
+        duration = reminder.fire_at - ensure_utc(now or datetime.now(UTC))
         return ReminderConfirmation(
             content=(
                 f"{CHECK_MARK} Reminder #{reminder.id} set for in "

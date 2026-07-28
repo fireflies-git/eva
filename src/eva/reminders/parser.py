@@ -6,7 +6,10 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
-_DURATION_PIECE_RE = re.compile(r"(\d+)\s*([wdhms])", re.IGNORECASE)
+_UNIT_PATTERN = r"w(?:eeks?)?|d(?:ays?)?|h(?:ours?|rs?)?|m(?:inutes?|ins?)?|s(?:econds?|ecs?)?"
+# (?![a-z]) keeps "2h30m" compact forms working while rejecting "3 milk".
+_DURATION_PIECE_RE = re.compile(rf"(\d+)\s*({_UNIT_PATTERN})(?![a-z])", re.IGNORECASE)
+_UNIT_WORD_RE = re.compile(rf"(?:{_UNIT_PATTERN})", re.IGNORECASE)
 _UNIT_SECONDS = {
     "w": 7 * 24 * 60 * 60,
     "d": 24 * 60 * 60,
@@ -27,7 +30,7 @@ class ParsedReminder:
 
 
 def parse_duration(text: str) -> timedelta | None:
-    """Parse a compact duration string like '2h30m', '90s', '1w', '45 min'.
+    """Parse a duration string like '2h30m', '90s', '1w', '45 min', '2 hours'.
 
     Returns None when the string contains no valid duration tokens.
     """
@@ -38,12 +41,10 @@ def parse_duration(text: str) -> timedelta | None:
         return None
 
     total_seconds = 0
-    consumed_chars = 0
     for match in _DURATION_PIECE_RE.finditer(stripped):
         count = int(match.group(1))
-        unit = match.group(2).lower()
+        unit = match.group(2)[0].lower()
         total_seconds += count * _UNIT_SECONDS[unit]
-        consumed_chars += len(match.group(0))
 
     if total_seconds <= 0:
         return None
@@ -94,14 +95,20 @@ def parse_reminder_command(remainder: str) -> ParsedReminder:
     if tokens and tokens[0].lower() == "in":
         tokens = tokens[1:]
 
-    # Greedy duration: consume tokens while they're duration-shaped.
+    # Greedy duration: consume tokens while they're duration-shaped. A bare
+    # number followed by a unit word ("45 min") counts as one duration piece.
     duration_tokens: list[str] = []
     while tokens:
         candidate = tokens[0]
-        if parse_duration(candidate) is None and not _is_partial_duration_token(candidate):
-            break
-        duration_tokens.append(candidate)
-        tokens = tokens[1:]
+        if parse_duration(candidate) is not None or _is_partial_duration_token(candidate):
+            duration_tokens.append(candidate)
+            tokens = tokens[1:]
+            continue
+        if candidate.isdigit() and len(tokens) >= 2 and _is_unit_word(tokens[1]):
+            duration_tokens.extend([candidate, tokens[1]])
+            tokens = tokens[2:]
+            continue
+        break
 
     if not duration_tokens:
         raise ReminderParseError(
@@ -126,3 +133,7 @@ def parse_reminder_command(remainder: str) -> ParsedReminder:
 
 def _is_partial_duration_token(token: str) -> bool:
     return bool(_DURATION_PIECE_RE.search(token))
+
+
+def _is_unit_word(token: str) -> bool:
+    return bool(_UNIT_WORD_RE.fullmatch(token))

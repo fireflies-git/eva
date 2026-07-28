@@ -14,6 +14,31 @@ class ImageClientError(RuntimeError):
 
 
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({502, 503, 504})
+_DOWNLOAD_CHUNK_BYTES = 65_536
+
+
+def _parse_content_length(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+async def _read_capped(response: aiohttp.ClientResponse, *, max_bytes: int) -> bytes:
+    """Read the body in chunks, aborting as soon as it exceeds ``max_bytes``."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > max_bytes:
+            raise ImageClientError(
+                f"Image download exceeds max size ({total} bytes > {max_bytes} bytes)"
+            )
+    return b"".join(chunks)
 
 
 class ImageClient:
@@ -82,16 +107,19 @@ class ImageClient:
                     )
 
                 content_type = response.headers.get("Content-Type")
-                raw = await response.read()
+                content_length = _parse_content_length(
+                    response.headers.get("Content-Length")
+                )
+                if content_length is not None and content_length > max_bytes:
+                    raise ImageClientError(
+                        "Image download exceeds max size "
+                        f"({content_length} bytes > {max_bytes} bytes)"
+                    )
+                raw = await _read_capped(response, max_bytes=max_bytes)
         except TimeoutError as exc:
             raise ImageClientError("Image download request timed out") from exc
         except aiohttp.ClientError as exc:
             raise ImageClientError(f"Image download network error: {exc}") from exc
-
-        if len(raw) > max_bytes:
-            raise ImageClientError(
-                f"Image download exceeds max size ({len(raw)} bytes > {max_bytes} bytes)"
-            )
 
         filename = self._pick_filename(
             url=url,

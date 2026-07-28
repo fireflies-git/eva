@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from eva.state.atomic import write_text_atomic
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REMINDERS_PATH = Path("reminders.json")
@@ -94,9 +96,9 @@ class ReminderStore:
                 "next_id": self._next_id,
                 "reminders": [asdict(r) for r in self._reminders.values()],
             }
-            self._path.write_text(
+            write_text_atomic(
+                self._path,
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
             )
             return True
         except Exception:
@@ -184,18 +186,25 @@ def _coerce_reminder(raw: object) -> Reminder | None:
     if not isinstance(raw, dict):
         return None
     try:
+        # Validate and normalize the timestamp at load time so a corrupt entry
+        # is skipped here instead of crashing pop_due()/listing later.
+        fire_at = ensure_utc(datetime.fromisoformat(str(raw["fire_at_iso"])))
         return Reminder(
             id=int(raw["id"]),
             user_id=int(raw["user_id"]),
             channel_id=int(raw["channel_id"]),
-            fire_at_iso=str(raw["fire_at_iso"]),
+            fire_at_iso=fire_at.isoformat(),
             text=str(raw["text"]),
         )
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def _ensure_utc(value: datetime) -> datetime:
+def ensure_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+# Backwards-compatible private alias for existing callers.
+_ensure_utc = ensure_utc

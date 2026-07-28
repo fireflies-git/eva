@@ -196,17 +196,19 @@ class EvaApp:
 
     async def _run(self) -> None:
         logger.info("Starting Eva app")
-        await self._ai_client.start()
-        if self._image_client is not None:
-            await self._image_client.start()
-        if self._search_client is not None:
-            await self._search_client.start()
-        if self._playwright_service is not None:
-            await self._playwright_service.start()
-        if self._context7_service is not None:
-            await self._context7_service.start()
-        self._reminder_runner.start()
         try:
+            # Starts live inside the try so a mid-sequence failure still runs
+            # the cleanup below (every close() is safe when never started).
+            await self._ai_client.start()
+            if self._image_client is not None:
+                await self._image_client.start()
+            if self._search_client is not None:
+                await self._search_client.start()
+            if self._playwright_service is not None:
+                await self._playwright_service.start()
+            if self._context7_service is not None:
+                await self._context7_service.start()
+            self._reminder_runner.start()
             await self._discord_client.start(self._settings.discord_token)
         finally:
             with contextlib.suppress(Exception):

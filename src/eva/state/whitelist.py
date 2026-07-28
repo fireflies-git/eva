@@ -6,6 +6,8 @@ import json
 import logging
 from pathlib import Path
 
+from eva.state.atomic import write_text_atomic
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WHITELIST_PATH = Path("whitelist.json")
@@ -26,15 +28,23 @@ class WhitelistStore:
             return
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-            self._user_ids = {int(uid) for uid in data}
         except Exception:
             logger.exception("Failed to load whitelist from %s", self._path)
+            return
+        if not isinstance(data, list):
+            logger.warning("Whitelist file %s is not a list; ignoring", self._path)
+            return
+        for raw_id in data:
+            try:
+                self._user_ids.add(int(raw_id))
+            except (TypeError, ValueError):
+                continue
 
     def _save(self) -> bool:
         try:
-            self._path.write_text(
+            write_text_atomic(
+                self._path,
                 json.dumps(sorted(self._user_ids), indent=2) + "\n",
-                encoding="utf-8",
             )
             return True
         except Exception:

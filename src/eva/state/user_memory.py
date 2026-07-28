@@ -6,6 +6,8 @@ import json
 import logging
 from pathlib import Path
 
+from eva.state.atomic import write_text_atomic
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_USER_MEMORY_PATH = Path("user_memory.json")
@@ -72,9 +74,9 @@ class UserMemoryStore:
     def _save(self) -> bool:
         try:
             payload = {str(user_id): notes for user_id, notes in self._notes.items()}
-            self._path.write_text(
+            write_text_atomic(
+                self._path,
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
             )
             return True
         except Exception:

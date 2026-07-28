@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 import discord
 
+from eva.ai.sanitize import strip_response_watermark
 from eva.ai.schemas import ChatMessage
 from eva.discord.user_metadata import (
     build_user_metadata,
@@ -41,8 +42,14 @@ async def fetch_channel_context(
 
     output: list[ChatMessage] = []
     for msg in reversed(raw_messages):
-        serialized = _serialize_context_message(msg, id_to_name)
         role = _context_message_role(msg, bot_user_id)
+        if role == "assistant" and not strip_response_watermark(msg.content):
+            continue
+        serialized = _serialize_context_message(
+            msg,
+            id_to_name,
+            strip_watermark=role == "assistant",
+        )
         output.append({"role": role, "content": serialized})
 
     return output
@@ -58,16 +65,24 @@ def _build_reply_lookup(messages: list[discord.Message]) -> dict[int, str]:
 def _serialize_context_message(
     msg: discord.Message,
     id_to_name: Mapping[int, str],
+    *,
+    strip_watermark: bool = False,
 ) -> str:
     timestamp = msg.created_at.strftime("%H:%M")
     author = format_user_metadata(build_user_metadata(msg.author))
     extras = _format_message_extras(msg, id_to_name)
     mentions = format_mentions_metadata(list(getattr(msg, "mentions", [])))
 
+    content = msg.content
+    if strip_watermark:
+        # Keep the visible watermark out of the model prompt so it doesn't
+        # learn to regurgitate it.
+        content = strip_response_watermark(content)
+
     parts = [f"[{timestamp}] {author}"]
     if extras:
         parts.append(f" {extras}")
-    parts.append(f": {msg.content}")
+    parts.append(f": {content}")
     if mentions:
         parts.append(f" ({mentions})")
 

@@ -22,6 +22,68 @@ def test_add_assigns_increasing_ids(tmp_path: Path) -> None:
     assert b.id == a.id + 1
 
 
+def _write_reminders_file(path: Path, reminders: list[dict[str, object]]) -> None:
+    path.write_text(
+        json.dumps({"next_id": 10, "reminders": reminders}),
+        encoding="utf-8",
+    )
+
+
+def test_load_skips_malformed_fire_at_entries(tmp_path: Path) -> None:
+    path = tmp_path / "reminders.json"
+    _write_reminders_file(
+        path,
+        [
+            {
+                "id": 1,
+                "user_id": 1,
+                "channel_id": 10,
+                "fire_at_iso": "not-a-timestamp",
+                "text": "corrupt",
+            },
+            {
+                "id": 2,
+                "user_id": 1,
+                "channel_id": 10,
+                "fire_at_iso": _utc(-5).isoformat(),
+                "text": "valid",
+            },
+        ],
+    )
+
+    store = ReminderStore(path=path)
+
+    # The corrupt entry is skipped instead of crashing pop_due()/listing.
+    assert [r.text for r in store.list_for_user(1)] == ["valid"]
+    fired = store.pop_due(now=datetime.now(UTC))
+    assert [r.text for r in fired] == ["valid"]
+
+
+def test_load_normalizes_naive_fire_at_to_utc(tmp_path: Path) -> None:
+    path = tmp_path / "reminders.json"
+    naive_fire_at = (datetime.now(UTC) - timedelta(seconds=5)).replace(tzinfo=None)
+    _write_reminders_file(
+        path,
+        [
+            {
+                "id": 1,
+                "user_id": 1,
+                "channel_id": 10,
+                "fire_at_iso": naive_fire_at.isoformat(),
+                "text": "naive",
+            }
+        ],
+    )
+
+    store = ReminderStore(path=path)
+
+    reminder = store.list_for_user(1)[0]
+    assert reminder.fire_at.tzinfo is not None
+    # Must not raise TypeError comparing naive vs aware datetimes.
+    fired = store.pop_due(now=datetime.now(UTC))
+    assert [r.text for r in fired] == ["naive"]
+
+
 def test_list_for_user_is_sorted_and_isolated(tmp_path: Path) -> None:
     store = ReminderStore(path=tmp_path / "reminders.json")
     store.add(user_id=1, channel_id=10, fire_at=_utc(120), text="later")

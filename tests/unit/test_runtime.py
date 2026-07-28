@@ -10,6 +10,7 @@ from eva.runtime import (
     get_env_search_paths,
     get_resolved_env_path,
     is_linux_service_mode,
+    read_env_values,
     run_env_setup_wizard,
     show_interaction_logs,
     tail_text_file,
@@ -52,6 +53,38 @@ def test_tail_text_file_returns_latest_lines(tmp_path: Path) -> None:
     lines = tail_text_file(log_path, lines=2)
 
     assert lines == ["two", "three"]
+
+
+def test_read_env_values_strips_inline_comments(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "RESPONSE_CONTEXT_MESSAGES=40 # Number of context messages\n"
+        "TRIGGER_PREFIX=eva \n",
+        encoding="utf-8",
+    )
+
+    values = read_env_values(env_path)
+
+    assert values["RESPONSE_CONTEXT_MESSAGES"] == "40"
+
+
+def test_read_env_values_keeps_hash_without_space(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("API_KEY=abc#123\n", encoding="utf-8")
+
+    values = read_env_values(env_path)
+
+    assert values["API_KEY"] == "abc#123"
+
+
+def test_read_env_values_honors_quoted_values(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text('TRIGGER_PREFIX="eva "\nNAME=\'eva\'\n', encoding="utf-8")
+
+    values = read_env_values(env_path)
+
+    assert values["TRIGGER_PREFIX"] == "eva "
+    assert values["NAME"] == "eva"
 
 
 def test_show_interaction_logs_handles_missing_file(tmp_path: Path) -> None:

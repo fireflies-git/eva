@@ -30,6 +30,35 @@ def test_parse_duration_rejects_garbage() -> None:
     assert parse_duration("0s") is None
 
 
+def test_parse_duration_word_units() -> None:
+    assert parse_duration("45 min") == timedelta(minutes=45)
+    assert parse_duration("45min") == timedelta(minutes=45)
+    assert parse_duration("2 hours") == timedelta(hours=2)
+    assert parse_duration("1 hour") == timedelta(hours=1)
+    assert parse_duration("3 days") == timedelta(days=3)
+    assert parse_duration("1 week") == timedelta(weeks=1)
+    assert parse_duration("90 secs") == timedelta(seconds=90)
+    assert parse_duration("1 hr 30 min") == timedelta(hours=1, minutes=30)
+
+
+def test_parse_duration_rejects_unit_lookalikes() -> None:
+    assert parse_duration("3 milk") is None
+    assert parse_duration("2 months") is None
+    assert parse_duration("5 man") is None
+
+
+def test_parse_reminder_command_word_duration() -> None:
+    result = parse_reminder_command("me in 45 min call mom")
+    assert result.duration == timedelta(minutes=45)
+    assert result.text == "call mom"
+
+
+def test_parse_reminder_command_multi_token_word_duration() -> None:
+    result = parse_reminder_command("me in 1 hour 30 minutes stretch")
+    assert result.duration == timedelta(hours=1, minutes=30)
+    assert result.text == "stretch"
+
+
 def test_format_duration_round_trip() -> None:
     assert format_duration(timedelta(seconds=90)) == "1m30s"
     assert format_duration(timedelta(hours=2, minutes=5)) == "2h5m"

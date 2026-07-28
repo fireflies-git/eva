@@ -1,4 +1,11 @@
-from eva.discord.formatting import build_plain_response_chunks, build_response_chunks
+from eva.constants import DISCORD_MESSAGE_LIMIT
+from eva.discord.formatting import (
+    EMPTY_RESPONSE,
+    build_loading_text,
+    build_plain_response_chunks,
+    build_response_chunks,
+    split_on_text_triggers,
+)
 
 
 def test_build_response_chunks_respect_discord_limit() -> None:
@@ -42,3 +49,25 @@ def test_build_plain_response_chunks_respect_discord_limit() -> None:
     chunks = build_plain_response_chunks("x" * 6000)
     assert chunks
     assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
+def test_build_response_chunks_honor_split_trigger() -> None:
+    chunks = build_response_chunks("eva hi", "part one\n/// split\npart two")
+
+    assert len(chunks) == 2
+    assert "part one" in chunks[0]
+    assert "part two" in chunks[1]
+    assert all("/// split" not in chunk for chunk in chunks)
+    assert chunks[1].startswith("-# (cont.)")
+
+
+def test_split_on_text_triggers_never_returns_empty() -> None:
+    assert split_on_text_triggers("/// split") == [EMPTY_RESPONSE]
+    assert split_on_text_triggers("/// split\n/// split") == [EMPTY_RESPONSE]
+
+
+def test_build_loading_text_stays_under_limit_for_long_prompts() -> None:
+    loading = build_loading_text("x" * 5000)
+
+    assert len(loading) <= DISCORD_MESSAGE_LIMIT
+    assert "..." in loading

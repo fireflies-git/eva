@@ -4,6 +4,10 @@ import time
 from collections import deque
 from typing import Protocol
 
+# When the events dict grows past this many users, empty deques are pruned
+# so one-time users don't accumulate forever.
+_PRUNE_THRESHOLD_USERS = 1000
+
 
 class _MonotonicClock(Protocol):
     def __call__(self) -> float: ...
@@ -41,6 +45,8 @@ class RateLimiter:
         if user_id in self._exempt:
             return True
         now = self._clock()
+        if len(self._events) > _PRUNE_THRESHOLD_USERS:
+            self._prune_expired(now)
         events = self._events.setdefault(user_id, deque())
         cutoff = now - self._window_seconds
         while events and events[0] < cutoff:
@@ -49,3 +55,14 @@ class RateLimiter:
             return False
         events.append(now)
         return True
+
+    def _prune_expired(self, now: float) -> None:
+        cutoff = now - self._window_seconds
+        stale_users: list[int] = []
+        for user_id, events in self._events.items():
+            while events and events[0] < cutoff:
+                events.popleft()
+            if not events:
+                stale_users.append(user_id)
+        for user_id in stale_users:
+            del self._events[user_id]

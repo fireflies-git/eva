@@ -639,8 +639,29 @@ Today:
 - moderation model failures fail open by returning `False`
 - image API failures fail closed to a warning message
 - image download failures fall back to URL-only image results when the payload still looks valid
+  (those replies set `ReplyOutput.allow_embeds` so delivery does not suppress the embeds
+  the fallback exists for)
 
 Treat those as product decisions, not incidental implementation details.
+
+### Exactly one watermark per reply
+
+Every AI-derived reply (including reminder confirmations) ends with exactly one
+`RESPONSE_WATERMARK`. The model learns the watermark from seeing Eva's own messages, so:
+
+- `_sanitize_and_watermark()` strips model-emitted watermark lines (and any trailing
+  `SPLIT_TRIGGER`) before appending exactly one watermark.
+- `ChannelHistoryStore` and channel-context serialization keep the watermark out of the
+  model prompt (via `strip_response_watermark()` in `src/eva/ai/sanitize.py`).
+
+If you add a new reply path, route it through `_finalize_reply()` (TOS check + code
+extraction + watermark) instead of returning early, and never store watermarked text
+back into model-facing state.
+
+### Reminder confirmations share the reply tail
+
+Reminder confirmations returned by the orchestrator go through the same TOS check,
+sanitize, and single-watermark tail as normal replies. Keep it that way.
 
 ### Search remains a separate mode
 
@@ -718,8 +739,13 @@ State modules should stay small and boring:
 - `history.py`
 - `tracked_messages.py`
 - `whitelist.py`
+- `atomic.py` (shared atomic file-write helper used by the persistent stores)
 
 Do not add business logic to state modules unless the logic is inseparable from persistence/storage semantics.
+
+Persistent stores must write state files atomically via `write_text_atomic()` (temp file +
+`os.replace`) so a crash mid-write cannot corrupt `whitelist.json`, `reminders.json`,
+`user_memory.json`, or `tracked_messages.json`.
 
 ## Testing Rules
 

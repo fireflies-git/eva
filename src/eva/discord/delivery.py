@@ -30,13 +30,16 @@ async def safe_edit(
     content: str,
     *,
     attachments: list[tuple[str, bytes]] | None = None,
+    suppress_embeds: bool = True,
 ) -> bool:
     try:
         if attachments:
             files = _build_files(attachments)
-            await message.edit(content=content, suppress=True, attachments=files)
+            await message.edit(
+                content=content, suppress=suppress_embeds, attachments=files
+            )
         else:
-            await message.edit(content=content, suppress=True)
+            await message.edit(content=content, suppress=suppress_embeds)
         return True
     except Exception:
         logger.exception("Failed to edit message")
@@ -48,6 +51,7 @@ async def safe_send(
     content: str,
     *,
     attachments: list[tuple[str, bytes]] | None = None,
+    suppress_embeds: bool = True,
 ) -> discord.Message | None:
     send = getattr(channel, "send", None)
     if send is None:
@@ -55,8 +59,8 @@ async def safe_send(
     try:
         if attachments:
             files = _build_files(attachments)
-            return await send(content=content, files=files, suppress_embeds=True)
-        return await send(content=content, suppress_embeds=True)
+            return await send(content=content, files=files, suppress_embeds=suppress_embeds)
+        return await send(content=content, suppress_embeds=suppress_embeds)
     except Exception:
         logger.exception("Failed to send continuation message")
         return None
@@ -67,12 +71,15 @@ async def safe_reply(
     content: str,
     *,
     attachments: list[tuple[str, bytes]] | None = None,
+    suppress_embeds: bool = True,
 ) -> discord.Message | None:
     try:
         if attachments:
             files = _build_files(attachments)
-            return await message.reply(content=content, files=files, suppress_embeds=True)
-        return await message.reply(content=content, suppress_embeds=True)
+            return await message.reply(
+                content=content, files=files, suppress_embeds=suppress_embeds
+            )
+        return await message.reply(content=content, suppress_embeds=suppress_embeds)
     except Exception:
         logger.exception("Failed to reply to message")
         return None
@@ -91,12 +98,14 @@ async def deliver_owner_response(
     original_content: str,
     reply_content: str,
     reply_attachments: list[tuple[str, bytes]] | None = None,
+    suppress_embeds: bool = True,
 ) -> DeliveryResult:
     response_chunks = build_response_chunks(original_content, reply_content)
     primary_delivered = await safe_edit(
         message,
         response_chunks[0],
         attachments=reply_attachments,
+        suppress_embeds=suppress_embeds,
     )
     if not primary_delivered:
         return DeliveryResult(primary_delivered=False)
@@ -104,7 +113,9 @@ async def deliver_owner_response(
     tracked_message_ids = [message.id]
     had_continuation_failures = False
     for continuation in response_chunks[1:]:
-        sent_message = await safe_send(message.channel, continuation)
+        sent_message = await safe_send(
+            message.channel, continuation, suppress_embeds=suppress_embeds
+        )
         if sent_message is None:
             had_continuation_failures = True
             continue
@@ -122,16 +133,21 @@ async def deliver_reply_response(
     message: discord.Message,
     reply_content: str,
     reply_attachments: list[tuple[str, bytes]] | None = None,
+    suppress_embeds: bool = True,
 ) -> DeliveryResult:
     chunks = build_plain_response_chunks(reply_content)
-    first = await safe_reply(message, chunks[0], attachments=reply_attachments)
+    first = await safe_reply(
+        message, chunks[0], attachments=reply_attachments, suppress_embeds=suppress_embeds
+    )
     if first is None:
         return DeliveryResult(primary_delivered=False)
 
     tracked_message_ids = [first.id]
     had_continuation_failures = False
     for continuation in chunks[1:]:
-        sent_message = await safe_send(message.channel, continuation)
+        sent_message = await safe_send(
+            message.channel, continuation, suppress_embeds=suppress_embeds
+        )
         if sent_message is None:
             had_continuation_failures = True
             continue

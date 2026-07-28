@@ -124,6 +124,20 @@ def _optional_env(name: str, *, default: str) -> str:
     return os.getenv(name, default).strip() or default
 
 
+def _optional_prefix_env(name: str, *, default: str) -> str:
+    """Load a trigger prefix without stripping significant trailing whitespace.
+
+    The default prefix ("eva ") relies on its trailing space for word-boundary
+    matching, so only line endings are removed here. Quote the value in .env
+    to preserve trailing spaces (python-dotenv strips unquoted whitespace).
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip("\r\n")
+    return value or default
+
+
 def _optional_secret(name: str) -> str | None:
     value = os.getenv(name)
     if value is None:
@@ -215,7 +229,7 @@ def load_settings() -> Settings:
                 "SPLIT_MODEL_NAME",
                 default=SETTINGS_DEFAULTS["split_model_name"],
             ),
-            trigger_prefix=_optional_env(
+            trigger_prefix=_optional_prefix_env(
                 "TRIGGER_PREFIX",
                 default=SETTINGS_DEFAULTS["trigger_prefix"],
             ),

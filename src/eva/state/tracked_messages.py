@@ -6,6 +6,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from eva.constants import MAX_TRACKED_MESSAGES
+from eva.state.atomic import write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,9 @@ class TrackedMessageStore:
         if self._path is None:
             return
         try:
-            self._path.write_text(
+            write_text_atomic(
+                self._path,
                 json.dumps(list(self._message_ids.keys())) + "\n",
-                encoding="utf-8",
             )
         except Exception:
             logger.exception("Failed to save tracked messages to %s", self._path)
