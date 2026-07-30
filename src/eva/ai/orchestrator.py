@@ -381,7 +381,7 @@ def _sanitize_and_watermark(reply: ReplyOutput) -> ReplyOutput:
     cleaned = strip_context_echo(cleaned)
     cleaned = strip_response_watermark(cleaned)
     cleaned = _strip_trailing_split_trigger(cleaned)
-    watermarked = f"{cleaned}\n\n{RESPONSE_WATERMARK}" if cleaned else cleaned
+    watermarked = f"{cleaned}\n{RESPONSE_WATERMARK}" if cleaned else cleaned
     return ReplyOutput(
         content=watermarked,
         attachments=reply.attachments,
