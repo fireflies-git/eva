@@ -39,6 +39,7 @@ SETTINGS_DEFAULTS = {
     "terminal_max_output_chars": 6000,
     "rate_limit_max_requests": 20,
     "rate_limit_window_seconds": 60.0,
+    "state_dir": ".",
     "playwright_enabled": True,
     "playwright_timeout_seconds": 30.0,
     "playwright_max_content_chars": 10000,
@@ -98,6 +99,7 @@ class Settings:
     terminal_max_output_chars: int
     rate_limit_max_requests: int
     rate_limit_window_seconds: float
+    state_dir: str
     playwright_enabled: bool
     playwright_timeout_seconds: float
     playwright_max_content_chars: int
@@ -306,6 +308,7 @@ def load_settings() -> Settings:
                 minimum=RATE_LIMIT_WINDOW_SECONDS_MIN,
                 maximum=RATE_LIMIT_WINDOW_SECONDS_MAX,
             ),
+            state_dir=_optional_env("STATE_DIR", default=SETTINGS_DEFAULTS["state_dir"]),
             playwright_enabled=_optional_bool(
                 "PLAYWRIGHT_ENABLED",
                 default=SETTINGS_DEFAULTS["playwright_enabled"],

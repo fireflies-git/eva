@@ -468,7 +468,7 @@ Always keep the owner/whitelist gate as an early return in `on_message()`.
 ### Admin IDs bypass the whitelist gate
 
 The current top-level message gate treats hardcoded admins as allowed users even if they are not in
-`whitelist.json`.
+the whitelist database.
 
 That means:
 - owner -> always allowed
@@ -532,7 +532,7 @@ Whitelist behavior is sensitive. Keep it explicit and testable.
 If you touch whitelist behavior, document and preserve:
 - who can reach the command parser
 - who can `list`
-- who can `add/remove`
+- who can `add/remove/clear` (owner + `ALLOWED_ADMIN_IDS`; `clear` wipes the whole whitelist)
 - whether admin IDs are hardcoded or config-driven
 - whether admin IDs bypass general chat access as well as whitelist mutation checks
 
@@ -547,8 +547,6 @@ These are worth fixing when touching the relevant area. They are real repo issue
   That is acceptable short-term, but it should move to config if admin behavior changes again.
 - `src/eva/state/tracked_messages.py` is still unbounded in-memory state.
   Be careful about adding more long-lived runtime memory without an eviction or persistence plan.
-- `src/eva/state/whitelist.py` can still diverge between in-memory state and disk state if persistence fails.
-  If whitelist durability matters more, make that explicit in the store contract instead of hiding it.
 
 ## Prompt Rules
 
@@ -751,9 +749,17 @@ State modules should stay small and boring:
 
 Do not add business logic to state modules unless the logic is inseparable from persistence/storage semantics.
 
-Persistent stores must write state files atomically via `write_text_atomic()` (temp file +
-`os.replace`) so a crash mid-write cannot corrupt `whitelist.json`, `reminders.json`,
-`user_memory.json`, or `tracked_messages.json`.
+Persistent JSON stores must write state files atomically via `write_text_atomic()` (temp file +
+`os.replace`) so a crash mid-write cannot corrupt `reminders.json`, `user_memory.json`, or
+`tracked_messages.json`.
+
+The whitelist is the exception: `whitelist.py` is SQLite-backed (`whitelist.db`) with an in-memory
+cache, committing each mutation in a transaction before touching the cache. It imports a legacy
+`whitelist.json` next to the database once (only when the table is empty) and renames it to
+`whitelist.json.bak` so a cleared whitelist cannot be resurrected.
+
+File-backed stores resolve under `Settings.state_dir` (`STATE_DIR`, default `.`); docker-compose
+mounts a named volume at `/app/state` so state survives container rebuilds.
 
 ## Testing Rules
 

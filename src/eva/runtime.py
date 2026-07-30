@@ -69,6 +69,7 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("TERMINAL_SHELL", "/bin/sh", False, "Shell used for terminal commands"),
     EnvField("TERMINAL_TIMEOUT_SECONDS", "15", False, "Timeout for terminal commands"),
     EnvField("TERMINAL_MAX_OUTPUT_CHARS", "6000", False, "Max terminal output to capture"),
+    EnvField("STATE_DIR", ".", False, "Directory for persistent state files"),
 )
 
 

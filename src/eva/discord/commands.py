@@ -41,7 +41,7 @@ async def _reply_usage(
     trigger_prefix: str,
     reply_or_edit: ReplyOrEdit,
 ) -> None:
-    usage = f"{trigger_prefix.strip()} whitelist <add|remove|list>"
+    usage = f"{trigger_prefix.strip()} whitelist <add|remove|list|clear>"
     await reply_or_edit(message, is_owner, f"{X_MARK} Usage: `{usage}`")
 
 
@@ -164,6 +164,34 @@ async def _handle_remove_command(
     )
 
 
+async def _handle_clear_command(
+    *,
+    message: discord.Message,
+    is_owner: bool,
+    whitelist: WhitelistStore,
+    reply_or_edit: ReplyOrEdit,
+) -> None:
+    try:
+        cleared = whitelist.clear()
+    except WhitelistPersistenceError:
+        await reply_or_edit(
+            message,
+            is_owner,
+            f"{X_MARK} Failed to persist whitelist clear.",
+        )
+        return
+
+    if cleared == 0:
+        await reply_or_edit(message, is_owner, f"{WARNING_MARK} Whitelist is already empty.")
+        return
+
+    await reply_or_edit(
+        message,
+        is_owner,
+        f"{CHECK_MARK} Whitelist cleared ({cleared} removed).",
+    )
+
+
 async def handle_whitelist_command(
     *,
     message: discord.Message,
@@ -197,7 +225,7 @@ async def handle_whitelist_command(
         )
         return True
 
-    if subcommand not in {"add", "remove"}:
+    if subcommand not in {"add", "remove", "clear"}:
         await reply_or_edit(message, is_owner, f"{X_MARK} Unknown subcommand: `{subcommand}`")
         return True
 
@@ -207,6 +235,15 @@ async def handle_whitelist_command(
             message,
             is_owner,
             f"{X_MARK} You don't have permission to modify the whitelist.",
+        )
+        return True
+
+    if subcommand == "clear":
+        await _handle_clear_command(
+            message=message,
+            is_owner=is_owner,
+            whitelist=whitelist,
+            reply_or_edit=reply_or_edit,
         )
         return True
 

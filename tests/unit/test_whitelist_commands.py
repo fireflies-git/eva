@@ -97,3 +97,67 @@ def test_whitelist_add_allows_hardcoded_admin_id(tmp_path: Path) -> None:
     assert handled is True
     assert whitelist.contains(123) is True
     assert _captured_messages(message) == [(False, "✔ <@123> added to whitelist.")]
+
+
+def test_whitelist_clear_is_blocked_for_non_admin(tmp_path: Path) -> None:
+    whitelist = WhitelistStore(tmp_path / "whitelist.db")
+    whitelist.add(123)
+    message = _make_message(author_id=999)
+
+    handled = asyncio.run(
+        handle_whitelist_command(
+            message=message,
+            content="eva whitelist clear",
+            is_owner=False,
+            trigger_prefix="eva ",
+            whitelist=whitelist,
+            reply_or_edit=_capture_reply,
+        )
+    )
+
+    assert handled is True
+    assert whitelist.contains(123) is True
+    assert _captured_messages(message) == [
+        (False, "✖ You don't have permission to modify the whitelist.")
+    ]
+
+
+def test_whitelist_clear_removes_everything_for_admin(tmp_path: Path) -> None:
+    whitelist = WhitelistStore(tmp_path / "whitelist.db")
+    whitelist.add(123)
+    whitelist.add(456)
+    message = _make_message(author_id=218675193592283137)
+
+    handled = asyncio.run(
+        handle_whitelist_command(
+            message=message,
+            content="eva whitelist clear",
+            is_owner=False,
+            trigger_prefix="eva ",
+            whitelist=whitelist,
+            reply_or_edit=_capture_reply,
+        )
+    )
+
+    assert handled is True
+    assert whitelist.list_all() == []
+    assert _captured_messages(message) == [(False, "✔ Whitelist cleared (2 removed).")]
+
+
+def test_whitelist_clear_on_empty_store_warns(tmp_path: Path) -> None:
+    whitelist = WhitelistStore(tmp_path / "whitelist.db")
+    message = _make_message(author_id=218675193592283137)
+
+    handled = asyncio.run(
+        handle_whitelist_command(
+            message=message,
+            content="eva whitelist clear",
+            is_owner=False,
+            trigger_prefix="eva ",
+            whitelist=whitelist,
+            reply_or_edit=_capture_reply,
+        )
+    )
+
+    assert handled is True
+    assert _captured_messages(message) == [(False, "ⓘ Whitelist is already empty.")]

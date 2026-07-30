@@ -96,3 +96,23 @@ def test_load_settings_reads_tos_model_override(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.tos_model_name == "some-moderation-model"
+
+
+def test_load_settings_defaults_state_dir_to_cwd(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.delenv("STATE_DIR", raising=False)
+
+    settings = load_settings()
+
+    assert settings.state_dir == "."
+
+
+def test_load_settings_reads_state_dir(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("STATE_DIR", "/app/state")
+
+    settings = load_settings()
+
+    assert settings.state_dir == "/app/state"

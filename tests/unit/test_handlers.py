@@ -96,6 +96,7 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         playwright_timeout_seconds=30.0,
         playwright_max_content_chars=10000,
         context7_api_key=None,
+        state_dir=".",
     )
     reply_generation_service = ReplyGenerationService(
         account_mode=settings.account_mode,
@@ -334,6 +335,7 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         playwright_timeout_seconds=30.0,
         playwright_max_content_chars=10000,
         context7_api_key=None,
+        state_dir=".",
     )
     terminal_service = TerminalService(
         workdir=tmp_path,
@@ -459,6 +461,7 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         playwright_timeout_seconds=30.0,
         playwright_max_content_chars=10000,
         context7_api_key=None,
+        state_dir=".",
     )
     whitelist = WhitelistStore(tmp_path / "whitelist.json")
     whitelist.add(2)

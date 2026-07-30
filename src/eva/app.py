@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 
 from eva.account_updates import PendingAccountUpdateStore
 from eva.ai import (
@@ -30,6 +31,10 @@ from eva.state import (
     UserMemoryStore,
     WhitelistStore,
 )
+from eva.state.reminders import DEFAULT_REMINDERS_PATH
+from eva.state.tracked_messages import DEFAULT_TRACKED_MESSAGES_PATH
+from eva.state.user_memory import DEFAULT_USER_MEMORY_PATH
+from eva.state.whitelist import DEFAULT_WHITELIST_PATH
 from eva.terminal import TerminalService
 from eva.tools import Context7Service, PlaywrightService, ToolService
 
@@ -140,11 +145,15 @@ class EvaApp:
             model_name=settings.model_name,
         )
         self._pending_account_updates = PendingAccountUpdateStore()
+        state_dir = Path(settings.state_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
-        self._tracked_messages = TrackedMessageStore()
-        self._whitelist = WhitelistStore()
-        self._user_memory = UserMemoryStore()
-        self._reminder_store = ReminderStore()
+        self._tracked_messages = TrackedMessageStore(
+            path=state_dir / DEFAULT_TRACKED_MESSAGES_PATH.name
+        )
+        self._whitelist = WhitelistStore(state_dir / DEFAULT_WHITELIST_PATH.name)
+        self._user_memory = UserMemoryStore(path=state_dir / DEFAULT_USER_MEMORY_PATH.name)
+        self._reminder_store = ReminderStore(path=state_dir / DEFAULT_REMINDERS_PATH.name)
         self._reminder_scheduler = ReminderScheduler(
             detector=ReminderDetector(
                 client=self._ai_client,
@@ -214,6 +223,8 @@ class EvaApp:
         finally:
             with contextlib.suppress(Exception):
                 await self._reminder_runner.stop()
+            with contextlib.suppress(Exception):
+                self._whitelist.close()
             if self._context7_service is not None:
                 await self._context7_service.close()
             if self._playwright_service is not None:

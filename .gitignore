@@ -214,6 +214,8 @@ __marimo__/
 
 # Bot Thingys
 whitelist.json
+whitelist.json.bak
+whitelist.db
 tracked_messages.json
 user_memory.json
 reminders.json
