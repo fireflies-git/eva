@@ -15,14 +15,19 @@ from eva.ai import (
     SummarizationService,
     TOSCheckService,
 )
+from eva.ai.friend_request_review import FriendRequestReviewService
+from eva.captcha import NopeCHAClient
 from eva.config import Settings
 from eva.discord import SelfbotMessageHandler, create_discord_client
+from eva.discord.client import CaptchaHandler
 from eva.discord.commands import ALLOWED_ADMIN_IDS
+from eva.discord.friend_requests import FriendRequestHandler
 from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
 from eva.reminders import ReminderDetector, ReminderRunner, ReminderScheduler
 from eva.state import (
     ChannelHistoryStore,
+    PendingFriendRequestStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -119,6 +124,22 @@ class EvaApp:
             model_name=settings.model_name,
         )
         self._pending_account_updates = PendingAccountUpdateStore()
+        self._captcha_client: NopeCHAClient | None = None
+        captcha_handler: CaptchaHandler | None = None
+        if settings.nopecha_enabled:
+            self._captcha_client = NopeCHAClient(api_key=settings.nopecha_api_key)
+            captcha_handler = self._captcha_client.handle_captcha
+        self._friend_request_review_service = FriendRequestReviewService(
+            client=self._ai_client,
+            model_name=settings.model_name,
+            account_mode=settings.account_mode,
+        )
+        self._pending_friend_requests = PendingFriendRequestStore()
+        self._friend_request_handler = FriendRequestHandler(
+            pending_store=self._pending_friend_requests,
+            review_service=self._friend_request_review_service,
+            admin_ids=ALLOWED_ADMIN_IDS,
+        )
         state_dir = Path(settings.state_dir)
         state_dir.mkdir(parents=True, exist_ok=True)
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
@@ -166,8 +187,12 @@ class EvaApp:
             download_service=self._download_service,
             account_update_planner=self._account_update_planner,
             pending_account_updates=self._pending_account_updates,
+            friend_request_handler=self._friend_request_handler,
         )
-        self._discord_client = create_discord_client(self._message_handler)
+        self._discord_client = create_discord_client(
+            self._message_handler,
+            captcha_handler=captcha_handler,
+        )
         self._reminder_runner = ReminderRunner(
             store=self._reminder_store,
             client_provider=lambda: self._discord_client,
@@ -182,6 +207,8 @@ class EvaApp:
             # Starts live inside the try so a mid-sequence failure still runs
             # the cleanup below (every close() is safe when never started).
             await self._ai_client.start()
+            if self._captcha_client is not None:
+                await self._captcha_client.start()
             if self._image_client is not None:
                 await self._image_client.start()
             if self._playwright_service is not None:
@@ -201,4 +228,6 @@ class EvaApp:
                 await self._playwright_service.close()
             if self._image_client is not None:
                 await self._image_client.close()
+            if self._captcha_client is not None:
+                await self._captcha_client.close()
             await self._ai_client.close()

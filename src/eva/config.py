@@ -43,6 +43,7 @@ SETTINGS_DEFAULTS = {
     "playwright_enabled": True,
     "playwright_timeout_seconds": 30.0,
     "playwright_max_content_chars": 10000,
+    "nopecha_enabled": True,
     "context7_api_key": None,
 }
 RESPONSE_CONTEXT_MESSAGES_MIN = 1
@@ -102,6 +103,8 @@ class Settings:
     playwright_enabled: bool
     playwright_timeout_seconds: float
     playwright_max_content_chars: int
+    nopecha_enabled: bool
+    nopecha_api_key: str | None
     context7_api_key: str | None
 
 
@@ -323,6 +326,11 @@ def load_settings() -> Settings:
                 minimum=PLAYWRIGHT_MAX_CONTENT_CHARS_MIN,
                 maximum=PLAYWRIGHT_MAX_CONTENT_CHARS_MAX,
             ),
+            nopecha_enabled=_optional_bool(
+                "NOPECHA_ENABLED",
+                default=SETTINGS_DEFAULTS["nopecha_enabled"],
+            ),
+            nopecha_api_key=_optional_secret("NOPECHA_API_KEY"),
             context7_api_key=_optional_secret("CONTEXT7_API_KEY"),
         )
     except ConfigError as exc:

@@ -116,3 +116,27 @@ def test_load_settings_reads_state_dir(monkeypatch) -> None:
     settings = load_settings()
 
     assert settings.state_dir == "/app/state"
+
+
+def test_load_settings_defaults_nopecha_configuration(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.delenv("NOPECHA_ENABLED", raising=False)
+    monkeypatch.delenv("NOPECHA_API_KEY", raising=False)
+
+    settings = load_settings()
+
+    assert settings.nopecha_enabled is True
+    assert settings.nopecha_api_key is None
+
+
+def test_load_settings_reads_nopecha_configuration(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("NOPECHA_ENABLED", "false")
+    monkeypatch.setenv("NOPECHA_API_KEY", "key123")
+
+    settings = load_settings()
+
+    assert settings.nopecha_enabled is False
+    assert settings.nopecha_api_key == "key123"

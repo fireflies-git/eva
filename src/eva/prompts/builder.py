@@ -8,7 +8,15 @@ from eva.prompts.capabilities import build_capabilities_section
 from eva.prompts.context import build_context_section
 from eva.prompts.environment import build_environment_section
 from eva.prompts.formatting import build_formatting_section
+from eva.prompts.friend_request import FRIEND_REQUEST_REVIEW_INSTRUCTIONS
 from eva.prompts.persona import build_persona_section
+
+
+def build_friend_request_review_prompt(*, account_mode: str) -> str:
+    """Compose Eva's persona with the friend-request review instructions."""
+    return "\n\n---\n\n".join(
+        [build_persona_section(account_mode), FRIEND_REQUEST_REVIEW_INSTRUCTIONS]
+    )
 
 
 def build_system_prompt(

@@ -47,8 +47,10 @@ from eva.discord.delivery import (
 )
 from eva.discord.download_commands import handle_download_command
 from eva.discord.formatting import build_loading_text, build_plain_response_chunks
+from eva.discord.friend_requests import FriendRequestHandler
 from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
 from eva.discord.reminder_commands import handle_reminder_command
+from eva.discord.social_commands import handle_social_command
 from eva.discord.summarize_commands import handle_summarize_command, is_summarize_command
 from eva.discord.terminal_commands import handle_terminal_command
 from eva.discord.triggers import TriggerDecision as TriggerDecision
@@ -97,6 +99,7 @@ class SelfbotMessageHandler:
         response_split_service: ResponseSplitService | None = None,
         account_update_planner: AccountUpdatePlanner | None = None,
         pending_account_updates: PendingAccountUpdateStore | None = None,
+        friend_request_handler: FriendRequestHandler | None = None,
     ) -> None:
         self._settings = settings
         self._reply_generation_service = reply_generation_service
@@ -112,6 +115,7 @@ class SelfbotMessageHandler:
         self._response_split_service = response_split_service
         self._account_update_planner = account_update_planner
         self._pending_account_updates = pending_account_updates
+        self._friend_request_handler = friend_request_handler
 
     async def on_message(self, client: discord.Client, message: discord.Message) -> None:
         user = client.user
@@ -128,6 +132,14 @@ class SelfbotMessageHandler:
 
         if not is_standalone:
             is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
+            if is_admin and getattr(message.channel, "guild", object()) is None:
+                if await self._handle_friend_request_confirmation(
+                    client=client,
+                    message=message,
+                    is_owner=is_owner,
+                    original_content=original_content,
+                ):
+                    return
             if not is_admin and not self._whitelist.contains(message.author.id):
                 return
 
@@ -142,6 +154,7 @@ class SelfbotMessageHandler:
             return
 
         if await self._dispatch_commands(
+            client=client,
             message=message,
             is_owner=is_owner,
             is_standalone=is_standalone,
@@ -222,9 +235,53 @@ class SelfbotMessageHandler:
             is_standalone=is_standalone,
         )
 
+    async def on_relationship_add(
+        self,
+        client: discord.Client,
+        relationship: discord.Relationship,
+    ) -> None:
+        if self._friend_request_handler is None:
+            return
+        try:
+            await self._friend_request_handler.handle_incoming_request(
+                client=client,
+                relationship=relationship,
+            )
+        except Exception:
+            logger.exception(
+                "Friend request handling failed for user %s",
+                getattr(relationship, "user", None),
+            )
+
+    async def _handle_friend_request_confirmation(
+        self,
+        *,
+        client: discord.Client,
+        message: discord.Message,
+        is_owner: bool,
+        original_content: str,
+    ) -> bool:
+        if self._friend_request_handler is None:
+            return False
+        confirmation = await self._friend_request_handler.handle_confirmation(
+            client=client,
+            admin_user_id=message.author.id,
+            content=original_content,
+        )
+        if confirmation is None:
+            return False
+        await self._deliver_command_response(
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            content=confirmation,
+        )
+        return True
+
     async def _dispatch_commands(
         self,
         *,
+        client: discord.Client,
         message: discord.Message,
         is_owner: bool,
         is_standalone: bool,
@@ -265,6 +322,22 @@ class SelfbotMessageHandler:
         )
         if await self._handle_command_outcome(
             outcome=terminal_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        social_outcome = await handle_social_command(
+            content=original_content,
+            user_id=message.author.id,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            client=client,
+        )
+        if await self._handle_command_outcome(
+            outcome=social_outcome,
             message=message,
             is_owner=is_owner,
             original_content=original_content,

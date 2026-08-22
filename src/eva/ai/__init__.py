@@ -5,6 +5,10 @@ from eva.ai.client import (
     OpenAICompatibleClient,
     ToolChatCompletionClient,
 )
+from eva.ai.friend_request_review import (
+    FriendRequestReview,
+    FriendRequestReviewService,
+)
 from eva.ai.orchestrator import ReplyGenerationService
 from eva.ai.respond import (
     ResponseGenerationResult,
@@ -18,6 +22,8 @@ __all__ = [
     "AIClientError",
     "AccountUpdatePlanner",
     "ChatCompletionClient",
+    "FriendRequestReview",
+    "FriendRequestReviewService",
     "OpenAICompatibleClient",
     "ReplyGenerationService",
     "ResponseGenerationResult",
