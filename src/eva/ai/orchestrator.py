@@ -88,6 +88,14 @@ class ReplyGenerationService:
         self._autonomous_terminal_enabled = autonomous_terminal_enabled
         self._playwright_enabled = playwright_enabled
         self._context7_enabled = context7_enabled
+        self._watermark_enabled = True
+
+    @property
+    def watermark_enabled(self) -> bool:
+        return self._watermark_enabled
+
+    def set_watermark_enabled(self, enabled: bool) -> None:
+        self._watermark_enabled = enabled
 
     async def generate_reply(
         self,
@@ -168,7 +176,7 @@ class ReplyGenerationService:
                 allow_embeds=reply.allow_embeds,
             )
 
-        return _sanitize_and_watermark(reply)
+        return _sanitize_and_watermark(reply, watermark_enabled=self._watermark_enabled)
 
     async def _schedule_reminder_if_needed(
         self,
@@ -267,15 +275,16 @@ def _extract_code_blocks_from_reply(text: str) -> tuple[str, list[tuple[str, byt
     return extract_code_blocks(text)
 
 
-def _sanitize_and_watermark(reply: ReplyOutput) -> ReplyOutput:
-    """Strip thinking artifacts and append exactly one watermark to reply content."""
+def _sanitize_and_watermark(reply: ReplyOutput, *, watermark_enabled: bool) -> ReplyOutput:
+    """Strip artifacts and optionally append exactly one response watermark."""
     cleaned = sanitize_response(reply.content)
     cleaned = strip_context_echo(cleaned)
     cleaned = strip_response_watermark(cleaned)
     cleaned = _strip_trailing_split_trigger(cleaned)
-    watermarked = f"{cleaned}\n{RESPONSE_WATERMARK}" if cleaned else cleaned
+    if watermark_enabled and cleaned:
+        cleaned = f"{cleaned}\n{RESPONSE_WATERMARK}"
     return ReplyOutput(
-        content=watermarked,
+        content=cleaned,
         attachments=reply.attachments,
         allow_embeds=reply.allow_embeds,
     )

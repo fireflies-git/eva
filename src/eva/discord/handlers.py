@@ -62,6 +62,7 @@ from eva.discord.triggers import (
     parse_trigger,
 )
 from eva.discord.user_metadata import build_requester_context
+from eva.discord.watermark_commands import handle_watermark_command
 from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
@@ -340,6 +341,22 @@ class SelfbotMessageHandler:
         )
         if await self._handle_command_outcome(
             outcome=social_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
+        watermark_outcome = await handle_watermark_command(
+            content=original_content,
+            user_id=message.author.id,
+            is_owner=is_owner,
+            trigger_prefix=self._settings.trigger_prefix,
+            controller=self._reply_generation_service,
+        )
+        if await self._handle_command_outcome(
+            outcome=watermark_outcome,
             message=message,
             is_owner=is_owner,
             original_content=original_content,

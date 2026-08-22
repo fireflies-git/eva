@@ -282,6 +282,54 @@ def test_reply_generation_deduplicates_model_emitted_watermark() -> None:
     assert reply.content.count(RESPONSE_WATERMARK) == 1
 
 
+def test_reply_generation_can_disable_watermark() -> None:
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(f"here you go\n\n{RESPONSE_WATERMARK}"),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+    )
+    reply_service.set_watermark_enabled(False)
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.content == "here you go"
+    assert RESPONSE_WATERMARK not in reply.content
+
+
+def test_reply_generation_can_reenable_watermark() -> None:
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService("here you go"),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+    )
+    reply_service.set_watermark_enabled(False)
+    reply_service.set_watermark_enabled(True)
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+        )
+    )
+
+    assert reply.content == f"here you go{_WM}"
+
+
 def test_reply_generation_strips_context_echo_framing() -> None:
     echoed = (
         "[18:51] @eva (pseudophilanthropic) reply to @NeDIAD: still not gonna work "

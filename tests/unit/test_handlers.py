@@ -305,6 +305,34 @@ def test_assistant_mode_skips_ai_split_planner(monkeypatch, tmp_path) -> None:
     assert chunks == ["one message only"]
 
 
+def test_watermark_command_toggles_reply_generation_service(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    delivered: list[str] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(cast(str, kwargs["reply_content"]))
+        return SimpleNamespace(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    message = cast(
+        discord.Message,
+        SimpleNamespace(
+            author=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=99),
+            content="eva watermark off",
+            id=123,
+            reference=None,
+        ),
+    )
+    client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))
+
+    asyncio.run(handler.on_message(client, message))
+
+    assert handler._reply_generation_service.watermark_enabled is False
+    assert delivered == ["✔ Watermark disabled."]
+
+
 def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
     class FailingReplyGenerationService:
         async def generate_reply(self, **kwargs: object) -> object:
