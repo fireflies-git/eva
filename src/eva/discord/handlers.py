@@ -25,6 +25,8 @@ from eva.ai.orchestrator import ReplyOutput
 from eva.ai.sanitize import strip_response_watermark
 from eva.config import Settings
 from eva.constants import (
+    FOLLOWUP_TYPING_AVERAGE_WORD_LENGTH,
+    FOLLOWUP_TYPING_MIN_SECONDS,
     FOLLOWUP_TYPING_WPM_MAX,
     FOLLOWUP_TYPING_WPM_MIN,
     WARNING_MARK,
@@ -856,12 +858,17 @@ class SelfbotMessageHandler:
         return sent_ids, had_failures
 
     def _calculate_followup_delay_seconds(self, content: str) -> float:
-        word_count = max(len(content.split()), 1)
+        character_count = len(content.strip())
+        if character_count == 0:
+            return 0.0
+
         words_per_minute = random.uniform(
             FOLLOWUP_TYPING_WPM_MIN,
             FOLLOWUP_TYPING_WPM_MAX,
         )
-        return (word_count / words_per_minute) * 60.0
+        estimated_word_count = character_count / FOLLOWUP_TYPING_AVERAGE_WORD_LENGTH
+        typing_seconds = (estimated_word_count / words_per_minute) * 60.0
+        return max(typing_seconds, FOLLOWUP_TYPING_MIN_SECONDS)
 
 
 def _build_stored_user_message(

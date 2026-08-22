@@ -126,13 +126,21 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
 
 def test_calculate_followup_delay_scales_with_length(monkeypatch, tmp_path) -> None:
     handler = _build_handler(tmp_path)
-    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 100.0)
+    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 240.0)
 
-    short_delay = handler._calculate_followup_delay_seconds("short")
+    short_delay = handler._calculate_followup_delay_seconds("ok")
+    normal_delay = handler._calculate_followup_delay_seconds("short")
     long_delay = handler._calculate_followup_delay_seconds("word " * 100)
 
-    assert short_delay == pytest.approx(0.6)
-    assert long_delay == pytest.approx(60.0)
+    assert short_delay == pytest.approx(0.15)
+    assert normal_delay == pytest.approx(0.25)
+    assert long_delay == pytest.approx(24.95)
+
+
+def test_calculate_followup_delay_returns_zero_for_empty_content(tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+
+    assert handler._calculate_followup_delay_seconds("   ") == 0.0
 
 
 def test_send_followup_messages_waits_and_returns_sent_ids(monkeypatch, tmp_path) -> None:
@@ -140,7 +148,7 @@ def test_send_followup_messages_waits_and_returns_sent_ids(monkeypatch, tmp_path
     channel = DummyChannel()
     sleeps: list[float] = []
 
-    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 100.0)
+    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 240.0)
 
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
@@ -156,8 +164,8 @@ def test_send_followup_messages_waits_and_returns_sent_ids(monkeypatch, tmp_path
     )
 
     assert sleeps == [
-        pytest.approx(0.6),
-        pytest.approx(60.0),
+        pytest.approx(0.25),
+        pytest.approx(24.95),
     ]
     assert channel.sent == [("short", True), ("word " * 100, True)]
     assert sent_ids == [101, 102]
