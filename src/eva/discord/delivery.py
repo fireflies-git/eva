@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import discord
@@ -92,6 +94,30 @@ async def safe_reply_or_edit(message: discord.Message, is_owner: bool, content: 
         await safe_reply(message, content)
 
 
+async def wait_before_followup(
+    channel: discord.abc.Messageable,
+    *,
+    content: str,
+    delay_seconds: Callable[[str], float],
+) -> None:
+    """Show typing while waiting before sending a split follow-up message."""
+    delay = max(delay_seconds(content), 0.0)
+    typing = getattr(channel, "typing", None)
+    if typing is None:
+        if delay:
+            await asyncio.sleep(delay)
+        return
+
+    try:
+        async with typing():
+            if delay:
+                await asyncio.sleep(delay)
+    except Exception:
+        logger.exception("Failed to show typing indicator before follow-up")
+        if delay:
+            await asyncio.sleep(delay)
+
+
 async def deliver_owner_response(
     *,
     message: discord.Message,
@@ -99,6 +125,7 @@ async def deliver_owner_response(
     reply_content: str,
     reply_attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    followup_delay_seconds: Callable[[str], float] | None = None,
 ) -> DeliveryResult:
     response_chunks = build_response_chunks(original_content, reply_content)
     primary_delivered = await safe_edit(
@@ -113,6 +140,12 @@ async def deliver_owner_response(
     tracked_message_ids = [message.id]
     had_continuation_failures = False
     for continuation in response_chunks[1:]:
+        if followup_delay_seconds is not None:
+            await wait_before_followup(
+                message.channel,
+                content=continuation,
+                delay_seconds=followup_delay_seconds,
+            )
         sent_message = await safe_send(
             message.channel, continuation, suppress_embeds=suppress_embeds
         )
@@ -134,6 +167,7 @@ async def deliver_reply_response(
     reply_content: str,
     reply_attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    followup_delay_seconds: Callable[[str], float] | None = None,
 ) -> DeliveryResult:
     chunks = build_plain_response_chunks(reply_content)
     first = await safe_reply(
@@ -145,6 +179,12 @@ async def deliver_reply_response(
     tracked_message_ids = [first.id]
     had_continuation_failures = False
     for continuation in chunks[1:]:
+        if followup_delay_seconds is not None:
+            await wait_before_followup(
+                message.channel,
+                content=continuation,
+                delay_seconds=followup_delay_seconds,
+            )
         sent_message = await safe_send(
             message.channel, continuation, suppress_embeds=suppress_embeds
         )

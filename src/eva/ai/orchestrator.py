@@ -7,19 +7,16 @@ from typing import Protocol
 
 import discord
 
-from eva.ai.client import AIClientError
 from eva.ai.respond import ResponseGenerationResult
 from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
 from eva.ai.schemas import ChatMessage
 from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
-from eva.prompts import build_search_system_prompt, build_system_prompt
+from eva.prompts import build_system_prompt
 from eva.reminders import ReminderConfirmation
-from eva.search import SearchClientError, SearchResultBundle
 
 logger = logging.getLogger(__name__)
 
-SEARCH_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't verify that with search right now."
 IMAGE_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't generate an image right now."
 _IMAGE_ANSWER_PREFIX = "media generated:"
 
@@ -44,16 +41,6 @@ class ResponseGenerator(Protocol):
     ) -> ResponseGenerationResult: ...
 
 
-class SearchRunner(Protocol):
-    async def search_if_needed(
-        self,
-        *,
-        user_message: str,
-        recent_context: Sequence[ChatMessage],
-        reply_context: str | None,
-    ) -> SearchResultBundle | None: ...
-
-
 class ImageRunner(Protocol):
     async def generate_if_needed(
         self,
@@ -62,19 +49,6 @@ class ImageRunner(Protocol):
         recent_context: Sequence[ChatMessage],
         reply_context: str | None,
     ) -> ImageResultBundle | None: ...
-
-
-class SearchResponseGenerator(Protocol):
-    async def generate_reply(
-        self,
-        *,
-        system_prompt: str,
-        search_results: SearchResultBundle,
-        recent_context: Sequence[ChatMessage],
-        user_message: str,
-        reply_context: str | None,
-        requester_context: str | None,
-    ) -> ResponseGenerationResult: ...
 
 
 class TOSChecker(Protocol):
@@ -99,8 +73,6 @@ class ReplyGenerationService:
         tos_check_service: TOSChecker,
         account_mode: str = "assistant",
         image_service: ImageRunner | None = None,
-        search_service: SearchRunner | None = None,
-        search_response_service: SearchResponseGenerator | None = None,
         reminder_scheduler: ReminderRunner | None = None,
         terminal_enabled: bool = False,
         autonomous_terminal_enabled: bool = False,
@@ -110,8 +82,6 @@ class ReplyGenerationService:
         self._account_mode = account_mode
         self._response_service = response_service
         self._image_service = image_service
-        self._search_service = search_service
-        self._search_response_service = search_response_service
         self._reminder_scheduler = reminder_scheduler
         self._tos_check_service = tos_check_service
         self._terminal_enabled = terminal_enabled
@@ -155,47 +125,27 @@ class ReplyGenerationService:
         if image_results is not None:
             reply = self._generate_image_reply(image_results)
         else:
-            search_results = await self._run_search_if_needed(
+            system_prompt = build_system_prompt(
+                channel,
+                client,
+                account_mode=self._account_mode,
+                terminal_enabled=self._terminal_enabled,
+                autonomous_terminal_enabled=self._autonomous_terminal_enabled,
+                playwright_enabled=self._playwright_enabled,
+                context7_enabled=self._context7_enabled,
+            )
+            content = await self._response_service.generate_reply(
+                system_prompt=system_prompt,
                 context_messages=context_messages,
+                history_messages=history_messages,
                 user_message=user_message,
                 reply_context=reply_context,
+                requester_context=requester_context,
             )
-            if search_results is not None:
-                content = await self._generate_search_reply(
-                    channel=channel,
-                    client=client,
-                    context_messages=context_messages,
-                    search_results=search_results,
-                    user_message=user_message,
-                    reply_context=reply_context,
-                    requester_context=requester_context,
-                )
-                reply = ReplyOutput(
-                    content=content.content,
-                    attachments=[],
-                )
-            else:
-                system_prompt = build_system_prompt(
-                    channel,
-                    client,
-                    account_mode=self._account_mode,
-                    terminal_enabled=self._terminal_enabled,
-                    autonomous_terminal_enabled=self._autonomous_terminal_enabled,
-                    playwright_enabled=self._playwright_enabled,
-                    context7_enabled=self._context7_enabled,
-                )
-                content = await self._response_service.generate_reply(
-                    system_prompt=system_prompt,
-                    context_messages=context_messages,
-                    history_messages=history_messages,
-                    user_message=user_message,
-                    reply_context=reply_context,
-                    requester_context=requester_context,
-                )
-                reply = ReplyOutput(
-                    content=content.content,
-                    attachments=[],
-                )
+            reply = ReplyOutput(
+                content=content.content,
+                attachments=[],
+            )
 
         return await self._finalize_reply(reply)
 
@@ -290,64 +240,6 @@ class ReplyGenerationService:
                 )
 
         return ReplyOutput(content=IMAGE_FAILURE_MESSAGE, attachments=[])
-
-    async def _run_search_if_needed(
-        self,
-        *,
-        context_messages: Sequence[ChatMessage],
-        user_message: str,
-        reply_context: str | None,
-    ) -> SearchResultBundle | None:
-        if self._search_service is None:
-            return None
-        try:
-            return await self._search_service.search_if_needed(
-                user_message=user_message,
-                recent_context=context_messages,
-                reply_context=reply_context,
-            )
-        except SearchClientError:
-            logger.exception("Search request failed")
-            return SearchResultBundle.error()
-
-    async def _generate_search_reply(
-        self,
-        *,
-        channel: discord.abc.Messageable,
-        client: discord.Client,
-        context_messages: Sequence[ChatMessage],
-        search_results: SearchResultBundle,
-        user_message: str,
-        reply_context: str | None,
-        requester_context: str | None,
-    ) -> ResponseGenerationResult:
-        if search_results.is_error:
-            return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
-        if self._search_response_service is None:
-            return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
-
-        search_prompt = build_search_system_prompt(
-            channel,
-            client,
-            account_mode=self._account_mode,
-            terminal_enabled=self._terminal_enabled,
-            autonomous_terminal_enabled=self._autonomous_terminal_enabled,
-            playwright_enabled=self._playwright_enabled,
-            context7_enabled=self._context7_enabled,
-        )
-        try:
-            return await self._search_response_service.generate_reply(
-                system_prompt=search_prompt,
-                search_results=search_results,
-                recent_context=context_messages,
-                user_message=user_message,
-                reply_context=reply_context,
-                requester_context=requester_context,
-            )
-        except AIClientError:
-            logger.exception("Search response generation failed")
-            return ResponseGenerationResult(content=SEARCH_FAILURE_MESSAGE)
-
 
 def _format_image_reply_text(answer: str) -> str:
     if not answer:

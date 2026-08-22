@@ -50,9 +50,8 @@ ENV_FIELDS: tuple[EnvField, ...] = (
         False,
         "How many recent channel messages to include",
     ),
-    EnvField("FOLLOWUP_DELAY_MIN_SECONDS", "0.75", False, "Minimum standalone follow-up delay"),
-    EnvField("FOLLOWUP_DELAY_MAX_SECONDS", "1.5", False, "Maximum standalone follow-up delay"),
-    EnvField("SERPER_API_KEY", "", False, "Serper API key (optional)"),
+    EnvField("FOLLOWUP_DELAY_MIN_SECONDS", "1.0", False, "Minimum follow-up delay"),
+    EnvField("FOLLOWUP_DELAY_MAX_SECONDS", "3.0", False, "Maximum follow-up delay"),
     EnvField("IMAGE_API_KEY", "", False, "Image API key (optional)"),
     EnvField("IMAGE_API_BASE_URL", "https://ai.6969.pro/v1", False, "Image API base URL"),
     EnvField("IMAGE_MODEL_NAME", "sonar", False, "Image model name"),
@@ -432,11 +431,6 @@ def run_settings_menu(env_path: Path) -> None:
                 values.get("RESPONSE_CONTEXT_MESSAGES", "40"),
             ),
             _format_setting_option(
-                "Search API key",
-                values.get("SERPER_API_KEY", ""),
-                secret=True,
-            ),
-            _format_setting_option(
                 "Image API key",
                 values.get("IMAGE_API_KEY", ""),
                 secret=True,
@@ -446,10 +440,10 @@ def run_settings_menu(env_path: Path) -> None:
         ]
         selected = run_menu(options=options, read_key=read_menu_key, write=writer)
 
-        if selected == 6:
+        if selected == 5:
             write_env_values(env_path, _merge_env_values(values))
             return
-        if selected == 7:
+        if selected == 6:
             return
 
         field_map = [
@@ -457,7 +451,6 @@ def run_settings_menu(env_path: Path) -> None:
             "API_KEY",
             "TRIGGER_PREFIX",
             "RESPONSE_CONTEXT_MESSAGES",
-            "SERPER_API_KEY",
             "IMAGE_API_KEY",
         ]
         key = field_map[selected]

@@ -8,9 +8,8 @@ from eva.ai.orchestrator import ReplyGenerationService
 from eva.constants import RESPONSE_WATERMARK
 from eva.images import GeneratedImageAsset, ImageResultBundle
 from eva.reminders import ReminderConfirmation
-from eva.search import SearchResultBundle
 
-_WM = "\n\n-# -eva"
+_WM = "\n-# -eva"
 
 
 class StubResponseService:
@@ -20,24 +19,6 @@ class StubResponseService:
 
     async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
         self.calls.append(kwargs)
-        return ResponseGenerationResult(self.response)
-
-
-class StubSearchService:
-    def __init__(self, *, result: SearchResultBundle | None = None) -> None:
-        self.result = result
-        self.calls: list[dict[str, object]] = []
-
-    async def search_if_needed(self, **kwargs: object) -> SearchResultBundle | None:
-        self.calls.append(kwargs)
-        return self.result
-
-
-class StubSearchResponseService:
-    def __init__(self, response: str) -> None:
-        self.response = response
-
-    async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
         return ResponseGenerationResult(self.response)
 
 
@@ -83,14 +64,11 @@ def _build_service(
     reminder_scheduler: StubReminderScheduler,
     response_service: StubResponseService | None = None,
     image_service: StubImageService | None = None,
-    search_service: StubSearchService | None = None,
 ) -> ReplyGenerationService:
     return ReplyGenerationService(
         account_mode="assistant",
         response_service=response_service or StubResponseService("normal"),
         image_service=image_service or StubImageService(result=None),
-        search_service=search_service or StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         reminder_scheduler=reminder_scheduler,
         tos_check_service=StubTOSCheckService(),
     )
@@ -107,12 +85,10 @@ def test_reminder_confirmation_returned_when_scheduler_hits() -> None:
             assets=[GeneratedImageAsset(filename="fox.png", data=b"png-bytes")],
         )
     )
-    search_service = StubSearchService(result=SearchResultBundle(query="apple"))
     reply_service = _build_service(
         reminder_scheduler=scheduler,
         response_service=response_service,
         image_service=image_service,
-        search_service=search_service,
     )
 
     reply = asyncio.run(
@@ -132,7 +108,6 @@ def test_reminder_confirmation_returned_when_scheduler_hits() -> None:
     assert reply.attachments == []
     assert response_service.calls == []
     assert image_service.calls == []
-    assert search_service.calls == []
     assert scheduler.calls == [
         {
             "user_message": "remind me in 5m to draw a fox",
@@ -200,8 +175,6 @@ def test_reminder_branch_skipped_when_no_scheduler_configured() -> None:
         account_mode="assistant",
         response_service=response_service,
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -258,8 +231,6 @@ def test_reminder_confirmation_passes_through_tos_check() -> None:
         account_mode="assistant",
         response_service=StubResponseService("normal"),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         reminder_scheduler=scheduler,
         tos_check_service=ViolatingTOSCheckService(),
     )

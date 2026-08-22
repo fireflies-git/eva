@@ -4,13 +4,14 @@ import random
 import re
 from dataclasses import dataclass
 
-from eva.constants import DISCORD_MESSAGE_LIMIT, LOADING_MESSAGES, SPLIT_TRIGGER
+from eva.constants import DISCORD_MESSAGE_LIMIT, LOADING_MESSAGES, RESPONSE_WATERMARK, SPLIT_TRIGGER
 
 EMPTY_RESPONSE = "(empty response)"
 QUOTE_PREFIX = "> "
 QUOTE_SEPARATOR = "\n "
 CONTINUATION_PREFIX = "-# (cont.)\n "
 _LIST_ITEM_RE = re.compile(r"^(?:[-*+]\s|\d+[.)]\s)")
+_ABBREVIATION_RE = re.compile(r"(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|e\.g|i\.e)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,13 +106,98 @@ def _split_into_sections(text: str) -> list[str]:
     return sections or [EMPTY_RESPONSE]
 
 
+def _split_section_into_sentences(section: str) -> list[str]:
+    """Split prose at sentence endings without breaking inline code or URLs."""
+    if section.startswith("```") and section.endswith("```"):
+        return [section]
+
+    sentences: list[str] = []
+    start = 0
+    inline_code = False
+    index = 0
+    while index < len(section):
+        character = section[index]
+        if character == "`":
+            inline_code = not inline_code
+            index += 1
+            continue
+        if inline_code or character not in ".!?":
+            index += 1
+            continue
+
+        if character == "." and _is_non_sentence_period(section, index):
+            index += 1
+            continue
+
+        end = index + 1
+        while end < len(section) and section[end] in ".!?":
+            end += 1
+        if end == len(section) or section[end].isspace():
+            sentence = section[start:end].strip()
+            if sentence:
+                sentences.append(sentence)
+            start = end
+        index = end
+
+    remainder = section[start:].strip()
+    if remainder:
+        sentences.append(remainder)
+    return sentences or [section.strip() or EMPTY_RESPONSE]
+
+
+def _is_non_sentence_period(text: str, index: int) -> bool:
+    """Return whether a period is part of a number, URL, or abbreviation."""
+    previous_character = text[index - 1] if index else ""
+    next_character = text[index + 1] if index + 1 < len(text) else ""
+    if previous_character.isdigit() and next_character.isdigit():
+        return True
+    if next_character and not next_character.isspace():
+        return True
+
+    word_start = index
+    while word_start > 0 and text[word_start - 1].isalpha():
+        word_start -= 1
+    word = text[word_start:index]
+    return bool(_ABBREVIATION_RE.fullmatch(word))
+
+
+def _split_into_message_units(text: str) -> list[str]:
+    normalized = text.strip()
+    watermark = ""
+    if normalized.endswith(RESPONSE_WATERMARK):
+        normalized = normalized[: -len(RESPONSE_WATERMARK)].rstrip()
+        watermark = f"\n{RESPONSE_WATERMARK}"
+
+    units: list[str] = []
+    for section in _split_into_sections(normalized):
+        units.extend(_split_section_into_sentences(section))
+    if watermark and units:
+        units[-1] = f"{units[-1]}{watermark}"
+    if len(units) > 1:
+        units = [_remove_terminal_period(unit) for unit in units]
+    return units or [EMPTY_RESPONSE]
+
+
+def _remove_terminal_period(text: str) -> str:
+    """Keep split chat messages casual without removing question or exclamation marks."""
+    watermark = ""
+    body = text
+    if body.endswith(f"\n{RESPONSE_WATERMARK}"):
+        body = body[: -(len(RESPONSE_WATERMARK) + 1)].rstrip()
+        watermark = f"\n{RESPONSE_WATERMARK}"
+
+    if body.endswith("."):
+        body = body[:-1].rstrip()
+    return f"{body}{watermark}"
+
+
 def split_reply_for_limits(
     reply_content: str,
     *,
     first_limit: int,
     continuation_limit: int,
 ) -> list[str]:
-    sections = _split_into_sections(reply_content)
+    sections = _split_into_message_units(reply_content)
     chunks: list[str] = []
     current = ""
     current_limit = max(first_limit, 1)
@@ -133,11 +219,6 @@ def split_reply_for_limits(
                 chunks.append(piece)
                 current_limit = max(continuation_limit, 1)
             current = pending
-            continue
-
-        combined = f"{current}\n\n{pending}"
-        if len(combined) <= current_limit:
-            current = combined
             continue
 
         flush_current()

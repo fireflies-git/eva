@@ -24,7 +24,12 @@ from eva.ai import (
 from eva.ai.orchestrator import ReplyOutput
 from eva.ai.sanitize import strip_response_watermark
 from eva.config import Settings
-from eva.constants import WARNING_MARK, X_MARK
+from eva.constants import (
+    FOLLOWUP_TYPING_WPM_MAX,
+    FOLLOWUP_TYPING_WPM_MIN,
+    WARNING_MARK,
+    X_MARK,
+)
 from eva.discord.account_updates import AccountUpdateApplyError, apply_account_update
 from eva.discord.clear_commands import handle_clear_command
 from eva.discord.command_outcome import CommandOutcome
@@ -38,6 +43,7 @@ from eva.discord.delivery import (
     safe_reply,
     safe_reply_or_edit,
     safe_send,
+    wait_before_followup,
 )
 from eva.discord.download_commands import handle_download_command
 from eva.discord.formatting import build_loading_text, build_plain_response_chunks
@@ -582,6 +588,8 @@ class SelfbotMessageHandler:
             limit=self._settings.response_context_messages,
             exclude_message_id=message.id,
             bot_user_id=bot_user_id,
+            account_mode="standalone" if is_standalone else "assistant",
+            is_tracked_message=self._tracked_messages.contains,
         )
         history_messages = self._history_store.get(channel_id)
 
@@ -664,6 +672,7 @@ class SelfbotMessageHandler:
                 reply_content=ai_reply.content,
                 reply_attachments=ai_reply.attachments,
                 suppress_embeds=suppress_embeds,
+                followup_delay_seconds=self._calculate_followup_delay_seconds,
             )
         if is_standalone:
             return await self._deliver_standalone_reply_response(
@@ -675,6 +684,7 @@ class SelfbotMessageHandler:
             reply_content=ai_reply.content,
             reply_attachments=ai_reply.attachments,
             suppress_embeds=suppress_embeds,
+            followup_delay_seconds=self._calculate_followup_delay_seconds,
         )
 
     async def _deliver_standalone_reply_response(
@@ -731,17 +741,21 @@ class SelfbotMessageHandler:
         self._history_store.clear(channel_id)
 
     async def _build_plain_response_chunks(self, ai_reply: str) -> list[str]:
+        local_chunks = build_plain_response_chunks(ai_reply)
         if not self._is_standalone_mode() or self._response_split_service is None:
-            return build_plain_response_chunks(ai_reply)
+            return local_chunks
 
+        # Keep the optional planner for standalone accounts, but enforce the local
+        # sentence boundary policy after it returns. The model must not decide how
+        # many sentences Discord receives in one message.
         planned_chunks = await self._response_split_service.split_reply(
             reply_content=ai_reply,
             first_limit=2000,
             continuation_limit=2000,
         )
         if planned_chunks is None:
-            return build_plain_response_chunks(ai_reply)
-        return planned_chunks
+            return local_chunks
+        return build_plain_response_chunks("\n\n".join(planned_chunks))
 
     async def _send_followup_messages(
         self,
@@ -753,7 +767,11 @@ class SelfbotMessageHandler:
 
         for continuation in chunks:
             if self._is_standalone_mode():
-                await asyncio.sleep(self._calculate_followup_delay_seconds(continuation))
+                await wait_before_followup(
+                    channel,
+                    content=continuation,
+                    delay_seconds=self._calculate_followup_delay_seconds,
+                )
             sent = await safe_send(channel, continuation)
             if sent is None:
                 had_failures = True
@@ -765,16 +783,12 @@ class SelfbotMessageHandler:
         return sent_ids, had_failures
 
     def _calculate_followup_delay_seconds(self, content: str) -> float:
-        min_delay = getattr(self._settings, "followup_delay_min_seconds", 0.75)
-        max_delay = getattr(self._settings, "followup_delay_max_seconds", 1.5)
-        if max_delay <= min_delay:
-            return min_delay
-
-        ratio = min(len(content) / 1200, 1.0)
-        base_delay = min_delay + ((max_delay - min_delay) * ratio)
-        jitter_window = min((max_delay - min_delay) * 0.1, 0.08)
-        jitter = random.uniform(-jitter_window, jitter_window)
-        return max(min_delay, min(max_delay, base_delay + jitter))
+        word_count = max(len(content.split()), 1)
+        words_per_minute = random.uniform(
+            FOLLOWUP_TYPING_WPM_MIN,
+            FOLLOWUP_TYPING_WPM_MAX,
+        )
+        return (word_count / words_per_minute) * 60.0
 
 
 def _build_stored_user_message(
@@ -782,7 +796,7 @@ def _build_stored_user_message(
     reply_context: str | None,
     requester_context: str,
 ) -> str:
-    sections = [f"[Requester metadata]\n{requester_context}"]
+    sections = [f"[Current requester]\n{requester_context}"]
     if reply_context:
         sections.append(f'[Replying to message: "{reply_context}"]')
     sections.append(user_query)

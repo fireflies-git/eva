@@ -1,4 +1,24 @@
-from eva.ai.sanitize import strip_context_echo
+from eva.ai.sanitize import sanitize_response, strip_context_echo
+
+
+def test_sanitize_response_normalizes_em_dashes_and_unicode_emoji() -> None:
+    assert sanitize_response("quiet — but okay 🙂") == "quiet , but okay"
+
+
+def test_sanitize_response_preserves_code_block_punctuation_and_symbols() -> None:
+    content = "outside — text\n```python\nvalue = '— 🙂'\n```"
+
+    assert sanitize_response(content) == "outside , text\n```python\nvalue = '— 🙂'\n```"
+
+
+def test_sanitize_response_adds_question_mark_to_obvious_question() -> None:
+    assert sanitize_response("How are you doing") == "How are you doing?"
+
+
+def test_sanitize_response_does_not_change_code_question() -> None:
+    content = "```text\nHow are you doing\n```"
+
+    assert sanitize_response(content) == content
 
 
 def test_strip_context_echo_removes_full_transcript_framing() -> None:
@@ -18,6 +38,35 @@ def test_strip_context_echo_removes_speaker_label_without_timestamp() -> None:
     cleaned = strip_context_echo("@eva (pseudophilanthropic): hello there")
 
     assert cleaned == "hello there"
+
+
+def test_strip_context_echo_removes_identity_aware_transcript_framing() -> None:
+    echoed = (
+        "eva: [20:29 message_id:1540820068954579020] "
+        "@eva2freaky (pseudophilanthropic) [user_id:1008043568616718408]: "
+        "i never said ugly, just that the confirmation process would be cursed"
+    )
+
+    cleaned = strip_context_echo(echoed)
+
+    assert cleaned == (
+        "i never said ugly, just that the confirmation process would be cursed"
+    )
+
+
+def test_strip_context_echo_removes_identity_aware_reply_metadata() -> None:
+    echoed = (
+        "[20:29 message_id:10] @Eva (eva) [user_id:1] reply to "
+        "@Alice (alice) [user_id:2] [message_id:9]: understood"
+    )
+
+    assert strip_context_echo(echoed) == "understood"
+
+
+def test_strip_context_echo_keeps_plain_eva_speaker_label() -> None:
+    content = "eva: i never said ugly"
+
+    assert strip_context_echo(content) == content
 
 
 def test_strip_context_echo_removes_each_transcript_line() -> None:

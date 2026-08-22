@@ -6,43 +6,15 @@ import discord
 from eva.ai import ResponseGenerationResult
 from eva.ai.orchestrator import (
     IMAGE_FAILURE_MESSAGE,
-    SEARCH_FAILURE_MESSAGE,
     ReplyGenerationService,
 )
 from eva.constants import RESPONSE_WATERMARK
 from eva.images import GeneratedImage, GeneratedImageAsset, ImageClientError, ImageResultBundle
-from eva.search import SearchClientError, SearchResultBundle
 
-_WM = "\n\n-# -eva"
+_WM = "\n-# -eva"
 
 
 class StubResponseService:
-    def __init__(self, response: str) -> None:
-        self.response = response
-        self.calls: list[dict[str, object]] = []
-
-    async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
-        self.calls.append(kwargs)
-        return ResponseGenerationResult(self.response)
-
-
-class StubSearchService:
-    def __init__(
-        self,
-        *,
-        result: SearchResultBundle | None = None,
-        error: Exception | None = None,
-    ) -> None:
-        self.result = result
-        self.error = error
-
-    async def search_if_needed(self, **kwargs: object) -> SearchResultBundle | None:
-        if self.error is not None:
-            raise self.error
-        return self.result
-
-
-class StubSearchResponseService:
     def __init__(self, response: str) -> None:
         self.response = response
         self.calls: list[dict[str, object]] = []
@@ -88,15 +60,13 @@ class StubImageService:
         return self.result
 
 
-def test_reply_generation_uses_normal_path_when_search_not_needed() -> None:
+def test_reply_generation_uses_normal_text_path() -> None:
     response_service = StubResponseService("normal")
     tos_service = StubTOSCheckService()
     reply_service = ReplyGenerationService(
         account_mode="assistant",
         response_service=response_service,
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=tos_service,
     )
 
@@ -122,69 +92,11 @@ def test_reply_generation_uses_normal_path_when_search_not_needed() -> None:
     assert tos_service.calls == ["normal"]
 
 
-def test_reply_generation_uses_search_path_when_results_exist() -> None:
-    response_service = StubResponseService("normal")
-    search_response_service = StubSearchResponseService("search")
-    tos_service = StubTOSCheckService()
-    reply_service = ReplyGenerationService(
-        account_mode="assistant",
-        response_service=response_service,
-        image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=SearchResultBundle(query="apple")),
-        search_response_service=search_response_service,
-        tos_check_service=tos_service,
-    )
-
-    reply = asyncio.run(
-        reply_service.generate_reply(
-            channel=cast(discord.abc.Messageable, DummyChannel()),
-            client=cast(discord.Client, DummyClient()),
-            context_messages=[],
-            history_messages=[],
-            user_message="apple stock price today",
-            reply_context=None,
-        )
-    )
-
-    assert reply.content == f"search{_WM}"
-    assert reply.attachments == []
-    assert len(search_response_service.calls) == 1
-    assert response_service.calls == []
-    assert tos_service.calls == ["search"]
-
-
-def test_reply_generation_fails_closed_when_search_errors() -> None:
-    reply_service = ReplyGenerationService(
-        account_mode="assistant",
-        response_service=StubResponseService("normal"),
-        image_service=StubImageService(result=None),
-        search_service=StubSearchService(error=SearchClientError("boom")),
-        search_response_service=StubSearchResponseService("search"),
-        tos_check_service=StubTOSCheckService(),
-    )
-
-    reply = asyncio.run(
-        reply_service.generate_reply(
-            channel=cast(discord.abc.Messageable, DummyChannel()),
-            client=cast(discord.Client, DummyClient()),
-            context_messages=[],
-            history_messages=[],
-            user_message="latest apple stock price",
-            reply_context=None,
-        )
-    )
-
-    assert reply.content == f"{SEARCH_FAILURE_MESSAGE}{_WM}"
-    assert reply.attachments == []
-
-
 def test_reply_generation_blocks_tos_violations() -> None:
     reply_service = ReplyGenerationService(
         account_mode="assistant",
         response_service=StubResponseService("normal"),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(is_violation=True),
     )
 
@@ -205,7 +117,6 @@ def test_reply_generation_blocks_tos_violations() -> None:
 
 def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
     response_service = StubResponseService("normal")
-    search_response_service = StubSearchResponseService("search")
     tos_service = StubTOSCheckService()
 
     reply_service = ReplyGenerationService(
@@ -216,8 +127,6 @@ def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
                 assets=[GeneratedImageAsset(filename="fox.png", data=b"png-bytes")],
             )
         ),
-        search_service=StubSearchService(result=SearchResultBundle(query="apple")),
-        search_response_service=search_response_service,
         tos_check_service=tos_service,
     )
 
@@ -235,7 +144,6 @@ def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
     assert reply.content == f"> fox{_WM}"
     assert reply.attachments == [("fox.png", b"png-bytes")]
     assert response_service.calls == []
-    assert search_response_service.calls == []
     assert tos_service.calls == ["> fox"]
 
 
@@ -248,8 +156,6 @@ def test_reply_generation_formats_image_url_fallback_as_blockquote() -> None:
                 images=[GeneratedImage(url="https://example.com/cookie.png")],
             )
         ),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -276,8 +182,6 @@ def test_reply_generation_fails_closed_when_image_generation_errors() -> None:
     reply_service = ReplyGenerationService(
         response_service=StubResponseService("normal"),
         image_service=StubImageService(error=ImageClientError("boom")),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -307,8 +211,6 @@ def test_reply_generation_skips_image_path_for_reply_trigger() -> None:
     reply_service = ReplyGenerationService(
         response_service=response_service,
         image_service=image_service,
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -336,8 +238,6 @@ def test_reply_generation_extracts_code_blocks_into_attachments() -> None:
         account_mode="assistant",
         response_service=StubResponseService(response),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -364,8 +264,6 @@ def test_reply_generation_deduplicates_model_emitted_watermark() -> None:
         account_mode="assistant",
         response_service=StubResponseService(f"here you go\n\n{RESPONSE_WATERMARK}"),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -393,8 +291,6 @@ def test_reply_generation_strips_context_echo_framing() -> None:
         account_mode="assistant",
         response_service=StubResponseService(echoed),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -418,8 +314,6 @@ def test_reply_generation_deduplicates_watermark_after_split_trigger() -> None:
         account_mode="assistant",
         response_service=StubResponseService(response),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -443,8 +337,6 @@ def test_reply_generation_strips_trailing_split_trigger() -> None:
         account_mode="assistant",
         response_service=StubResponseService("the whole answer\n/// split"),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -471,8 +363,6 @@ def test_reply_generation_image_url_fallback_allows_embeds() -> None:
                 images=[GeneratedImage(url="https://example.com/fox.png")],
             )
         ),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 
@@ -495,8 +385,6 @@ def test_reply_generation_normal_reply_suppresses_embeds() -> None:
         account_mode="assistant",
         response_service=StubResponseService("normal"),
         image_service=StubImageService(result=None),
-        search_service=StubSearchService(result=None),
-        search_response_service=StubSearchResponseService("search"),
         tos_check_service=StubTOSCheckService(),
     )
 

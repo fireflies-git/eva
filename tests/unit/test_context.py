@@ -11,12 +11,20 @@ from eva.discord.context import fetch_channel_context, fetch_reply_context
 
 
 class _FakeHistoryChannel:
-    def __init__(self, messages: list[object]) -> None:
+    def __init__(
+        self,
+        messages: list[object],
+        fetched_messages: dict[int, object] | None = None,
+    ) -> None:
         self._messages = messages
+        self._fetched_messages = fetched_messages or {}
 
     async def history(self, *, limit: int, oldest_first: bool) -> object:
         for message in self._messages[:limit]:
             yield message
+
+    async def fetch_message(self, message_id: int) -> object:
+        return self._fetched_messages[message_id]
 
 
 class _FakeReplyChannel:
@@ -89,6 +97,27 @@ def test_fetch_channel_context_includes_user_and_mentions() -> None:
     assert "@Neo (neo)" in context[0]["content"]
     assert "mentions:" in context[0]["content"]
     assert "@Trinity (trinity)" in context[0]["content"]
+    assert "message_id:10" in context[0]["content"]
+    assert "user_id:1" in context[0]["content"]
+
+
+def test_assistant_mode_only_marks_tracked_shared_account_messages_as_assistant() -> None:
+    owner = _make_author(id=1, name="owner", display_name="Owner")
+    eva_message = _make_message(msg_id=11, content="Eva output", author=owner)
+    owner_message = _make_message(msg_id=10, content="Human output", author=owner)
+    channel = _FakeHistoryChannel([eva_message, owner_message])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+            bot_user_id=1,
+            account_mode="assistant",
+            is_tracked_message=lambda message_id: message_id == 11,
+        )
+    )
+
+    assert [message["role"] for message in context] == ["user", "assistant"]
 
 
 def test_fetch_reply_context_includes_user_metadata() -> None:
@@ -207,6 +236,25 @@ def test_channel_context_shows_generic_reply_when_target_not_in_batch() -> None:
     assert len(context) == 1
     assert "reply" in context[0]["content"]
     assert "reply to @" not in context[0]["content"]
+
+
+def test_channel_context_fetches_reply_author_outside_context_window() -> None:
+    alice = _make_author(id=1, name="alice", display_name="Alice")
+    bob = _make_author(id=2, name="bob", display_name="Bob")
+    referenced = _make_message(msg_id=1, content="older message", author=bob)
+    reply = _make_message(
+        msg_id=10,
+        content="replying to something far back",
+        author=alice,
+        reference=SimpleNamespace(message_id=1),
+    )
+    channel = _FakeHistoryChannel([reply], fetched_messages={1: referenced})
+
+    context = asyncio.run(
+        fetch_channel_context(cast(discord.abc.Messageable, channel), limit=5)
+    )
+
+    assert "reply to @Bob (bob) [user_id:2] [message_id:1]" in context[0]["content"]
 
 
 def test_channel_context_includes_edited_marker() -> None:

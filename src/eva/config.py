@@ -24,8 +24,8 @@ SETTINGS_DEFAULTS = {
     "response_context_messages": DEFAULT_RESPONSE_CONTEXT_MESSAGES,
     "request_timeout_seconds": 30.0,
     "min_loading_seconds": 1.0,
-    "followup_delay_min_seconds": 0.75,
-    "followup_delay_max_seconds": 1.5,
+    "followup_delay_min_seconds": 1.0,
+    "followup_delay_max_seconds": 3.0,
     # Image generation
     "image_api_base_url": "https://ai.6969.pro/v1",
     "image_model_name": "sonar",
@@ -72,7 +72,6 @@ class ConfigError(RuntimeError):
 class Settings:
     discord_token: str
     api_key: str
-    serper_api_key: str | None
     image_api_key: str | None
     api_base_url: str
     account_mode: str
@@ -221,7 +220,6 @@ def load_settings() -> Settings:
         return Settings(
             discord_token=_required_env("DISCORD_TOKEN"),
             api_key=_required_env("API_KEY"),
-            serper_api_key=_optional_secret("SERPER_API_KEY"),
             image_api_key=_optional_secret("IMAGE_API_KEY"),
             api_base_url=_optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"]),
             account_mode=_optional_choice(

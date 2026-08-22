@@ -58,7 +58,7 @@ def format_user_metadata(metadata: UserMetadata) -> str:
     base = f"@{primary}"
     if extras:
         base += " | " + " ".join(extras)
-    return f"{base} ({tag})"
+    return f"{base} ({tag}) [user_id:{user_id}]"
 
 
 def format_mentions_metadata(mentions: Sequence[object]) -> str | None:
@@ -72,7 +72,7 @@ def build_requester_context(message: discord.Message) -> str:
     requester = format_user_metadata(build_user_metadata(message.author))
     mentions = format_mentions_metadata(list(getattr(message, "mentions", [])))
 
-    lines = [f"requester: {requester}"]
+    lines = [f"CURRENT REQUESTER: {requester}"]
     if mentions:
         lines.append(mentions)
     return "\n".join(lines)

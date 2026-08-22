@@ -28,5 +28,12 @@ def build_context_section(
         f"- Server: {server_name}\n"
         f"- Server owner: {owner}\n"
         f"- Channel: #{channel_name}\n"
-        f"- Current time: {current_time}"
+        f"- Current time: {current_time}\n\n"
+        "## Conversation identity\n"
+        "Discord channel messages may contain several different humans even though their "
+        "chat role is `user`. Treat `user_id` as the stable identity; display names and "
+        "usernames are labels that can change or collide. `message_id` identifies a "
+        "specific message, and reply metadata identifies who is being answered. The "
+        "message under `[Current requester]` is the person asking you now. Never transfer "
+        "facts, preferences, actions, or emotions from one user_id to another."
     )

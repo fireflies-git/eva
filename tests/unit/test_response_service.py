@@ -155,7 +155,7 @@ def test_tool_loop_caps_unanswered_tool_calls_on_assistant_message() -> None:
     assert {message["tool_call_id"] for message in tool_messages} == answered_ids
 
 
-def test_response_service_uses_chat_completion_with_local_history() -> None:
+def test_response_service_prefers_canonical_discord_context() -> None:
     client = FakeChatClient()
     service = ResponseService(client=client, model_name="model")
 
@@ -177,7 +177,29 @@ def test_response_service_uses_chat_completion_with_local_history() -> None:
     messages = cast(list[dict[str, str]], payload["messages"])
     assert messages == [
         {"role": "system", "content": "prompt"},
-        {"role": "assistant", "content": "old reply"},
         {"role": "user", "content": "ambient context"},
+        {"role": "user", "content": "new question"},
+    ]
+
+
+def test_response_service_uses_local_history_when_discord_context_is_empty() -> None:
+    client = FakeChatClient()
+    service = ResponseService(client=client, model_name="model")
+
+    asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[{"role": "assistant", "content": "old reply"}],
+            user_message="new question",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    messages = cast(list[dict[str, str]], client.chat_calls[0]["messages"])
+    assert messages == [
+        {"role": "system", "content": "prompt"},
+        {"role": "assistant", "content": "old reply"},
         {"role": "user", "content": "new question"},
     ]

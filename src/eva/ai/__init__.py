@@ -9,7 +9,6 @@ from eva.ai.orchestrator import ReplyGenerationService
 from eva.ai.respond import (
     ResponseGenerationResult,
     ResponseService,
-    SearchResponseService,
     TOSCheckService,
 )
 from eva.ai.splitting import ResponseSplitService
@@ -24,7 +23,6 @@ __all__ = [
     "ResponseGenerationResult",
     "ResponseService",
     "ResponseSplitService",
-    "SearchResponseService",
     "SummarizationEmptyError",
     "SummarizationService",
     "TOSCheckService",

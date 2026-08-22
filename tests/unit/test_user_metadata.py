@@ -42,7 +42,7 @@ def test_user_metadata_ignores_unavailable_pronoun_attributes() -> None:
 
     metadata = build_user_metadata(user)
 
-    assert format_user_metadata(metadata) == "@Sarah (sarah_7)"
+    assert format_user_metadata(metadata) == "@Sarah (sarah_7) [user_id:999]"
 
 
 def test_user_metadata_does_not_infer_pronouns_from_names() -> None:
@@ -60,6 +60,6 @@ def test_build_requester_context_includes_mentions() -> None:
 
     context = build_requester_context(cast(discord.Message, message))
 
-    assert "requester:" in context
+    assert "CURRENT REQUESTER:" in context
     assert "mentions:" in context
     assert format_user_metadata(build_user_metadata(mention)) in context

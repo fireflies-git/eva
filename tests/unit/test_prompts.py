@@ -4,6 +4,7 @@ from typing import cast
 import discord
 
 from eva.prompts import build_system_prompt
+from eva.prompts.formatting import build_formatting_section
 
 
 def test_build_system_prompt_changes_identity_by_account_mode() -> None:
@@ -128,3 +129,34 @@ def test_build_system_prompt_enforces_brevity_default() -> None:
     )
 
     assert "Short is the default" in prompt
+
+
+def test_build_system_prompt_uses_reserved_emotion_and_ascii_voice() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=False,
+        autonomous_terminal_enabled=False,
+    )
+
+    assert "understated Rei-inspired temperament" in prompt
+    assert "Approved emoticons" in prompt
+    assert "`TwT`" in prompt
+    assert "Never use Unicode emoji, em dashes" in prompt
+    assert "force jokes" in prompt
+    assert "Use `?` for every direct question" in prompt
+
+
+def test_formatting_prompt_forbids_transcript_framing() -> None:
+    prompt = build_formatting_section()
+
+    assert "message_id" in prompt
+    assert "user_id" in prompt
+    assert "eva:" in prompt

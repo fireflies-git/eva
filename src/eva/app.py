@@ -12,7 +12,6 @@ from eva.ai import (
     ReplyGenerationService,
     ResponseService,
     ResponseSplitService,
-    SearchResponseService,
     SummarizationService,
     TOSCheckService,
 )
@@ -22,7 +21,6 @@ from eva.discord.commands import ALLOWED_ADMIN_IDS
 from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
 from eva.reminders import ReminderDetector, ReminderRunner, ReminderScheduler
-from eva.search import SearchDetector, SearchQueryBuilder, SearchService, SerperClient
 from eva.state import (
     ChannelHistoryStore,
     RateLimiter,
@@ -104,30 +102,6 @@ class EvaApp:
                 incognito=settings.image_incognito,
             )
 
-        self._search_client: SerperClient | None = None
-        self._search_service: SearchService | None = None
-        self._search_response_service: SearchResponseService | None = None
-        if settings.serper_api_key:
-            self._search_client = SerperClient(
-                api_key=settings.serper_api_key,
-                timeout_seconds=settings.request_timeout_seconds,
-            )
-            self._search_service = SearchService(
-                client=self._search_client,
-                detector=SearchDetector(
-                    client=self._ai_client,
-                    model_name=settings.model_name,
-                ),
-                query_builder=SearchQueryBuilder(
-                    client=self._ai_client,
-                    model_name=settings.model_name,
-                ),
-            )
-            self._search_response_service = SearchResponseService(
-                client=self._ai_client,
-                model_name=settings.model_name,
-                tool_services=self._tool_services,
-            )
         self._tos_check_service = TOSCheckService(
             client=self._ai_client,
             model_name=settings.tos_model_name,
@@ -165,8 +139,6 @@ class EvaApp:
             account_mode=settings.account_mode,
             response_service=self._response_service,
             image_service=self._image_service,
-            search_service=self._search_service,
-            search_response_service=self._search_response_service,
             reminder_scheduler=self._reminder_scheduler,
             tos_check_service=self._tos_check_service,
             terminal_enabled=settings.terminal_enabled,
@@ -212,8 +184,6 @@ class EvaApp:
             await self._ai_client.start()
             if self._image_client is not None:
                 await self._image_client.start()
-            if self._search_client is not None:
-                await self._search_client.start()
             if self._playwright_service is not None:
                 await self._playwright_service.start()
             if self._context7_service is not None:
@@ -229,8 +199,6 @@ class EvaApp:
                 await self._context7_service.close()
             if self._playwright_service is not None:
                 await self._playwright_service.close()
-            if self._search_client is not None:
-                await self._search_client.close()
             if self._image_client is not None:
                 await self._image_client.close()
             await self._ai_client.close()

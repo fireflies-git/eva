@@ -22,21 +22,37 @@ _THINK_EMPTY_RE = re.compile(
 _SEPARATOR_LINE_RE = re.compile(r"^\s*---+\s*$", re.MULTILINE)
 
 # Channel-context serialization the model sometimes echoes back as its own
-# reply: "[HH:MM] @Name (tag) reply to @X: ..." — the "(tag)" group is always
-# present in the serializer output, so requiring it here keeps genuine
-# "@name:" mentions intact.
+# reply. Keep the required ``@Name (tag)`` shape narrow enough that ordinary
+# mentions and speaker labels are left alone.
 _TRANSCRIPT_LINE_RE = re.compile(
-    r"^\s*(?:\[\d{1,2}:\d{2}\]\s+)?"  # optional [HH:MM] timestamp
+    r"^\s*(?:eva\s*:\s*)?"  # optional model-added "eva:" speaker label
+    r"(?:\[\d{1,2}:\d{2}(?:\s+message_id:\d+)?\]\s+)?"
     r"@[^:\s()]+"  # @name
     r"(?:\s+\|\s+[^()\n|]+)*"  # optional " | sr:x" style segments
     r"\s*\([^()\n]*\)"  # (tag) — always present in serialized context
-    r"[^:\n]*"  # optional extras (reply to @X, edited, ...)
+    r"(?:[^:\n]|:(?!\s))*"  # IDs and optional reply/attachment metadata
     r":\s*",
+    re.IGNORECASE,
 )
 
 # Trailing "(mentions: @A (a); @B (b))" annotation copied from context lines.
 _TRANSCRIPT_MENTIONS_TRAILER_RE = re.compile(
     r"\s*\(mentions?:\s+(?:[^()]|\([^()]*\))*\)\s*$",
+)
+
+# Keep this narrower than "all non-ASCII" so accented names and ASCII emoticons remain intact.
+_EMOJI_RE = re.compile(
+    "["
+    "\\U0001F1E6-\\U0001F1FF"
+    "\\U0001F300-\\U0001FAFF"
+    "\\U00002600-\\U000027BF"
+    "\\U00002300-\\U000023FF"
+    "]"
+)
+_QUESTION_START_RE = re.compile(
+    r"^(?:who|what|when|where|why|how|is|are|am|was|were|do|does|did|can|could|"
+    r"will|would|should|have|has|had|may|might|shall)\b",
+    re.IGNORECASE,
 )
 
 
@@ -56,6 +72,8 @@ def sanitize_response(content: str) -> str:
     cleaned = _THINK_TAG_RE.sub("", content)
     cleaned = _THINK_EMPTY_RE.sub("", cleaned)
     cleaned = _SEPARATOR_LINE_RE.sub("", cleaned)
+    cleaned = _normalize_plain_punctuation(cleaned)
+    cleaned = _ensure_question_marks(cleaned)
 
     # Collapse runs of 3+ blank lines to 2
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
@@ -63,14 +81,41 @@ def sanitize_response(content: str) -> str:
     return cleaned.strip()
 
 
+def _normalize_plain_punctuation(content: str) -> str:
+    """Remove decorative Unicode output while preserving fenced code blocks."""
+    parts = re.split(r"(```.*?```)", content, flags=re.DOTALL)
+    for index in range(0, len(parts), 2):
+        parts[index] = parts[index].replace("—", ",").replace("–", "-")
+        parts[index] = _EMOJI_RE.sub("", parts[index])
+    return "".join(parts)
+
+
+def _ensure_question_marks(content: str) -> str:
+    """Add a question mark to obvious direct questions missing terminal punctuation."""
+    parts = re.split(r"(```.*?```)", content, flags=re.DOTALL)
+    for index in range(0, len(parts), 2):
+        lines = parts[index].splitlines(keepends=True)
+        for line_index, line in enumerate(lines):
+            newline = "\n" if line.endswith("\n") else ""
+            text = line[:-1] if newline else line
+            candidate = re.sub(r"^(?:>\s*|[-*+]\s+|\d+[.)]\s+)+", "", text.strip())
+            candidate = candidate.lstrip("`*_~ ")
+            if not _QUESTION_START_RE.match(candidate):
+                continue
+            if not candidate or candidate.endswith((".", "!", "?", ":", ";")):
+                continue
+            lines[line_index] = f"{text}?{newline}"
+        parts[index] = "".join(lines)
+    return "".join(parts)
+
+
 def strip_context_echo(content: str) -> str:
     """Strip echoed channel-context transcript framing from model output.
 
-    The model sees serialized context lines like
-    ``[18:51] @eva (tag) reply to @user: ... (mentions: ...)`` and sometimes
-    regurgitates the framing as its own message. The ``(tag)`` group is always
-    present in the serializer, so requiring it here keeps genuine ``@name:``
-    mentions intact.
+    The model sees identity-aware context lines such as
+    ``[18:51 message_id:1] @eva (tag) [user_id:2]: ...`` and sometimes
+    regurgitates that framing, occasionally prefixed with ``eva:``. Requiring
+    the serialized ``@name (tag)`` shape keeps genuine mentions intact.
     """
     if not content:
         return content

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import discord
 
 from eva.ai.sanitize import strip_response_watermark
 from eva.ai.schemas import ChatMessage
 from eva.discord.user_metadata import (
+    UserMetadata,
     build_user_metadata,
     format_mentions_metadata,
     format_user_metadata,
@@ -22,6 +24,8 @@ async def fetch_channel_context(
     limit: int,
     exclude_message_id: int | None = None,
     bot_user_id: int | None = None,
+    account_mode: str = "standalone",
+    is_tracked_message: Callable[[int], bool] | None = None,
 ) -> list[ChatMessage]:
     if not hasattr(channel, "history"):
         return []
@@ -38,16 +42,21 @@ async def fetch_channel_context(
         logger.exception("Failed fetching channel context")
         return []
 
-    id_to_name = _build_reply_lookup(raw_messages)
+    id_to_author = await _build_reply_lookup(channel, raw_messages)
 
     output: list[ChatMessage] = []
     for msg in reversed(raw_messages):
-        role = _context_message_role(msg, bot_user_id)
+        role = _context_message_role(
+            msg,
+            bot_user_id,
+            account_mode=account_mode,
+            is_tracked_message=is_tracked_message,
+        )
         if role == "assistant" and not strip_response_watermark(msg.content):
             continue
         serialized = _serialize_context_message(
             msg,
-            id_to_name,
+            id_to_author,
             strip_watermark=role == "assistant",
         )
         output.append({"role": role, "content": serialized})
@@ -55,22 +64,47 @@ async def fetch_channel_context(
     return output
 
 
-def _build_reply_lookup(messages: list[discord.Message]) -> dict[int, str]:
-    lookup: dict[int, str] = {}
+async def _build_reply_lookup(
+    channel: discord.abc.Messageable,
+    messages: list[discord.Message],
+) -> dict[int, UserMetadata]:
+    lookup: dict[int, UserMetadata] = {}
     for msg in messages:
-        lookup[msg.id] = build_user_metadata(msg.author).display_name
+        lookup[msg.id] = build_user_metadata(msg.author)
+
+    missing_ids = {
+        ref.message_id
+        for msg in messages
+        if (ref := getattr(msg, "reference", None)) is not None
+        and getattr(ref, "message_id", None) is not None
+        and ref.message_id not in lookup
+    }
+    fetch_message = getattr(channel, "fetch_message", None)
+    if fetch_message is None or not missing_ids:
+        return lookup
+
+    results = await asyncio.gather(
+        *(fetch_message(message_id) for message_id in missing_ids),
+        return_exceptions=True,
+    )
+    for message_id, result in zip(missing_ids, results, strict=True):
+        if isinstance(result, BaseException) or result is None:
+            continue
+        author = getattr(result, "author", None)
+        if author is not None:
+            lookup[message_id] = build_user_metadata(author)
     return lookup
 
 
 def _serialize_context_message(
     msg: discord.Message,
-    id_to_name: Mapping[int, str],
+    id_to_author: Mapping[int, UserMetadata],
     *,
     strip_watermark: bool = False,
 ) -> str:
     timestamp = msg.created_at.strftime("%H:%M")
     author = format_user_metadata(build_user_metadata(msg.author))
-    extras = _format_message_extras(msg, id_to_name)
+    extras = _format_message_extras(msg, id_to_author)
     mentions = format_mentions_metadata(list(getattr(msg, "mentions", [])))
 
     content = msg.content
@@ -79,7 +113,8 @@ def _serialize_context_message(
         # learn to regurgitate it.
         content = strip_response_watermark(content)
 
-    parts = [f"[{timestamp}] {author}"]
+    message_id = getattr(msg, "id", "unknown")
+    parts = [f"[{timestamp} message_id:{message_id}] {author}"]
     if extras:
         parts.append(f" {extras}")
     parts.append(f": {content}")
@@ -91,11 +126,11 @@ def _serialize_context_message(
 
 def _format_message_extras(
     msg: discord.Message,
-    id_to_name: Mapping[int, str],
+    id_to_author: Mapping[int, UserMetadata],
 ) -> str | None:
     pieces: list[str] = []
 
-    reply_info = _format_reply_indicator(msg, id_to_name)
+    reply_info = _format_reply_indicator(msg, id_to_author)
     if reply_info:
         pieces.append(reply_info)
 
@@ -115,15 +150,18 @@ def _format_message_extras(
 
 def _format_reply_indicator(
     msg: discord.Message,
-    id_to_name: Mapping[int, str],
+    id_to_author: Mapping[int, UserMetadata],
 ) -> str | None:
     ref = getattr(msg, "reference", None)
     if not ref or not getattr(ref, "message_id", None):
         return None
-    target_name = id_to_name.get(ref.message_id)
-    if target_name:
-        return f"reply to @{target_name}"
-    return "reply"
+    target_author = id_to_author.get(ref.message_id)
+    if target_author is not None:
+        return (
+            f"reply to {format_user_metadata(target_author)} "
+            f"[message_id:{ref.message_id}]"
+        )
+    return f"reply to message_id:{ref.message_id}"
 
 
 def _format_attachments(msg: discord.Message) -> str | None:
@@ -170,7 +208,7 @@ async def fetch_reply_context(message: discord.Message) -> str | None:
     extras = _format_reply_context_extras(ref_msg)
     mentions = format_mentions_metadata(list(getattr(ref_msg, "mentions", [])))
 
-    parts = [f"{author}: {ref_msg.content}"]
+    parts = [f"[message_id:{ref_msg.id}] {author}: {ref_msg.content}"]
     if extras:
         parts.append(f" | {extras}")
     if mentions:
@@ -196,7 +234,25 @@ def _format_reply_context_extras(msg: discord.Message) -> str | None:
     return " | ".join(pieces) if pieces else None
 
 
-def _context_message_role(msg: discord.Message, bot_user_id: int | None) -> str:
-    if bot_user_id is not None and getattr(msg.author, "id", None) == bot_user_id:
+def _context_message_role(
+    msg: discord.Message,
+    bot_user_id: int | None,
+    *,
+    account_mode: str,
+    is_tracked_message: Callable[[int], bool] | None,
+) -> str:
+    message_id = getattr(msg, "id", None)
+    if (
+        account_mode == "assistant"
+        and isinstance(message_id, int)
+        and is_tracked_message is not None
+        and is_tracked_message(message_id)
+    ):
+        return "assistant"
+    if (
+        account_mode != "assistant"
+        and bot_user_id is not None
+        and getattr(msg.author, "id", None) == bot_user_id
+    ):
         return "assistant"
     return "user"

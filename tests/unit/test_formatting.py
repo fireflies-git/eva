@@ -41,8 +41,8 @@ def test_build_response_chunks_keep_code_block_together_when_it_fits() -> None:
 
     chunks = build_response_chunks("eva test", reply, message_limit=80)
 
-    assert len(chunks) == 1
-    assert "```py\nprint('hi')\n```" in chunks[0]
+    assert len(chunks) == 3
+    assert chunks[1].endswith("```py\nprint('hi')\n```")
 
 
 def test_build_plain_response_chunks_respect_discord_limit() -> None:
@@ -64,6 +64,29 @@ def test_build_response_chunks_honor_split_trigger() -> None:
 def test_split_on_text_triggers_never_returns_empty() -> None:
     assert split_on_text_triggers("/// split") == [EMPTY_RESPONSE]
     assert split_on_text_triggers("/// split\n/// split") == [EMPTY_RESPONSE]
+
+
+def test_build_plain_response_chunks_send_one_sentence_per_message() -> None:
+    reply = "First sentence. Is this the second sentence? Yes, it is.\n-# -eva"
+
+    chunks = build_plain_response_chunks(reply)
+
+    assert chunks == [
+        "First sentence",
+        "Is this the second sentence?",
+        "Yes, it is\n-# -eva",
+    ]
+
+
+def test_build_plain_response_chunks_keep_period_for_single_message() -> None:
+    assert build_plain_response_chunks("One sentence.") == ["One sentence."]
+
+
+def test_build_plain_response_chunks_hard_splits_single_sentence_at_limit() -> None:
+    chunks = build_plain_response_chunks("x" * 2001 + ".")
+
+    assert len(chunks) == 2
+    assert all(len(chunk) <= DISCORD_MESSAGE_LIMIT for chunk in chunks)
 
 
 def test_build_loading_text_stays_under_limit_for_long_prompts() -> None:

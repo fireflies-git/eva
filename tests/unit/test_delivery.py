@@ -4,6 +4,7 @@ import asyncio
 from typing import cast
 
 import discord
+import pytest
 
 from eva.discord.delivery import deliver_owner_response, deliver_reply_response
 
@@ -11,6 +12,14 @@ from eva.discord.delivery import deliver_owner_response, deliver_reply_response
 class FakeSentMessage:
     def __init__(self, message_id: int) -> None:
         self.id = message_id
+
+
+class FakeTypingContext:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        return None
 
 
 class FakeChannel:
@@ -25,6 +34,11 @@ class FakeChannel:
         self._send_calls = 0
         self._next_generated_id = 1000
         self.sent_suppress_flags: list[bool] = []
+        self.typing_calls = 0
+
+    def typing(self) -> FakeTypingContext:
+        self.typing_calls += 1
+        return FakeTypingContext()
 
     async def send(self, *, content: str, suppress_embeds: bool) -> FakeSentMessage:
         self._send_calls += 1
@@ -118,6 +132,29 @@ def test_deliver_reply_response_tracks_primary_and_continuations() -> None:
     assert result.primary_delivered is True
     assert result.tracked_message_ids == [20, 21, 22]
     assert result.had_continuation_failures is False
+
+
+def test_deliver_reply_response_delays_continuations_by_length(monkeypatch) -> None:
+    channel = FakeChannel(send_ids=[21])
+    message = FakeReplyMessage(channel=channel, first_reply_id=20)
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("eva.discord.delivery.asyncio.sleep", fake_sleep)
+
+    result = asyncio.run(
+        deliver_reply_response(
+            message=cast(discord.Message, message),
+            reply_content="First. Second.",
+            followup_delay_seconds=lambda content: float(len(content)),
+        )
+    )
+
+    assert result.primary_delivered is True
+    assert sleeps == [pytest.approx(len("Second"))]
+    assert channel.typing_calls == 1
 
 
 def test_deliver_reply_response_does_not_track_if_reply_fails() -> None:

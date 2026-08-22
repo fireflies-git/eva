@@ -66,7 +66,6 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
     settings = Settings(
         discord_token="token",
         api_key="key",
-        serper_api_key=None,
         image_api_key=None,
         api_base_url="https://example.com/v1",
         account_mode=account_mode,
@@ -101,8 +100,6 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
     reply_generation_service = ReplyGenerationService(
         account_mode=settings.account_mode,
         response_service=DummyResponseService(),
-        search_service=None,
-        search_response_service=None,
         tos_check_service=DummyTOSCheckService(),
     )
     response_split_service = ResponseSplitService(
@@ -127,13 +124,13 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
 
 def test_calculate_followup_delay_scales_with_length(monkeypatch, tmp_path) -> None:
     handler = _build_handler(tmp_path)
-    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 0.0)
+    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 100.0)
 
     short_delay = handler._calculate_followup_delay_seconds("short")
-    long_delay = handler._calculate_followup_delay_seconds("x" * 1200)
+    long_delay = handler._calculate_followup_delay_seconds("word " * 100)
 
-    assert short_delay == pytest.approx(0.75 + (0.75 * (5 / 1200)))
-    assert long_delay == pytest.approx(1.5)
+    assert short_delay == pytest.approx(0.6)
+    assert long_delay == pytest.approx(60.0)
 
 
 def test_send_followup_messages_waits_and_returns_sent_ids(monkeypatch, tmp_path) -> None:
@@ -141,25 +138,26 @@ def test_send_followup_messages_waits_and_returns_sent_ids(monkeypatch, tmp_path
     channel = DummyChannel()
     sleeps: list[float] = []
 
-    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 0.0)
+    monkeypatch.setattr("eva.discord.handlers.random.uniform", lambda low, high: 100.0)
 
     async def fake_sleep(seconds: float) -> None:
         sleeps.append(seconds)
 
     monkeypatch.setattr("eva.discord.handlers.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("eva.discord.delivery.asyncio.sleep", fake_sleep)
 
     sent_ids, had_failures = asyncio.run(
         handler._send_followup_messages(
             cast(discord.abc.Messageable, channel),
-            ["short", "x" * 1200],
+            ["short", "word " * 100],
         )
     )
 
     assert sleeps == [
-        pytest.approx(0.75 + (0.75 * (5 / 1200))),
-        pytest.approx(1.5),
+        pytest.approx(0.6),
+        pytest.approx(60.0),
     ]
-    assert channel.sent == [("short", True), ("x" * 1200, True)]
+    assert channel.sent == [("short", True), ("word " * 100, True)]
     assert sent_ids == [101, 102]
     assert had_failures is False
 
@@ -305,7 +303,6 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
     settings = Settings(
         discord_token="token",
         api_key="key",
-        serper_api_key=None,
         image_api_key=None,
         api_base_url="https://example.com/v1",
         account_mode="assistant",
@@ -431,7 +428,6 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
     settings = Settings(
         discord_token="token",
         api_key="key",
-        serper_api_key=None,
         image_api_key=None,
         api_base_url="https://example.com/v1",
         account_mode="assistant",

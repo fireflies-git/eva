@@ -363,6 +363,7 @@ def test_planner_exception_fails_open_to_normal_reply(monkeypatch, tmp_path) -> 
         limit: int,
         exclude_message_id: int | None = None,
         bot_user_id: int | None = None,
+        **kwargs: object,
     ) -> list[dict[str, str]]:
         return []
 
@@ -505,6 +506,7 @@ def test_unrelated_y_without_pending_falls_through_normally(monkeypatch, tmp_pat
         limit: int,
         exclude_message_id: int | None = None,
         bot_user_id: int | None = None,
+        **kwargs: object,
     ) -> list[dict[str, str]]:
         return []
 

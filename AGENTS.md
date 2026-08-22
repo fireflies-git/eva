@@ -3,7 +3,7 @@
 This file is the repo-specific operating guide for future code generation and maintenance in Eva.
 
 The goal is not generic Python cleanliness. The goal is to keep this codebase easy to extend without
-breaking trigger behavior, AI routing, search behavior, typing, or prompt composition.
+breaking trigger behavior, AI routing, typing, or prompt composition.
 
 ## Core Quality Bar
 
@@ -157,7 +157,7 @@ Good:
 
 ```python
 MAX_IMAGE_URLS = 4
-MAX_SEARCH_RESULTS = 5
+MAX_IMAGE_URLS = 4
 ```
 
 Bad:
@@ -253,9 +253,7 @@ The repo is intentionally split by responsibility:
   - `formatting.py`: Discord output chunking / loading text
   - `code_attachments.py`: extract fenced code blocks into Discord file attachments
 - `src/eva/ai/*`
-  AI transport, orchestration, response shaping, moderation/search decision parsing.
-- `src/eva/search/*`
-  Search detection, query rewriting, search execution, and result normalization.
+  AI transport, orchestration, response shaping, moderation, and tool-call handling.
 - `src/eva/images/*`
   Image-generation detection, image API transport, response validation, and asset handling.
 - `src/eva/prompts/*`
@@ -289,20 +287,14 @@ Keep file roles sharp. Avoid “convenience” code that blurs module boundaries
   `src/eva/discord/code_attachments.py`
 - Top-level Discord flow orchestration only:
   `src/eva/discord/handlers.py`
-- Prompt wording, tone, security rules, search-response format:
+- Prompt wording, tone, and security rules:
   `src/eva/prompts/*`
 - Capability and limitation prompt text:
   `src/eva/prompts/capabilities.py`
-- Search-vs-normal routing and moderation sequencing:
+- AI routing and moderation sequencing:
   `src/eva/ai/orchestrator.py`
 - Model payload construction and output shaping:
   `src/eva/ai/respond.py`
-- Search execution and result fetching:
-  `src/eva/search/service.py`
-- Search query rewriting:
-  `src/eva/search/query_builder.py`
-- Search detection, search rewrite, and search API handling:
-  `src/eva/search/*`
 - Image detection, image API validation, and image asset download handling:
   `src/eva/images/*`
 
@@ -365,7 +357,6 @@ Move detailed logic out when it belongs elsewhere:
 
 Good examples:
 - token caps
-- search context window sizes
 - default history/context counts
 - Discord message limits
 - loading messages
@@ -437,7 +428,7 @@ If a change only affects how we send/edit/reply, keep it in `delivery.py`.
 
 ### Trigger policy lives in `triggers.py`
 
-Do not spread trigger rules across prompts, app wiring, or search logic.
+Do not spread trigger rules across prompts, app wiring, or AI routing logic.
 
 ### Preserve the trigger order
 
@@ -566,7 +557,6 @@ Do not concatenate ad hoc prompt fragments deep inside runtime code.
 - formatting rules -> `src/eva/prompts/formatting.py`
 - runtime context -> `src/eva/prompts/context.py`
 - security/jailbreak rules -> `src/eva/prompts/security.py`
-- search answer formatting -> `src/eva/prompts/search.py`
 - image detection and image prompt helpers -> `src/eva/prompts/image.py`
 
 Do not mix these concerns together unless the behavior is intentionally coupled.
@@ -590,11 +580,11 @@ Keep these separate:
 - image-generation prompt construction for referential follow-ups
 - Python logic deciding whether reply context is required
 
-## AI, Search, and Image Rules
+## AI and Image Rules
 
 ### Keep transport clients dumb
 
-`OpenAICompatibleClient` and `SerperClient` should mostly do:
+`OpenAICompatibleClient` should mostly do:
 - HTTP
 - response validation
 - normalization
@@ -610,7 +600,6 @@ The same applies to `src/eva/images/client.py`:
 ### Keep orchestration explicit
 
 `src/eva/ai/orchestrator.py` owns:
-- search vs normal reply routing
 - moderation sequencing
 - fail-open vs fail-closed behavior at the orchestration level
 - final image reply text shaping for Discord
@@ -633,7 +622,6 @@ Use `src/eva/ai/parsing.py` and preserve the `bool | None` contract for ambiguou
 ### Current fallback policy matters
 
 Today:
-- search failures fail closed to a warning message
 - moderation model failures fail open by returning `False`
 - first-person underage claims fail closed via a deterministic local check
   (`contains_underage_claim()` in `src/eva/ai/respond.py`) that runs before the AI
@@ -669,15 +657,9 @@ back into model-facing state.
 Reminder confirmations returned by the orchestrator go through the same TOS check,
 sanitize, and single-watermark tail as normal replies. Keep it that way.
 
-### Search remains a separate mode
-
-Search-grounded answer rules belong in the search prompt and search services.
-
-Do not blend search-specific formatting policy into the general persona prompt.
-
 ### Image generation is its own mode with real provider quirks
 
-Image generation should remain separate from both normal chat and search.
+Image generation should remain separate from normal chat.
 
 Keep these responsibilities distinct:
 - `src/eva/images/detector.py`
@@ -781,7 +763,7 @@ Add tests whenever you change:
 - whitelist/admin behavior
 - async/sync contracts
 - constructor signatures
-- search/mode routing
+- AI mode routing
 - image routing or image response validation
 - moderation behavior
 - typed message construction
@@ -827,11 +809,9 @@ Edit these carefully and verify behavior after changes:
 - `src/eva/prompts/builder.py`
   Prompt section ordering matters.
 - `src/eva/ai/orchestrator.py`
-  Search-vs-normal routing and moderation sequencing live here.
+  AI routing and moderation sequencing live here.
 - `src/eva/ai/respond.py`
   Prompt payload shape and token budgets live here.
-- `src/eva/search/detector.py`
-  Small changes affect cost, latency, and whether Eva searches at all.
 - `src/eva/images/client.py`
   Response validation here determines whether weird upstream `/images` payloads are treated as success or failure.
 - `src/eva/images/service.py`
@@ -846,7 +826,7 @@ Edit these carefully and verify behavior after changes:
 - re-implementing whitelist parsing in `handlers.py` instead of `commands.py`
 - mixing Discord read-side context fetches with send/edit/reply logic in the same helper
 - mixing authorization decisions with prompt text
-- scattering magic numbers across responder/search modules
+- scattering magic numbers across responder/image modules
 - using concrete classes where a protocol is the real dependency
 - passing `list[dict[str, str]]` where `ChatMessage` sequences are expected
 - parsing model decisions loosely
@@ -867,7 +847,7 @@ Edit these carefully and verify behavior after changes:
 - service boundaries use protocols where appropriate
 - read-only collections use `Sequence[...]`
 - `ChatMessage` lists are typed explicitly where needed
-- trigger/whitelist/search changes have targeted unit tests
+- trigger/whitelist changes have targeted unit tests
 - image changes have targeted client/service/orchestrator tests
 - `uv run lint` passes
 - `uv run pytest -q` passes

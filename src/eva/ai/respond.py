@@ -14,13 +14,7 @@ from eva.ai.client import (
 )
 from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.schemas import ChatMessage, ToolCall
-from eva.constants import (
-    MAX_SEARCH_REPLY_CONTEXT_MESSAGES,
-    MAX_SEARCH_RESULTS,
-    REPLY_MAX_TOKENS,
-    SEARCH_REPLY_MAX_TOKENS,
-)
-from eva.search.schemas import SearchResultBundle
+from eva.constants import REPLY_MAX_TOKENS
 from eva.tools import ToolService
 
 logger = logging.getLogger(__name__)
@@ -55,7 +49,7 @@ def _build_user_message(
 ) -> str:
     sections: list[str] = []
     if requester_context:
-        sections.append(f"[Requester metadata]\n{requester_context}")
+        sections.append(f"[Current requester]\n{requester_context}")
     if reply_context:
         sections.append(f'[Replying to message: "{reply_context}"]')
     sections.append(user_message)
@@ -114,113 +108,6 @@ class ResponseService:
             max_tokens=REPLY_MAX_TOKENS,
         )
         return ResponseGenerationResult(content=content)
-
-
-class SearchResponseService:
-    def __init__(
-        self,
-        *,
-        client: ChatCompletionClient,
-        model_name: str,
-        tool_services: Sequence[ToolService] = (),
-    ) -> None:
-        self._client = client
-        self._model_name = model_name
-        self._tool_services = list(tool_services)
-
-    async def generate_reply(
-        self,
-        *,
-        system_prompt: str,
-        search_results: SearchResultBundle,
-        recent_context: Sequence[ChatMessage],
-        user_message: str,
-        reply_context: str | None,
-        requester_context: str | None,
-    ) -> ResponseGenerationResult:
-        search_input = self._build_search_input(
-            search_results=search_results,
-            recent_context=recent_context,
-            user_message=user_message,
-            reply_context=reply_context,
-            requester_context=requester_context,
-        )
-        response_messages: list[ChatMessage] = [{"role": "user", "content": search_input}]
-        tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
-        tool_messages.extend(response_messages)
-
-        tool_reply = await _generate_reply_with_tools(
-            client=self._client,
-            model_name=self._model_name,
-            messages=tool_messages,
-            tool_services=self._tool_services,
-            temperature=0.2,
-            max_tokens=SEARCH_REPLY_MAX_TOKENS,
-        )
-        if tool_reply is not None:
-            return ResponseGenerationResult(content=tool_reply)
-
-        messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
-        messages.extend(response_messages)
-        content = await self._client.chat_completion(
-            messages=messages,
-            model=self._model_name,
-            temperature=0.2,
-            max_tokens=SEARCH_REPLY_MAX_TOKENS,
-        )
-        return ResponseGenerationResult(content=content)
-
-    def _build_search_input(
-        self,
-        *,
-        search_results: SearchResultBundle,
-        recent_context: Sequence[ChatMessage],
-        user_message: str,
-        reply_context: str | None,
-        requester_context: str | None,
-    ) -> str:
-        lines = [
-            f"User request: {_build_user_message(user_message, reply_context, requester_context)}",
-        ]
-
-        relevant_context = recent_context[-MAX_SEARCH_REPLY_CONTEXT_MESSAGES:]
-        if relevant_context:
-            lines.append("")
-            lines.append("Recent channel context:")
-            lines.extend(f"- {message['content']}" for message in relevant_context)
-
-        lines.append("")
-        lines.append(f"Google query: {search_results.query}")
-
-        if search_results.answer_box is not None:
-            lines.append("")
-            lines.append("Answer box:")
-            lines.append(f"- Title: {search_results.answer_box.title}")
-            lines.append(f"- Answer: {search_results.answer_box.answer}")
-            if search_results.answer_box.link:
-                lines.append(f"- Link: {search_results.answer_box.link}")
-
-        if search_results.knowledge_graph is not None:
-            lines.append("")
-            lines.append("Knowledge graph:")
-            lines.append(f"- Title: {search_results.knowledge_graph.title}")
-            lines.append(f"- Description: {search_results.knowledge_graph.description}")
-            if search_results.knowledge_graph.source:
-                lines.append(f"- Source: {search_results.knowledge_graph.source}")
-            if search_results.knowledge_graph.source_link:
-                lines.append(f"- Source link: {search_results.knowledge_graph.source_link}")
-
-        if search_results.organic_results:
-            lines.append("")
-            lines.append("Organic results:")
-            for result in search_results.organic_results[:MAX_SEARCH_RESULTS]:
-                lines.append(f"- [{result.position}] {result.title}")
-                lines.append(f"  Link: {result.link}")
-                lines.append(f"  Snippet: {result.snippet}")
-                if result.date:
-                    lines.append(f"  Date: {result.date}")
-
-        return "\n".join(lines)
 
 
 def contains_underage_claim(text: str) -> bool:
@@ -358,14 +245,9 @@ def _build_conversation_messages(
     reply_context: str | None,
     requester_context: str | None,
 ) -> list[ChatMessage]:
-    messages: list[ChatMessage] = []
-    messages.extend(history_messages)
-
-    # Deduplicate context against history so the model doesn't see exchanges twice
-    seen_content = {msg.get("content", "") for msg in history_messages}
-    for ctx_msg in context_messages:
-        if ctx_msg.get("content", "") not in seen_content:
-            messages.append(ctx_msg)
+    # Discord context is the canonical chronological transcript. Local history is
+    # only a fallback for channels where Discord history could not be fetched.
+    messages: list[ChatMessage] = list(context_messages or history_messages)
 
     messages.append(
         {
