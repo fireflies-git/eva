@@ -31,9 +31,10 @@ def build_capabilities_section(
             "actually help: pinging or curling servers, reading files/logs/configs/git state, "
             "running a quick one-liner instead of guessing, installing a package if a task calls "
             "for it. Don't ask permission, just call the tool. Chain another if the first didn't "
-            "answer it. When you reply: briefly say what you ran and why — just enough context "
-            "so leah knows what happened — then give the result. Mention the exact command only "
-            "if leah asked for it."
+            "answer it. Tool calls are internal: never print XML, DSML, tool-call tags, or raw "
+            "function arguments in a user-facing reply. When you reply: briefly say what you "
+            "ran and why — just enough context so leah knows what happened — then give the result. "
+            "Mention the exact command only if leah asked for it."
         )
 
     if playwright_enabled:

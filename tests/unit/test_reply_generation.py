@@ -115,6 +115,38 @@ def test_reply_generation_blocks_tos_violations() -> None:
     assert reply.attachments == []
 
 
+def test_reply_generation_suppresses_dsml_tool_call_leak() -> None:
+    leaked_tool_call = (
+        "<｜｜DSML｜｜tool_calls>\n"
+        "<｜｜DSML｜｜invoke name=\"run_terminal_command\">\n"
+        "<｜｜DSML｜｜parameter name=\"cmd\" string=\"true\">ping -c 3 10.0.0.2"
+        "</｜｜DSML｜｜parameter>\n"
+        "</｜｜DSML｜｜invoke>\n"
+        "</｜｜DSML｜｜tool_calls>"
+    )
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(leaked_tool_call),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="check the connection",
+            reply_context=None,
+        )
+    )
+
+    assert "DSML" not in reply.content
+    assert "run_terminal_command" not in reply.content
+    assert "couldn't complete that reply" in reply.content
+
+
 def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
     response_service = StubResponseService("normal")
     tos_service = StubTOSCheckService()

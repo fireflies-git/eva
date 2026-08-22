@@ -18,6 +18,19 @@ _THINK_EMPTY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Some providers expose their internal tool protocol as DSML text in the normal
+# content field instead of returning structured ``tool_calls``. Never let that
+# protocol markup reach Discord.
+_DSML_TOOL_BLOCK_RE = re.compile(
+    r"<(?:\||｜){2}DSML(?:\||｜){2}tool_calls\b[^>]*>.*?"
+    r"(?:</(?:\||｜){2}DSML(?:\||｜){2}tool_calls\s*>|$)",
+    re.DOTALL | re.IGNORECASE,
+)
+_DSML_TOOL_MARKER_RE = re.compile(
+    r"<(?:\||｜){2}DSML(?:\||｜){2}(?:tool_calls|invoke|parameter)\b",
+    re.IGNORECASE,
+)
+
 # Match lines that are purely separators (common reasoning artifact)
 _SEPARATOR_LINE_RE = re.compile(r"^\s*---+\s*$", re.MULTILINE)
 
@@ -69,7 +82,8 @@ def sanitize_response(content: str) -> str:
     if not content:
         return content
 
-    cleaned = _THINK_TAG_RE.sub("", content)
+    cleaned = strip_tool_call_markup(content)
+    cleaned = _THINK_TAG_RE.sub("", cleaned)
     cleaned = _THINK_EMPTY_RE.sub("", cleaned)
     cleaned = _SEPARATOR_LINE_RE.sub("", cleaned)
     cleaned = _normalize_plain_punctuation(cleaned)
@@ -78,6 +92,18 @@ def sanitize_response(content: str) -> str:
     # Collapse runs of 3+ blank lines to 2
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
+    return cleaned.strip()
+
+
+def strip_tool_call_markup(content: str) -> str:
+    """Remove provider-specific DSML tool-call envelopes from model output."""
+    if not content:
+        return content
+
+    cleaned = _DSML_TOOL_BLOCK_RE.sub("", content)
+    marker = _DSML_TOOL_MARKER_RE.search(cleaned)
+    if marker is not None:
+        cleaned = cleaned[: marker.start()]
     return cleaned.strip()
 
 

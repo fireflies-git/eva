@@ -18,6 +18,7 @@ from eva.reminders import ReminderConfirmation
 logger = logging.getLogger(__name__)
 
 IMAGE_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't generate an image right now."
+PROTOCOL_LEAK_MESSAGE = f"{WARNING_MARK} I couldn't complete that reply."
 _IMAGE_ANSWER_PREFIX = "media generated:"
 
 
@@ -281,6 +282,9 @@ def _sanitize_and_watermark(reply: ReplyOutput, *, watermark_enabled: bool) -> R
     cleaned = strip_context_echo(cleaned)
     cleaned = strip_response_watermark(cleaned)
     cleaned = _strip_trailing_split_trigger(cleaned)
+    if not cleaned and reply.content.strip():
+        logger.warning("Model reply contained no user-facing content after sanitization")
+        cleaned = PROTOCOL_LEAK_MESSAGE
     if watermark_enabled and cleaned:
         cleaned = f"{cleaned}\n{RESPONSE_WATERMARK}"
     return ReplyOutput(
