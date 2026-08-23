@@ -147,6 +147,36 @@ def test_reply_generation_suppresses_dsml_tool_call_leak() -> None:
     assert "couldn't complete that reply" in reply.content
 
 
+def test_reply_generation_suppresses_identity_aware_transcript_leak() -> None:
+    leaked_transcript = (
+        "[11:16 message_id:1541043513542934598] @eva cutie patootie "
+        "| gl:eva (pseudophilanthropic) [user_id:1008043568616718408] "
+        "reply to @17povss (17povss) [user_id:1112785005144453373] "
+        "[message_id:1541043501104373834]: hey."
+    )
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(leaked_transcript),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello",
+            reply_context=None,
+        )
+    )
+
+    assert "message_id" not in reply.content
+    assert "pseudophilanthropic" not in reply.content
+    assert "couldn't complete that reply" in reply.content
+
+
 def test_reply_generation_uses_image_path_when_image_results_exist() -> None:
     response_service = StubResponseService("normal")
     tos_service = StubTOSCheckService()

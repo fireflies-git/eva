@@ -48,6 +48,16 @@ _TRANSCRIPT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Identity-aware context lines contain enough metadata to identify them as a
+# copied conversation record rather than a normal user-facing reply. Drop the
+# entire line so sanitizing the wrapper cannot still leak the copied message.
+_IDENTITY_TRANSCRIPT_LINE_RE = re.compile(
+    r"^\s*(?:eva\s*:\s*)?"
+    r"\[\d{1,2}:\d{2}(?:\s+message_id:\d+)?\]"
+    r".*\[(?:message_id|user_id):\d+\].*:\s*.*$",
+    re.IGNORECASE,
+)
+
 # Trailing "(mentions: @A (a); @B (b))" annotation copied from context lines.
 _TRANSCRIPT_MENTIONS_TRAILER_RE = re.compile(
     r"\s*\(mentions?:\s+(?:[^()]|\([^()]*\))*\)\s*$",
@@ -146,7 +156,12 @@ def strip_context_echo(content: str) -> str:
     if not content:
         return content
 
-    cleaned = "\n".join(_TRANSCRIPT_LINE_RE.sub("", line) for line in content.split("\n"))
+    kept_lines = [
+        line
+        for line in content.split("\n")
+        if not _IDENTITY_TRANSCRIPT_LINE_RE.match(line)
+    ]
+    cleaned = "\n".join(_TRANSCRIPT_LINE_RE.sub("", line) for line in kept_lines)
     cleaned = _TRANSCRIPT_MENTIONS_TRAILER_RE.sub("", cleaned)
     return cleaned.strip()
 

@@ -68,9 +68,7 @@ def test_strip_context_echo_removes_identity_aware_transcript_framing() -> None:
 
     cleaned = strip_context_echo(echoed)
 
-    assert cleaned == (
-        "i never said ugly, just that the confirmation process would be cursed"
-    )
+    assert cleaned == ""
 
 
 def test_strip_context_echo_removes_identity_aware_reply_metadata() -> None:
@@ -79,7 +77,18 @@ def test_strip_context_echo_removes_identity_aware_reply_metadata() -> None:
         "@Alice (alice) [user_id:2] [message_id:9]: understood"
     )
 
-    assert strip_context_echo(echoed) == "understood"
+    assert strip_context_echo(echoed) == ""
+
+
+def test_strip_context_echo_drops_full_identity_aware_leak() -> None:
+    echoed = (
+        "[11:16 message_id:1541043513542934598] @eva cutie patootie "
+        "| gl:eva (pseudophilanthropic) [user_id:1008043568616718408] "
+        "reply to @17povss (17povss) [user_id:1112785005144453373] "
+        "[message_id:1541043501104373834]: hey."
+    )
+
+    assert strip_context_echo(echoed) == ""
 
 
 def test_strip_context_echo_keeps_plain_eva_speaker_label() -> None:
