@@ -323,7 +323,43 @@ def test_top_level_accept_requires_and_resolves_pending_mention() -> None:
     assert store.get(requester_id=123456) is None
 
 
-def test_top_level_deny_requires_a_mention() -> None:
+def test_top_level_accept_without_target_resolves_latest_pending_request() -> None:
+    client = FakeSocialClient()
+    latest_relationship = FakeRelationship(
+        request_type=discord.RelationshipType.incoming_request
+    )
+    client.relationships[654321] = latest_relationship
+    clock_value = [100.0]
+    store = PendingFriendRequestStore(clock=lambda: clock_value[0])
+    store.set(
+        requester_id=123456,
+        requester_label="older requester",
+        review_text="older body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    clock_value[0] = 101.0
+    store.set(
+        requester_id=654321,
+        requester_label="latest requester",
+        review_text="latest body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    response = _run(
+        content="eva accept",
+        user_id=_ADMIN_ID,
+        client=client,
+        friend_request_handler=handler,
+    )
+
+    assert response.handled is True
+    assert "Accepted friend request from latest requester" in response.content
+    assert latest_relationship.accepted is True
+    assert store.get(requester_id=123456) is not None
+
+
+def test_top_level_deny_without_target_reports_no_pending_request() -> None:
     response = _run(
         content="eva deny 123456",
         user_id=_ADMIN_ID,
@@ -335,4 +371,4 @@ def test_top_level_deny_requires_a_mention() -> None:
     )
 
     assert response.handled is True
-    assert "Mention a user" in response.content
+    assert "no pending friend requests" in response.content

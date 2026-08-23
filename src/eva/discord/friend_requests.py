@@ -119,16 +119,40 @@ class FriendRequestHandler:
     def is_requester_pending(self, *, requester_id: int) -> bool:
         return self._pending_store.get(requester_id=requester_id) is not None
 
+    async def notify_pending_requests(self, *, client: discord.Client) -> None:
+        admin_ids = set(self._admin_ids)
+        if client.user is not None:
+            admin_ids.add(client.user.id)
+
+        for pending in self._pending_store.list_pending():
+            recipients = sorted(set(pending.notified_admin_ids) | admin_ids)
+            body = (
+                "Eva restarted, and this friend request is still pending review.\n\n"
+                f"{pending.review_text}\n\n"
+                "You can use `eva review`, `eva accept`, or `eva deny` for the "
+                "most recent pending request."
+            )
+            notified = await _fan_out_dm(client, recipients, body)
+            if notified:
+                self._pending_store.add_notified_admins(
+                    requester_id=pending.requester_id,
+                    admin_ids=frozenset(notified),
+                )
+
     async def handle_targeted_review(
         self,
         *,
         client: discord.Client,
         admin_user_id: int,
-        requester_id: int,
+        requester_id: int | None,
     ) -> str:
-        pending = self._pending_store.pop_for_admin(
-            requester_id=requester_id,
-            admin_user_id=admin_user_id,
+        pending = (
+            self._pending_store.pop_latest_for_admin(admin_user_id=admin_user_id)
+            if requester_id is None
+            else self._pending_store.pop_for_admin(
+                requester_id=requester_id,
+                admin_user_id=admin_user_id,
+            )
         )
         if pending is None:
             return self._missing_target_message(requester_id)
@@ -144,9 +168,19 @@ class FriendRequestHandler:
         *,
         client: discord.Client,
         admin_user_id: int,
-        requester_id: int,
+        requester_id: int | None,
         decision: FriendRequestDecision,
     ) -> str | None:
+        if requester_id is None:
+            pending = self._pending_store.pop_latest_for_admin(admin_user_id=admin_user_id)
+            if pending is None:
+                return self._missing_target_message(None)
+            return await self._resolve_pending(
+                client=client,
+                pending=pending,
+                decision=decision,
+            )
+
         pending = self._pending_store.get(requester_id=requester_id)
         if pending is not None and admin_user_id not in pending.notified_admin_ids:
             return self._missing_target_message(requester_id)
@@ -246,7 +280,9 @@ class FriendRequestHandler:
         )
 
     @staticmethod
-    def _missing_target_message(requester_id: int) -> str:
+    def _missing_target_message(requester_id: int | None) -> str:
+        if requester_id is None:
+            return f"{WARNING_MARK} You have no pending friend requests to resolve."
         return (
             f"{WARNING_MARK} No pending friend request for <@{requester_id}> "
             "that you are assigned to review."

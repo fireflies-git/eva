@@ -119,6 +119,15 @@ class SelfbotMessageHandler:
         self._account_update_planner = account_update_planner
         self._pending_account_updates = pending_account_updates
         self._friend_request_handler = friend_request_handler
+        self._pending_recovery_notified = False
+
+    async def handle_ready(self, client: discord.Client) -> None:
+        if self._pending_recovery_notified:
+            return
+        self._pending_recovery_notified = True
+        if self._friend_request_handler is None:
+            return
+        await self._friend_request_handler.notify_pending_requests(client=client)
 
     async def on_message(self, client: discord.Client, message: discord.Message) -> None:
         user = client.user

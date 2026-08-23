@@ -34,6 +34,7 @@ from eva.state import (
     UserMemoryStore,
     WhitelistStore,
 )
+from eva.state.pending_friend_requests import DEFAULT_PENDING_FRIEND_REQUESTS_PATH
 from eva.state.reminders import DEFAULT_REMINDERS_PATH
 from eva.state.tracked_messages import DEFAULT_TRACKED_MESSAGES_PATH
 from eva.state.user_memory import DEFAULT_USER_MEMORY_PATH
@@ -47,6 +48,8 @@ logger = logging.getLogger(__name__)
 class EvaApp:
     def __init__(self, *, settings: Settings) -> None:
         self._settings = settings
+        state_dir = Path(settings.state_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
         self._ai_client = OpenAICompatibleClient(
             api_key=settings.api_key,
             base_url=settings.api_base_url,
@@ -134,14 +137,14 @@ class EvaApp:
             model_name=settings.model_name,
             account_mode=settings.account_mode,
         )
-        self._pending_friend_requests = PendingFriendRequestStore()
+        self._pending_friend_requests = PendingFriendRequestStore(
+            path=state_dir / DEFAULT_PENDING_FRIEND_REQUESTS_PATH.name
+        )
         self._friend_request_handler = FriendRequestHandler(
             pending_store=self._pending_friend_requests,
             review_service=self._friend_request_review_service,
             admin_ids=ALLOWED_ADMIN_IDS,
         )
-        state_dir = Path(settings.state_dir)
-        state_dir.mkdir(parents=True, exist_ok=True)
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
         self._tracked_messages = TrackedMessageStore(
             path=state_dir / DEFAULT_TRACKED_MESSAGES_PATH.name

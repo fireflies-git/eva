@@ -137,6 +137,21 @@ async def _handle_friends_command(
         return CommandOutcome(handled=True, content=f"{X_MARK} Usage: `{usage}`")
 
     target_id = _parse_target_id(argument)
+    action = parts[0].lower()
+    if friend_request_handler is not None:
+        pending_result = await friend_request_handler.handle_targeted_decision(
+            client=cast(discord.Client, client),
+            admin_user_id=admin_user_id,
+            requester_id=target_id,
+            decision=(
+                FriendRequestDecision.ACCEPT
+                if action == "accept"
+                else FriendRequestDecision.DENY
+            ),
+        )
+        if pending_result is not None:
+            return CommandOutcome(handled=True, content=pending_result)
+
     if target_id is None:
         return CommandOutcome(
             handled=True,
@@ -152,21 +167,6 @@ async def _handle_friends_command(
             handled=True,
             content=f"{WARNING_MARK} No incoming friend request from <@{target_id}>.",
         )
-
-    action = parts[0].lower()
-    if friend_request_handler is not None:
-        pending_result = await friend_request_handler.handle_targeted_decision(
-            client=cast(discord.Client, client),
-            admin_user_id=admin_user_id,
-            requester_id=target_id,
-            decision=(
-                FriendRequestDecision.ACCEPT
-                if action == "accept"
-                else FriendRequestDecision.DENY
-            ),
-        )
-        if pending_result is not None:
-            return CommandOutcome(handled=True, content=pending_result)
 
     try:
         if action == "accept":
@@ -200,14 +200,11 @@ async def _handle_targeted_friend_command(
     argument: str,
     trigger_prefix: str,
 ) -> CommandOutcome:
-    usage = f"{trigger_prefix.strip()} {action} @user"
+    usage = f"{trigger_prefix.strip()} {action} [@user]"
     target_id = _parse_target_id(argument, allow_numeric=False)
-    if target_id is None:
-        return CommandOutcome(
-            handled=True,
-            content=f"{X_MARK} Mention a user: `{usage}`",
-        )
     if friend_request_handler is None:
+        if target_id is None:
+            return CommandOutcome(handled=True, content=f"{X_MARK} Usage: `{usage}`")
         return CommandOutcome(
             handled=True,
             content=f"{X_MARK} Friend request handling is unavailable.",
@@ -231,6 +228,11 @@ async def _handle_targeted_friend_command(
             ),
         )
         if result is None:
+            if target_id is None:
+                return CommandOutcome(
+                    handled=True,
+                    content=f"{WARNING_MARK} You have no pending friend requests to resolve.",
+                )
             relationship = client.get_relationship(target_id)
             if (
                 relationship is None

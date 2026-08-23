@@ -38,6 +38,7 @@ def create_discord_client(
             getattr(user, "display_name", "unknown"),
             user.id,
         )
+        await handler.handle_ready(client)
 
     @client.event
     async def on_message(message: discord.Message) -> None:

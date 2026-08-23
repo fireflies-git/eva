@@ -219,4 +219,5 @@ whitelist.db
 tracked_messages.json
 user_memory.json
 reminders.json
+pending_friend_requests.json
 eva.exe # eva windows build

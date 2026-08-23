@@ -446,6 +446,32 @@ def test_targeted_review_accepts_and_creates_application_group() -> None:
     assert "Application started" in group.sent[0]
 
 
+def test_targeted_review_without_target_uses_latest_pending_request() -> None:
+    client, relationship = _client_with_incoming(
+        requester=FakeUser(_REQUESTER_ID, name="latest applicant")
+    )
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="latest applicant",
+        review_text="review body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    result = asyncio.run(
+        handler.handle_targeted_review(
+            client=cast(discord.Client, client),
+            admin_user_id=_ADMIN_ID,
+            requester_id=None,
+        )
+    )
+
+    assert "Accepted friend request" in result
+    assert relationship.accepted is True
+    assert len(client.groups) == 1
+
+
 def test_targeted_review_rejects_admin_not_notified() -> None:
     client, relationship = _client_with_incoming()
     store = PendingFriendRequestStore()
@@ -655,6 +681,48 @@ def test_pending_ttl_expiry_removes_entry() -> None:
     )
 
     assert store.get(requester_id=_REQUESTER_ID) is None
+
+
+def test_pending_requests_reload_from_disk(tmp_path) -> None:
+    path = tmp_path / "pending_friend_requests.json"
+    store = PendingFriendRequestStore(path=path)
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="requester",
+        review_text="body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+
+    reloaded = PendingFriendRequestStore(path=path)
+
+    pending = reloaded.get(requester_id=_REQUESTER_ID)
+    assert pending is not None
+    assert pending.requester_label == "requester"
+    assert pending.review_text == "body"
+    assert pending.notified_admin_ids == frozenset({_ADMIN_ID})
+
+
+def test_restart_notifies_admins_about_reloaded_pending_requests(tmp_path) -> None:
+    path = tmp_path / "pending_friend_requests.json"
+    initial_store = PendingFriendRequestStore(path=path)
+    initial_store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="requester",
+        review_text="review body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    client, _ = _client_with_incoming()
+    handler = FriendRequestHandler(
+        pending_store=PendingFriendRequestStore(path=path),
+        admin_ids=[_ADMIN_ID],
+    )
+
+    asyncio.run(handler.notify_pending_requests(client=cast(discord.Client, client)))
+
+    assert len(client.admin_users[_ADMIN_ID].sent) == 1
+    assert len(client.admin_users[_OWNER_ID].sent) == 1
+    assert "Eva restarted" in client.admin_users[_ADMIN_ID].sent[0]
+    assert "review body" in client.admin_users[_ADMIN_ID].sent[0]
 
 
 def test_parse_friend_request_confirmation() -> None:
