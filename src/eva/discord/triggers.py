@@ -36,6 +36,24 @@ def decide_standalone_trigger(
             is_reply_trigger=True,
         )
 
+    if getattr(message.channel, "guild", None) is not None:
+        prefixed = parse_trigger(
+            content=content,
+            trigger_prefix=trigger_prefix,
+            is_reply_trigger=False,
+            mention_user_id=None,
+        )
+        if prefixed.should_process:
+            return prefixed
+
+        if _message_mentions_user(message, mention_user_id):
+            query = _strip_user_mentions(content, mention_user_id).strip()
+            if query:
+                return TriggerDecision(should_process=True, user_query=query)
+            return TriggerDecision(should_process=False)
+
+        return TriggerDecision(should_process=True, user_query=text)
+
     prefixed = parse_trigger(
         content=content,
         trigger_prefix=trigger_prefix,

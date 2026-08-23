@@ -245,7 +245,7 @@ def test_standalone_group_chat_uses_mentions_replies_and_prefix(tmp_path) -> Non
     )
 
 
-def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) -> None:
+def test_standalone_server_trigger_replies_to_every_non_empty_message(tmp_path) -> None:
     handler = _build_handler(tmp_path)
     server_channel = SimpleNamespace(guild=SimpleNamespace(id=1))
 
@@ -289,7 +289,7 @@ def test_standalone_server_trigger_uses_mentions_replies_and_prefix(tmp_path) ->
         is_reply_trigger=True,
     )
     assert prefix_decision == TriggerDecision(should_process=True, user_query="summarize this")
-    assert chatter_decision == TriggerDecision(should_process=False)
+    assert chatter_decision == TriggerDecision(should_process=True, user_query="random chatter")
 
 
 def test_assistant_mode_skips_ai_split_planner(monkeypatch, tmp_path) -> None:
