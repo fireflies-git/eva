@@ -39,6 +39,7 @@ from eva.discord.commands import handle_whitelist_command, is_admin_user
 from eva.discord.context import fetch_channel_context, fetch_reply_context
 from eva.discord.delivery import (
     DeliveryResult,
+    close_application_group,
     deliver_owner_response,
     deliver_reply_response,
     safe_edit,
@@ -362,6 +363,7 @@ class SelfbotMessageHandler:
             trigger_prefix=self._settings.trigger_prefix,
             client=client,
             friend_request_handler=self._friend_request_handler,
+            channel=message.channel,
         )
         if await self._handle_command_outcome(
             outcome=social_outcome,
@@ -502,6 +504,8 @@ class SelfbotMessageHandler:
             content=outcome.content,
             attachments=outcome.attachments,
         )
+        if outcome.close_application:
+            await close_application_group(message.channel)
         return True
 
     def _decide_trigger(

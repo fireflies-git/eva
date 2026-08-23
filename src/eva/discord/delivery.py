@@ -5,12 +5,21 @@ import io
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol, cast
 
 import discord
 
 from eva.discord.formatting import build_plain_response_chunks, build_response_chunks
 
 logger = logging.getLogger(__name__)
+
+
+class ApplicationGroupChannel(Protocol):
+    recipients: list[discord.abc.Snowflake]
+
+    async def remove_recipients(self, *recipients: discord.abc.Snowflake) -> None: ...
+
+    async def leave(self, *, silent: bool = False) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +101,30 @@ async def safe_reply_or_edit(message: discord.Message, is_owner: bool, content: 
         await safe_edit(message, content)
     else:
         await safe_reply(message, content)
+
+
+async def close_application_group(channel: discord.abc.Messageable) -> None:
+    """Remove application participants and leave the now-closed group."""
+    if not hasattr(channel, "remove_recipients"):
+        logger.warning("Application channel does not support removing participants")
+    else:
+        group = cast(ApplicationGroupChannel, channel)
+        for recipient in tuple(group.recipients):
+            try:
+                await group.remove_recipients(recipient)
+            except Exception:
+                logger.exception(
+                    "Failed to remove application participant %s",
+                    getattr(recipient, "id", "unknown"),
+                )
+
+    if not hasattr(channel, "leave"):
+        logger.warning("Application channel does not support leaving")
+        return
+    try:
+        await cast(ApplicationGroupChannel, channel).leave(silent=True)
+    except Exception:
+        logger.exception("Failed to leave application group")
 
 
 async def wait_before_followup(

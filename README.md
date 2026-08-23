@@ -23,6 +23,7 @@ Friend request application commands (admin-only):
 - `eva review [@user]` accepts a pending request and opens a named application group with the reviewing admin; without a mention, it uses the most recent request
 - `eva accept [@user]` accepts a request without opening an application group (or confirms it is already accepted); without a mention, it uses the most recent request
 - `eva deny [@user]` denies a request; without a mention, it uses the most recent request
+- Accepting an applicant from their named application group removes the other participants and makes Eva leave, deleting the closed group
 - The existing `eva friends accept|deny @user` commands remain supported
 - Pending requests are persisted under `STATE_DIR` and admins are notified again after Eva restarts
 

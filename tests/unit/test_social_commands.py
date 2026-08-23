@@ -63,6 +63,7 @@ def _run(
     is_owner: bool = False,
     client: FakeSocialClient | None = None,
     friend_request_handler: FriendRequestHandler | None = None,
+    channel: object | None = None,
 ):
     return asyncio.run(
         handle_social_command(
@@ -72,6 +73,7 @@ def _run(
             trigger_prefix=_TRIGGER_PREFIX,
             client=cast(SocialClient | None, client),
             friend_request_handler=friend_request_handler,
+            channel=cast(discord.abc.Messageable | None, channel),
         )
     )
 
@@ -356,6 +358,52 @@ def test_top_level_accept_is_idempotent_for_already_friended_applicant() -> None
 
     assert response.handled is True
     assert "already accepted" in response.content
+
+
+def test_accept_in_application_group_requests_group_cleanup() -> None:
+    client = FakeSocialClient()
+    client.relationships[123456] = FakeRelationship(
+        request_type=discord.RelationshipType.friend
+    )
+    handler = FriendRequestHandler(
+        pending_store=PendingFriendRequestStore(),
+        admin_ids=[_ADMIN_ID],
+    )
+    application_channel = SimpleNamespace(
+        type=discord.ChannelType.group,
+        name="applicant's Application",
+    )
+
+    response = _run(
+        content="eva accept <@123456>",
+        user_id=_ADMIN_ID,
+        client=client,
+        friend_request_handler=handler,
+        channel=application_channel,
+    )
+
+    assert response.close_application is True
+
+
+def test_accept_in_regular_group_does_not_request_group_cleanup() -> None:
+    client = FakeSocialClient()
+    client.relationships[123456] = FakeRelationship(
+        request_type=discord.RelationshipType.friend
+    )
+    handler = FriendRequestHandler(
+        pending_store=PendingFriendRequestStore(),
+        admin_ids=[_ADMIN_ID],
+    )
+
+    response = _run(
+        content="eva accept <@123456>",
+        user_id=_ADMIN_ID,
+        client=client,
+        friend_request_handler=handler,
+        channel=SimpleNamespace(type=discord.ChannelType.group, name="normal group"),
+    )
+
+    assert response.close_application is False
 
 
 def test_top_level_accept_without_target_resolves_latest_pending_request() -> None:

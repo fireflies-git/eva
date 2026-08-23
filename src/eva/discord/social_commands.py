@@ -36,6 +36,7 @@ async def handle_social_command(
     trigger_prefix: str,
     client: SocialClient | None,
     friend_request_handler: FriendRequestHandler | None = None,
+    channel: discord.abc.Messageable | None = None,
 ) -> CommandOutcome:
     parsed = _parse_social_query(content=content, trigger_prefix=trigger_prefix)
     if parsed is None:
@@ -68,6 +69,7 @@ async def handle_social_command(
             action=_REVIEW_COMMAND,
             argument=argument,
             trigger_prefix=trigger_prefix,
+            channel=channel,
         )
     if command in _DIRECT_FRIEND_ACTIONS:
         return await _handle_targeted_friend_command(
@@ -77,6 +79,7 @@ async def handle_social_command(
             action=command,
             argument=argument,
             trigger_prefix=trigger_prefix,
+            channel=channel,
         )
     return await _handle_friends_command(
         client=client,
@@ -84,6 +87,7 @@ async def handle_social_command(
         trigger_prefix=trigger_prefix,
         friend_request_handler=friend_request_handler,
         admin_user_id=user_id,
+        channel=channel,
     )
 
 
@@ -130,6 +134,7 @@ async def _handle_friends_command(
     trigger_prefix: str,
     friend_request_handler: FriendRequestHandler | None,
     admin_user_id: int,
+    channel: discord.abc.Messageable | None,
 ) -> CommandOutcome:
     parts = argument.split()
     usage = f"{trigger_prefix.strip()} friends <accept|deny> @user"
@@ -150,7 +155,11 @@ async def _handle_friends_command(
             ),
         )
         if pending_result is not None:
-            return CommandOutcome(handled=True, content=pending_result)
+            return _build_friend_command_outcome(
+                content=pending_result,
+                action=action,
+                channel=channel,
+            )
 
     if target_id is None:
         return CommandOutcome(
@@ -158,13 +167,14 @@ async def _handle_friends_command(
             content=f"{X_MARK} Mention a user or provide an ID: `{usage}`",
         )
 
-    return CommandOutcome(
-        handled=True,
+    return _build_friend_command_outcome(
         content=await _resolve_direct_friend_decision(
             client=client,
             target_id=target_id,
             action=action,
         ),
+        action=action,
+        channel=channel,
     )
 
 
@@ -176,6 +186,7 @@ async def _handle_targeted_friend_command(
     action: str,
     argument: str,
     trigger_prefix: str,
+    channel: discord.abc.Messageable | None,
 ) -> CommandOutcome:
     usage = f"{trigger_prefix.strip()} {action} [@user]"
     target_id = _parse_target_id(argument, allow_numeric=False)
@@ -217,7 +228,37 @@ async def _handle_targeted_friend_command(
             )
         else:
             content = result
-    return CommandOutcome(handled=True, content=content)
+    return _build_friend_command_outcome(
+        content=content,
+        action=action,
+        channel=channel,
+    )
+
+
+def _build_friend_command_outcome(
+    *,
+    content: str,
+    action: str,
+    channel: discord.abc.Messageable | None,
+) -> CommandOutcome:
+    return CommandOutcome(
+        handled=True,
+        content=content,
+        close_application=(
+            action == "accept"
+            and content.startswith(CHECK_MARK)
+            and _is_application_group(channel)
+        ),
+    )
+
+
+def _is_application_group(channel: discord.abc.Messageable | None) -> bool:
+    if channel is None or getattr(channel, "type", None) != discord.ChannelType.group:
+        return False
+    name = getattr(channel, "name", None)
+    return isinstance(name, str) and (
+        name.endswith("'s Application") or name.endswith("’s Application")
+    )
 
 
 async def _resolve_direct_friend_decision(

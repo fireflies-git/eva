@@ -9,6 +9,7 @@ class CommandOutcome:
     content: str = ""
     attachments: list[tuple[str, bytes]] | None = None
     should_clear: bool = False
+    close_application: bool = False
 
     @classmethod
     def not_handled(cls) -> CommandOutcome:

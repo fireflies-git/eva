@@ -8,6 +8,7 @@ import pytest
 import eva.discord.handlers as handlers
 from eva.ai import ReplyGenerationService, ResponseGenerationResult, ResponseSplitService
 from eva.config import Settings
+from eva.discord.command_outcome import CommandOutcome
 from eva.discord.handlers import SelfbotMessageHandler, TriggerDecision
 from eva.downloads import DownloadService
 from eva.state import (
@@ -55,6 +56,19 @@ class DummyChannel:
         self.sent.append((content, suppress_embeds))
         self._next_id += 1
         return type("SentMessage", (), {"id": self._next_id})()
+
+
+class FakeApplicationChannel:
+    def __init__(self) -> None:
+        self.recipients = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+        self.removed: list[int] = []
+        self.left_silently: bool | None = None
+
+    async def remove_recipients(self, *recipients: SimpleNamespace) -> None:
+        self.removed.extend(int(recipient.id) for recipient in recipients)
+
+    async def leave(self, *, silent: bool = False) -> None:
+        self.left_silently = silent
 
 
 class DummySplitClient:
@@ -122,6 +136,37 @@ def _build_handler(tmp_path, *, account_mode: str = "standalone") -> SelfbotMess
         terminal_service=None,
         download_service=None,
     )
+
+
+def test_accepted_application_closes_group_after_response(monkeypatch, tmp_path) -> None:
+    handler = _build_handler(tmp_path)
+    channel = FakeApplicationChannel()
+    delivered: list[str] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(str(kwargs["reply_content"]))
+        return SimpleNamespace(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    handled = asyncio.run(
+        handler._handle_command_outcome(
+            outcome=CommandOutcome(
+                handled=True,
+                content="accepted",
+                close_application=True,
+            ),
+            message=cast(discord.Message, SimpleNamespace(channel=channel)),
+            is_owner=False,
+            original_content="eva accept <@1>",
+            channel_id=123,
+        )
+    )
+
+    assert handled is True
+    assert delivered == ["accepted"]
+    assert channel.removed == [1, 2]
+    assert channel.left_silently is True
 
 
 def test_calculate_followup_delay_scales_with_length(monkeypatch, tmp_path) -> None:

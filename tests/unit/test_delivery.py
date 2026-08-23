@@ -6,7 +6,11 @@ from typing import cast
 import discord
 import pytest
 
-from eva.discord.delivery import deliver_owner_response, deliver_reply_response
+from eva.discord.delivery import (
+    close_application_group,
+    deliver_owner_response,
+    deliver_reply_response,
+)
 
 
 class FakeSentMessage:
@@ -83,6 +87,28 @@ class FakeReplyMessage:
         if self._fail_reply:
             raise RuntimeError("reply failed")
         return FakeSentMessage(self._first_reply_id)
+
+
+class FakeApplicationGroup:
+    def __init__(self) -> None:
+        self.recipients = [FakeSentMessage(1), FakeSentMessage(2)]
+        self.removed: list[int] = []
+        self.left_silently: bool | None = None
+
+    async def remove_recipients(self, *recipients: FakeSentMessage) -> None:
+        self.removed.extend(recipient.id for recipient in recipients)
+
+    async def leave(self, *, silent: bool = False) -> None:
+        self.left_silently = silent
+
+
+def test_close_application_group_removes_participants_and_leaves() -> None:
+    group = FakeApplicationGroup()
+
+    asyncio.run(close_application_group(cast(discord.abc.Messageable, group)))
+
+    assert group.removed == [1, 2]
+    assert group.left_silently is True
 
 
 def test_deliver_owner_response_tracks_primary_and_continuations() -> None:
