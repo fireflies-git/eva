@@ -21,6 +21,7 @@ def decide_standalone_trigger(
     trigger_prefix: str,
     is_reply_trigger: bool,
     mention_user_id: int,
+    bot_username: str | None = None,
 ) -> TriggerDecision:
     text = content.strip()
     if not text:
@@ -36,24 +37,6 @@ def decide_standalone_trigger(
             is_reply_trigger=True,
         )
 
-    if getattr(message.channel, "guild", None) is not None:
-        prefixed = parse_trigger(
-            content=content,
-            trigger_prefix=trigger_prefix,
-            is_reply_trigger=False,
-            mention_user_id=None,
-        )
-        if prefixed.should_process:
-            return prefixed
-
-        if _message_mentions_user(message, mention_user_id):
-            query = _strip_user_mentions(content, mention_user_id).strip()
-            if query:
-                return TriggerDecision(should_process=True, user_query=query)
-            return TriggerDecision(should_process=False)
-
-        return TriggerDecision(should_process=True, user_query=text)
-
     prefixed = parse_trigger(
         content=content,
         trigger_prefix=trigger_prefix,
@@ -62,6 +45,16 @@ def decide_standalone_trigger(
     )
     if prefixed.should_process:
         return prefixed
+
+    if bot_username:
+        username_prefixed = parse_trigger(
+            content=content,
+            trigger_prefix=f"{bot_username.strip()} ",
+            is_reply_trigger=False,
+            mention_user_id=None,
+        )
+        if username_prefixed.should_process:
+            return username_prefixed
 
     if _message_mentions_user(message, mention_user_id):
         query = _strip_user_mentions(content, mention_user_id).strip()

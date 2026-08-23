@@ -289,7 +289,20 @@ def test_standalone_server_trigger_replies_to_every_non_empty_message(tmp_path) 
         is_reply_trigger=True,
     )
     assert prefix_decision == TriggerDecision(should_process=True, user_query="summarize this")
-    assert chatter_decision == TriggerDecision(should_process=True, user_query="random chatter")
+    assert chatter_decision == TriggerDecision(should_process=False)
+
+    username_decision = handler._decide_trigger(
+        message=reply_message,
+        content="pseudophilanthropic help me",
+        is_reply_trigger=False,
+        mention_user_id=123,
+        bot_username="pseudophilanthropic",
+    )
+
+    assert username_decision == TriggerDecision(
+        should_process=True,
+        user_query="help me",
+    )
 
 
 def test_assistant_mode_skips_ai_split_planner(monkeypatch, tmp_path) -> None:

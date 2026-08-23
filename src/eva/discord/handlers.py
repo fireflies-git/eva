@@ -194,6 +194,7 @@ class SelfbotMessageHandler:
             content=original_content,
             is_reply_trigger=is_reply_trigger,
             mention_user_id=user.id,
+            bot_username=getattr(user, "name", None),
         )
 
         if not decision.should_process:
@@ -501,6 +502,7 @@ class SelfbotMessageHandler:
         content: str,
         is_reply_trigger: bool,
         mention_user_id: int,
+        bot_username: str | None = None,
     ) -> TriggerDecision:
         if self._is_standalone_mode():
             return decide_standalone_trigger(
@@ -509,6 +511,7 @@ class SelfbotMessageHandler:
                 trigger_prefix=self._settings.trigger_prefix,
                 is_reply_trigger=is_reply_trigger,
                 mention_user_id=mention_user_id,
+                bot_username=bot_username,
             )
         return parse_trigger(
             content=content,

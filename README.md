@@ -16,7 +16,7 @@ uv run eva settings set account-mode standalone
 ```
 
 - `assistant`: owner/selfbot-style behavior, no planned follow-up splitting
-- `standalone`: bot-account behavior, replies to all non-empty messages in 1:1 DMs and servers, but only to mentions/prefixes/replies in group chats, with delayed follow-up splitting
+- `standalone`: bot-account behavior, replies to all non-empty messages in 1:1 DMs, but requires `eva`, the bot username, a Discord mention, or a tracked reply in servers and group chats, with delayed follow-up splitting
 
 Friend request application commands (admin-only):
 
