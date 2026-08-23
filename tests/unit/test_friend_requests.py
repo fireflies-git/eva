@@ -104,6 +104,19 @@ class FakeRelationship:
         self.deleted = True
 
 
+class FakeGroup:
+    def __init__(self, recipients: tuple[FakeUser, ...]) -> None:
+        self.recipients = recipients
+        self.name: str | None = None
+        self.sent: list[str] = []
+
+    async def edit(self, *, name: str) -> None:
+        self.name = name
+
+    async def send(self, content: str) -> None:
+        self.sent.append(content)
+
+
 class FakeDiscordClient:
     def __init__(
         self,
@@ -118,6 +131,7 @@ class FakeDiscordClient:
         self.admin_users = admin_users or {}
         self.user = SimpleNamespace(id=owner_id)
         self.profile_error: Exception | None = None
+        self.groups: list[FakeGroup] = []
 
     async def fetch_user_profile(self, user_id: int, **kwargs: object) -> FakeProfile:
         if self.profile_error is not None:
@@ -132,6 +146,11 @@ class FakeDiscordClient:
 
     def get_relationship(self, user_id: int) -> FakeRelationship | None:
         return self.relationships.get(user_id)
+
+    async def create_group(self, *recipients: FakeUser) -> FakeGroup:
+        group = FakeGroup(recipients)
+        self.groups.append(group)
+        return group
 
 
 class FakeReviewService:
@@ -393,6 +412,91 @@ def test_confirmation_no_denies_request() -> None:
     assert "Denied friend request" in result
     assert relationship.deleted is True
     assert relationship.accepted is False
+
+
+def test_targeted_review_accepts_and_creates_application_group() -> None:
+    client, relationship = _client_with_incoming(
+        requester=FakeUser(_REQUESTER_ID, name="applicant")
+    )
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="applicant",
+        review_text="review body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    result = asyncio.run(
+        handler.handle_targeted_review(
+            client=cast(discord.Client, client),
+            admin_user_id=_ADMIN_ID,
+            requester_id=_REQUESTER_ID,
+        )
+    )
+
+    assert "Accepted friend request" in result
+    assert relationship.accepted is True
+    assert store.get(requester_id=_REQUESTER_ID) is None
+    assert len(client.groups) == 1
+    group = client.groups[0]
+    assert {user.id for user in group.recipients} == {_ADMIN_ID, _REQUESTER_ID}
+    assert group.name == "applicant's Application"
+    assert len(group.sent) == 1
+    assert "Application started" in group.sent[0]
+
+
+def test_targeted_review_rejects_admin_not_notified() -> None:
+    client, relationship = _client_with_incoming()
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="requester",
+        review_text="body",
+        notified_admin_ids=frozenset({_OTHER_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    result = asyncio.run(
+        handler.handle_targeted_review(
+            client=cast(discord.Client, client),
+            admin_user_id=_ADMIN_ID,
+            requester_id=_REQUESTER_ID,
+        )
+    )
+
+    assert "No pending friend request" in result
+    assert relationship.accepted is False
+    assert store.get(requester_id=_REQUESTER_ID) is not None
+
+
+def test_targeted_review_reports_partial_success_when_group_setup_fails() -> None:
+    client, relationship = _client_with_incoming()
+
+    async def fail_create_group(*recipients: FakeUser) -> FakeGroup:
+        raise RuntimeError("group unavailable")
+
+    client.create_group = fail_create_group  # type: ignore[method-assign]
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="requester",
+        review_text="body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    result = asyncio.run(
+        handler.handle_targeted_review(
+            client=cast(discord.Client, client),
+            admin_user_id=_ADMIN_ID,
+            requester_id=_REQUESTER_ID,
+        )
+    )
+
+    assert relationship.accepted is True
+    assert "application group setup failed" in result
+    assert store.get(requester_id=_REQUESTER_ID) is None
 
 
 def test_first_admin_reply_wins() -> None:
@@ -702,11 +806,11 @@ def test_review_service_fails_open_on_client_error() -> None:
 # --- handler integration: early DM confirmation ---
 
 
-def _settings() -> Settings:
+def _settings(*, account_mode: str = "assistant") -> Settings:
     return cast(
         Settings,
         SimpleNamespace(
-            account_mode="assistant",
+            account_mode=account_mode,
             trigger_prefix="eva ",
             response_context_messages=5,
             min_loading_seconds=0.0,
@@ -749,9 +853,15 @@ class FailingReplyGenerationService:
         raise AssertionError("normal AI generation should not run")
 
 
-def _build_handler(tmp_path, *, friend_request_handler: FriendRequestHandler):
+def _build_handler(
+    tmp_path,
+    *,
+    friend_request_handler: FriendRequestHandler,
+    account_mode: str = "assistant",
+):
+    settings = _settings(account_mode=account_mode)
     return handlers.SelfbotMessageHandler(
-        settings=_settings(),
+        settings=settings,
         reply_generation_service=cast(
             ReplyGenerationService,
             FailingReplyGenerationService(),
@@ -869,6 +979,47 @@ def test_non_admin_dm_reply_is_gated_out(monkeypatch, tmp_path) -> None:
         author_id=999,
         channel=DummyChannel(99, guild=None),
         content="y",
+    )
+
+    asyncio.run(
+        message_handler.on_message(
+            cast(discord.Client, client),
+            cast(discord.Message, message),
+        )
+    )
+
+    assert relationship.accepted is False
+    assert delivered == []
+    assert store.get(requester_id=_REQUESTER_ID) is not None
+
+
+def test_pending_requester_is_ignored_in_standalone_mode(monkeypatch, tmp_path) -> None:
+    client, relationship = _client_with_incoming()
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="requester",
+        review_text="body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+    message_handler = _build_handler(
+        tmp_path,
+        friend_request_handler=handler,
+        account_mode="standalone",
+    )
+    delivered: list[str] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(str(kwargs["reply_content"]))
+        return SimpleNamespace(primary_delivered=True)
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    message = DummyMessage(
+        author_id=_REQUESTER_ID,
+        channel=DummyChannel(99),
+        content="hello Eva",
     )
 
     asyncio.run(

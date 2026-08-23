@@ -146,6 +146,19 @@ class SelfbotMessageHandler:
             if not is_admin and not self._whitelist.contains(message.author.id):
                 return
 
+        if (
+            self._friend_request_handler is not None
+            and self._friend_request_handler.is_requester_pending(
+                requester_id=message.author.id
+            )
+        ):
+            interaction_logger.info(
+                "ignored pending friend-request user_id=%s channel_id=%s",
+                message.author.id,
+                channel_id,
+            )
+            return
+
         if await self._handle_account_update_confirmation(
             client=client,
             message=message,
@@ -338,6 +351,7 @@ class SelfbotMessageHandler:
             is_owner=is_owner,
             trigger_prefix=self._settings.trigger_prefix,
             client=client,
+            friend_request_handler=self._friend_request_handler,
         )
         if await self._handle_command_outcome(
             outcome=social_outcome,

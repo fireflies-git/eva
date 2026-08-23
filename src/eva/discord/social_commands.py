@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol
+from typing import Protocol, cast
 
 import discord
 
@@ -11,9 +11,12 @@ from eva.captcha import NopeCHAError
 from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
 from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import is_admin_user
+from eva.discord.friend_requests import FriendRequestDecision, FriendRequestHandler
 
 _JOIN_COMMAND = "join"
 _FRIENDS_COMMAND = "friends"
+_REVIEW_COMMAND = "review"
+_DIRECT_FRIEND_ACTIONS = frozenset({"accept", "deny"})
 _FRIENDS_ACTIONS = frozenset({"accept", "deny"})
 
 _MENTION_RE = re.compile(r"<@!?(\d+)>")
@@ -32,6 +35,7 @@ async def handle_social_command(
     is_owner: bool,
     trigger_prefix: str,
     client: SocialClient | None,
+    friend_request_handler: FriendRequestHandler | None = None,
 ) -> CommandOutcome:
     parsed = _parse_social_query(content=content, trigger_prefix=trigger_prefix)
     if parsed is None:
@@ -56,10 +60,30 @@ async def handle_social_command(
             argument=argument,
             trigger_prefix=trigger_prefix,
         )
+    if command == _REVIEW_COMMAND:
+        return await _handle_targeted_friend_command(
+            client=client,
+            friend_request_handler=friend_request_handler,
+            admin_user_id=user_id,
+            action=_REVIEW_COMMAND,
+            argument=argument,
+            trigger_prefix=trigger_prefix,
+        )
+    if command in _DIRECT_FRIEND_ACTIONS:
+        return await _handle_targeted_friend_command(
+            client=client,
+            friend_request_handler=friend_request_handler,
+            admin_user_id=user_id,
+            action=command,
+            argument=argument,
+            trigger_prefix=trigger_prefix,
+        )
     return await _handle_friends_command(
         client=client,
         argument=argument,
         trigger_prefix=trigger_prefix,
+        friend_request_handler=friend_request_handler,
+        admin_user_id=user_id,
     )
 
 
@@ -104,6 +128,8 @@ async def _handle_friends_command(
     client: SocialClient,
     argument: str,
     trigger_prefix: str,
+    friend_request_handler: FriendRequestHandler | None,
+    admin_user_id: int,
 ) -> CommandOutcome:
     parts = argument.split()
     usage = f"{trigger_prefix.strip()} friends <accept|deny> @user"
@@ -128,6 +154,20 @@ async def _handle_friends_command(
         )
 
     action = parts[0].lower()
+    if friend_request_handler is not None:
+        pending_result = await friend_request_handler.handle_targeted_decision(
+            client=cast(discord.Client, client),
+            admin_user_id=admin_user_id,
+            requester_id=target_id,
+            decision=(
+                FriendRequestDecision.ACCEPT
+                if action == "accept"
+                else FriendRequestDecision.DENY
+            ),
+        )
+        if pending_result is not None:
+            return CommandOutcome(handled=True, content=pending_result)
+
     try:
         if action == "accept":
             await relationship.accept()
@@ -151,6 +191,77 @@ async def _handle_friends_command(
     )
 
 
+async def _handle_targeted_friend_command(
+    *,
+    client: SocialClient,
+    friend_request_handler: FriendRequestHandler | None,
+    admin_user_id: int,
+    action: str,
+    argument: str,
+    trigger_prefix: str,
+) -> CommandOutcome:
+    usage = f"{trigger_prefix.strip()} {action} @user"
+    target_id = _parse_target_id(argument, allow_numeric=False)
+    if target_id is None:
+        return CommandOutcome(
+            handled=True,
+            content=f"{X_MARK} Mention a user: `{usage}`",
+        )
+    if friend_request_handler is None:
+        return CommandOutcome(
+            handled=True,
+            content=f"{X_MARK} Friend request handling is unavailable.",
+        )
+
+    if action == _REVIEW_COMMAND:
+        content = await friend_request_handler.handle_targeted_review(
+            client=cast(discord.Client, client),
+            admin_user_id=admin_user_id,
+            requester_id=target_id,
+        )
+    else:
+        result = await friend_request_handler.handle_targeted_decision(
+            client=cast(discord.Client, client),
+            admin_user_id=admin_user_id,
+            requester_id=target_id,
+            decision=(
+                FriendRequestDecision.ACCEPT
+                if action == "accept"
+                else FriendRequestDecision.DENY
+            ),
+        )
+        if result is None:
+            relationship = client.get_relationship(target_id)
+            if (
+                relationship is None
+                or relationship.type is not discord.RelationshipType.incoming_request
+            ):
+                return CommandOutcome(
+                    handled=True,
+                    content=f"{WARNING_MARK} No incoming friend request from <@{target_id}>.",
+                )
+            try:
+                if action == "accept":
+                    await relationship.accept()
+                else:
+                    await relationship.delete()
+            except NopeCHAError as exc:
+                return CommandOutcome(
+                    handled=True,
+                    content=f"{WARNING_MARK} Captcha solver failed: {exc}",
+                )
+            except Exception as exc:
+                return CommandOutcome(
+                    handled=True,
+                    content=f"{X_MARK} Failed to {action} friend request: {exc}",
+                )
+            verb = "Accepted" if action == "accept" else "Denied"
+            content = f"{CHECK_MARK} {verb} friend request from <@{target_id}>."
+        else:
+            content = result
+    return CommandOutcome(handled=True, content=content)
+
+
 def _parse_social_query(*, content: str, trigger_prefix: str) -> tuple[str, str] | None:
     text = content.strip()
     prefix = trigger_prefix.strip()
@@ -159,7 +270,12 @@ def _parse_social_query(*, content: str, trigger_prefix: str) -> tuple[str, str]
 
     remainder = text[len(prefix) :].lstrip()
     lowered = remainder.lower()
-    for command in (_JOIN_COMMAND, _FRIENDS_COMMAND):
+    for command in (
+        _JOIN_COMMAND,
+        _FRIENDS_COMMAND,
+        _REVIEW_COMMAND,
+        *_DIRECT_FRIEND_ACTIONS,
+    ):
         if lowered == command:
             return (command, "")
         if lowered.startswith(f"{command} "):
@@ -167,11 +283,12 @@ def _parse_social_query(*, content: str, trigger_prefix: str) -> tuple[str, str]
     return None
 
 
-def _parse_target_id(content: str) -> int | None:
+def _parse_target_id(content: str, *, allow_numeric: bool = True) -> int | None:
     mention_match = _MENTION_RE.search(content)
     if mention_match is not None:
         return int(mention_match.group(1))
-    for token in content.split():
-        if token.isdigit():
-            return int(token)
+    if allow_numeric:
+        for token in content.split():
+            if token.isdigit():
+                return int(token)
     return None

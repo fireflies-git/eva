@@ -18,6 +18,13 @@ uv run eva settings set account-mode standalone
 - `assistant`: owner/selfbot-style behavior, no planned follow-up splitting
 - `standalone`: bot-account behavior, replies to all non-empty messages in 1:1 DMs and servers, but only to mentions/prefixes/replies in group chats, with delayed follow-up splitting
 
+Friend request application commands (admin-only):
+
+- `eva review @user` accepts a pending request and opens a named application group with the reviewing admin
+- `eva accept @user` accepts a request without opening an application group
+- `eva deny @user` denies a request
+- The existing `eva friends accept|deny @user` commands remain supported
+
 ## Runtime Helpers
 
 CLI flags:

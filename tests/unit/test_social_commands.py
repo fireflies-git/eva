@@ -7,7 +7,9 @@ from typing import cast
 import discord
 
 from eva.captcha import NopeCHAError
+from eva.discord.friend_requests import FriendRequestHandler
 from eva.discord.social_commands import SocialClient, handle_social_command
+from eva.state import PendingFriendRequestStore
 
 _ADMIN_ID = 218675193592283137
 _TRIGGER_PREFIX = "eva "
@@ -60,6 +62,7 @@ def _run(
     user_id: int,
     is_owner: bool = False,
     client: FakeSocialClient | None = None,
+    friend_request_handler: FriendRequestHandler | None = None,
 ):
     return asyncio.run(
         handle_social_command(
@@ -68,6 +71,7 @@ def _run(
             is_owner=is_owner,
             trigger_prefix=_TRIGGER_PREFIX,
             client=cast(SocialClient | None, client),
+            friend_request_handler=friend_request_handler,
         )
     )
 
@@ -291,3 +295,44 @@ def test_friends_accept_nopecha_failure_warns() -> None:
 
     assert response.handled is True
     assert "Captcha solver failed" in response.content
+
+
+def test_top_level_accept_requires_and_resolves_pending_mention() -> None:
+    client = FakeSocialClient()
+    relationship = FakeRelationship(request_type=discord.RelationshipType.incoming_request)
+    client.relationships[123456] = relationship
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=123456,
+        requester_label="requester",
+        review_text="body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    response = _run(
+        content="eva accept <@123456>",
+        user_id=_ADMIN_ID,
+        client=client,
+        friend_request_handler=handler,
+    )
+
+    assert response.handled is True
+    assert "Accepted friend request" in response.content
+    assert relationship.accepted is True
+    assert store.get(requester_id=123456) is None
+
+
+def test_top_level_deny_requires_a_mention() -> None:
+    response = _run(
+        content="eva deny 123456",
+        user_id=_ADMIN_ID,
+        client=FakeSocialClient(),
+        friend_request_handler=FriendRequestHandler(
+            pending_store=PendingFriendRequestStore(),
+            admin_ids=[_ADMIN_ID],
+        ),
+    )
+
+    assert response.handled is True
+    assert "Mention a user" in response.content

@@ -63,6 +63,32 @@ class PendingFriendRequestStore:
         self._pending.pop(requester_id, None)
         return pending
 
+    def get_for_admin(
+        self,
+        *,
+        requester_id: int,
+        admin_user_id: int,
+    ) -> PendingFriendRequest | None:
+        pending = self.get(requester_id=requester_id)
+        if pending is None or admin_user_id not in pending.notified_admin_ids:
+            return None
+        return pending
+
+    def pop_for_admin(
+        self,
+        *,
+        requester_id: int,
+        admin_user_id: int,
+    ) -> PendingFriendRequest | None:
+        pending = self.get_for_admin(
+            requester_id=requester_id,
+            admin_user_id=admin_user_id,
+        )
+        if pending is None:
+            return None
+        self._pending.pop(requester_id, None)
+        return pending
+
     def pop_oldest_for_admin(self, *, admin_user_id: int) -> PendingFriendRequest | None:
         """Pop the oldest pending request this admin was notified about.
 

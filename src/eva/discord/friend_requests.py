@@ -1,4 +1,4 @@
-"""Friend request pipeline: profile review, admin DM fan-out, yes/no resolution."""
+"""Friend request pipeline: review, admin DM fan-out, and resolution."""
 
 from __future__ import annotations
 
@@ -116,6 +116,53 @@ class FriendRequestHandler:
             decision=decision,
         )
 
+    def is_requester_pending(self, *, requester_id: int) -> bool:
+        return self._pending_store.get(requester_id=requester_id) is not None
+
+    async def handle_targeted_review(
+        self,
+        *,
+        client: discord.Client,
+        admin_user_id: int,
+        requester_id: int,
+    ) -> str:
+        pending = self._pending_store.pop_for_admin(
+            requester_id=requester_id,
+            admin_user_id=admin_user_id,
+        )
+        if pending is None:
+            return self._missing_target_message(requester_id)
+        return await self._resolve_pending(
+            client=client,
+            pending=pending,
+            decision=FriendRequestDecision.ACCEPT,
+            application_admin_id=admin_user_id,
+        )
+
+    async def handle_targeted_decision(
+        self,
+        *,
+        client: discord.Client,
+        admin_user_id: int,
+        requester_id: int,
+        decision: FriendRequestDecision,
+    ) -> str | None:
+        pending = self._pending_store.get(requester_id=requester_id)
+        if pending is not None and admin_user_id not in pending.notified_admin_ids:
+            return self._missing_target_message(requester_id)
+        if pending is not None:
+            pending = self._pending_store.pop_for_admin(
+                requester_id=requester_id,
+                admin_user_id=admin_user_id,
+            )
+        if pending is not None:
+            return await self._resolve_pending(
+                client=client,
+                pending=pending,
+                decision=decision,
+            )
+        return None
+
     async def _review(
         self,
         profile_text: str,
@@ -135,6 +182,7 @@ class FriendRequestHandler:
         client: discord.Client,
         pending: PendingFriendRequest,
         decision: FriendRequestDecision,
+        application_admin_id: int | None = None,
     ) -> str:
         relationship = client.get_relationship(pending.requester_id)
         if (
@@ -160,7 +208,49 @@ class FriendRequestHandler:
             return f"{X_MARK} Failed to {action} friend request: {exc}"
 
         verb = "Accepted" if decision is FriendRequestDecision.ACCEPT else "Denied"
+        if application_admin_id is not None:
+            try:
+                await self._create_application_group(
+                    client=client,
+                    pending=pending,
+                    admin_user_id=application_admin_id,
+                    requester=relationship.user,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to create application group for friend request from %s",
+                    pending.requester_id,
+                )
+                return (
+                    f"{CHECK_MARK} Accepted friend request from {pending.requester_label}, "
+                    f"but application group setup failed: {exc}"
+                )
         return f"{CHECK_MARK} {verb} friend request from {pending.requester_label}."
+
+    async def _create_application_group(
+        self,
+        *,
+        client: discord.Client,
+        pending: PendingFriendRequest,
+        admin_user_id: int,
+        requester: discord.User,
+    ) -> None:
+        admin = client.get_user(admin_user_id)
+        if admin is None:
+            admin = await client.fetch_user(admin_user_id)
+        group = await client.create_group(admin, requester)
+        await group.edit(name=f"{pending.requester_label}'s Application")
+        await group.send(
+            f"Application started for **{pending.requester_label}**. "
+            f"<@{admin_user_id}> and <@{pending.requester_id}>, please discuss the request here."
+        )
+
+    @staticmethod
+    def _missing_target_message(requester_id: int) -> str:
+        return (
+            f"{WARNING_MARK} No pending friend request for <@{requester_id}> "
+            "that you are assigned to review."
+        )
 
     def _restore_pending(self, pending: PendingFriendRequest) -> None:
         self._pending_store.set(
