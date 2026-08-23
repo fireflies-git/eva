@@ -219,12 +219,26 @@ def test_friends_command_requires_admin() -> None:
     assert "don't have permission" in response.content
 
 
-def test_friends_command_warns_when_no_incoming_request() -> None:
+def test_friends_command_accept_is_idempotent_for_existing_friend() -> None:
     client = FakeSocialClient()
     client.relationships[123456] = FakeRelationship(request_type=discord.RelationshipType.friend)
 
     response = _run(
         content="eva friends accept 123456",
+        user_id=_ADMIN_ID,
+        client=client,
+    )
+
+    assert response.handled is True
+    assert "already accepted" in response.content
+
+
+def test_friends_command_warns_when_denying_existing_friend() -> None:
+    client = FakeSocialClient()
+    client.relationships[123456] = FakeRelationship(request_type=discord.RelationshipType.friend)
+
+    response = _run(
+        content="eva friends deny 123456",
         user_id=_ADMIN_ID,
         client=client,
     )
@@ -321,6 +335,27 @@ def test_top_level_accept_requires_and_resolves_pending_mention() -> None:
     assert "Accepted friend request" in response.content
     assert relationship.accepted is True
     assert store.get(requester_id=123456) is None
+
+
+def test_top_level_accept_is_idempotent_for_already_friended_applicant() -> None:
+    client = FakeSocialClient()
+    client.relationships[123456] = FakeRelationship(
+        request_type=discord.RelationshipType.friend
+    )
+    handler = FriendRequestHandler(
+        pending_store=PendingFriendRequestStore(),
+        admin_ids=[_ADMIN_ID],
+    )
+
+    response = _run(
+        content="eva accept <@123456>",
+        user_id=_ADMIN_ID,
+        client=client,
+        friend_request_handler=handler,
+    )
+
+    assert response.handled is True
+    assert "already accepted" in response.content
 
 
 def test_top_level_accept_without_target_resolves_latest_pending_request() -> None:

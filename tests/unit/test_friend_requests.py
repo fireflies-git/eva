@@ -472,6 +472,34 @@ def test_targeted_review_without_target_uses_latest_pending_request() -> None:
     assert len(client.groups) == 1
 
 
+def test_targeted_review_creates_application_when_request_is_already_accepted() -> None:
+    client, relationship = _client_with_incoming(
+        requester=FakeUser(_REQUESTER_ID, name="already friended")
+    )
+    relationship.type = discord.RelationshipType.friend
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="already friended",
+        review_text="review body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    result = asyncio.run(
+        handler.handle_targeted_review(
+            client=cast(discord.Client, client),
+            admin_user_id=_ADMIN_ID,
+            requester_id=_REQUESTER_ID,
+        )
+    )
+
+    assert "already accepted" in result
+    assert "application group created" in result
+    assert len(client.groups) == 1
+    assert store.get(requester_id=_REQUESTER_ID) is None
+
+
 def test_targeted_review_rejects_admin_not_notified() -> None:
     client, relationship = _client_with_incoming()
     store = PendingFriendRequestStore()

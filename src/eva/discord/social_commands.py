@@ -158,36 +158,13 @@ async def _handle_friends_command(
             content=f"{X_MARK} Mention a user or provide an ID: `{usage}`",
         )
 
-    relationship = client.get_relationship(target_id)
-    if (
-        relationship is None
-        or relationship.type is not discord.RelationshipType.incoming_request
-    ):
-        return CommandOutcome(
-            handled=True,
-            content=f"{WARNING_MARK} No incoming friend request from <@{target_id}>.",
-        )
-
-    try:
-        if action == "accept":
-            await relationship.accept()
-        else:
-            await relationship.delete()
-    except NopeCHAError as exc:
-        return CommandOutcome(
-            handled=True,
-            content=f"{WARNING_MARK} Captcha solver failed: {exc}",
-        )
-    except Exception as exc:
-        return CommandOutcome(
-            handled=True,
-            content=f"{X_MARK} Failed to {action} friend request: {exc}",
-        )
-
-    verb = "Accepted" if action == "accept" else "Denied"
     return CommandOutcome(
         handled=True,
-        content=f"{CHECK_MARK} {verb} friend request from <@{target_id}>.",
+        content=await _resolve_direct_friend_decision(
+            client=client,
+            target_id=target_id,
+            action=action,
+        ),
     )
 
 
@@ -233,35 +210,46 @@ async def _handle_targeted_friend_command(
                     handled=True,
                     content=f"{WARNING_MARK} You have no pending friend requests to resolve.",
                 )
-            relationship = client.get_relationship(target_id)
-            if (
-                relationship is None
-                or relationship.type is not discord.RelationshipType.incoming_request
-            ):
-                return CommandOutcome(
-                    handled=True,
-                    content=f"{WARNING_MARK} No incoming friend request from <@{target_id}>.",
-                )
-            try:
-                if action == "accept":
-                    await relationship.accept()
-                else:
-                    await relationship.delete()
-            except NopeCHAError as exc:
-                return CommandOutcome(
-                    handled=True,
-                    content=f"{WARNING_MARK} Captcha solver failed: {exc}",
-                )
-            except Exception as exc:
-                return CommandOutcome(
-                    handled=True,
-                    content=f"{X_MARK} Failed to {action} friend request: {exc}",
-                )
-            verb = "Accepted" if action == "accept" else "Denied"
-            content = f"{CHECK_MARK} {verb} friend request from <@{target_id}>."
+            content = await _resolve_direct_friend_decision(
+                client=client,
+                target_id=target_id,
+                action=action,
+            )
         else:
             content = result
     return CommandOutcome(handled=True, content=content)
+
+
+async def _resolve_direct_friend_decision(
+    *,
+    client: SocialClient,
+    target_id: int,
+    action: str,
+) -> str:
+    relationship = client.get_relationship(target_id)
+    if relationship is not None and (
+        action == "accept"
+        and relationship.type is discord.RelationshipType.friend
+    ):
+        return f"{CHECK_MARK} Friend request from <@{target_id}> is already accepted."
+    if (
+        relationship is None
+        or relationship.type is not discord.RelationshipType.incoming_request
+    ):
+        return f"{WARNING_MARK} No incoming friend request from <@{target_id}>."
+
+    try:
+        if action == "accept":
+            await relationship.accept()
+        else:
+            await relationship.delete()
+    except NopeCHAError as exc:
+        return f"{WARNING_MARK} Captcha solver failed: {exc}"
+    except Exception as exc:
+        return f"{X_MARK} Failed to {action} friend request: {exc}"
+
+    verb = "Accepted" if action == "accept" else "Denied"
+    return f"{CHECK_MARK} {verb} friend request from <@{target_id}>."
 
 
 def _parse_social_query(*, content: str, trigger_prefix: str) -> tuple[str, str] | None:

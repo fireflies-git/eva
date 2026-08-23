@@ -219,9 +219,16 @@ class FriendRequestHandler:
         application_admin_id: int | None = None,
     ) -> str:
         relationship = client.get_relationship(pending.requester_id)
+        if relationship is None:
+            return (
+                f"{WARNING_MARK} Friend request from {pending.requester_label} "
+                "is already resolved or no longer exists."
+            )
+
+        already_accepted = relationship.type is discord.RelationshipType.friend
         if (
-            relationship is None
-            or relationship.type is not discord.RelationshipType.incoming_request
+            not already_accepted
+            and relationship.type is not discord.RelationshipType.incoming_request
         ):
             return (
                 f"{WARNING_MARK} Friend request from {pending.requester_label} "
@@ -229,19 +236,28 @@ class FriendRequestHandler:
             )
 
         action = decision.value
-        try:
-            if decision is FriendRequestDecision.ACCEPT:
-                await relationship.accept()
-            else:
-                await relationship.delete()
-        except NopeCHAError as exc:
-            self._restore_pending(pending)
-            return f"{WARNING_MARK} Captcha solver failed while {action}ing: {exc}"
-        except Exception as exc:
-            self._restore_pending(pending)
-            return f"{X_MARK} Failed to {action} friend request: {exc}"
+        if not already_accepted:
+            try:
+                if decision is FriendRequestDecision.ACCEPT:
+                    await relationship.accept()
+                else:
+                    await relationship.delete()
+            except NopeCHAError as exc:
+                self._restore_pending(pending)
+                return f"{WARNING_MARK} Captcha solver failed while {action}ing: {exc}"
+            except Exception as exc:
+                self._restore_pending(pending)
+                return f"{X_MARK} Failed to {action} friend request: {exc}"
 
-        verb = "Accepted" if decision is FriendRequestDecision.ACCEPT else "Denied"
+        if already_accepted and decision is FriendRequestDecision.DENY:
+            return (
+                f"{WARNING_MARK} Friend request from {pending.requester_label} "
+                "is already accepted."
+            )
+
+        verb = "Already accepted" if already_accepted else (
+            "Accepted" if decision is FriendRequestDecision.ACCEPT else "Denied"
+        )
         if application_admin_id is not None:
             try:
                 await self._create_application_group(
@@ -256,9 +272,19 @@ class FriendRequestHandler:
                     pending.requester_id,
                 )
                 return (
-                    f"{CHECK_MARK} Accepted friend request from {pending.requester_label}, "
+                    f"{CHECK_MARK} {verb} friend request from {pending.requester_label}, "
                     f"but application group setup failed: {exc}"
                 )
+        if already_accepted:
+            if application_admin_id is not None:
+                return (
+                    f"{CHECK_MARK} Friend request from {pending.requester_label} was already "
+                    "accepted; application group created."
+                )
+            return (
+                f"{CHECK_MARK} Friend request from {pending.requester_label} "
+                "is already accepted."
+            )
         return f"{CHECK_MARK} {verb} friend request from {pending.requester_label}."
 
     async def _create_application_group(
