@@ -20,6 +20,7 @@ from eva.state import (
     WhitelistStore,
 )
 from eva.terminal import TerminalService
+from eva.yuri import YuriImageAsset
 
 
 def _permissive_rate_limiter() -> RateLimiter:
@@ -653,3 +654,70 @@ def test_clear_command_clears_only_current_channel_memory(monkeypatch, tmp_path)
     assert delivered == ["✔ Cleared memory for this channel."]
     assert handler._history_store.get(1) == []
     assert len(handler._history_store.get(2)) == 2
+
+
+@pytest.mark.parametrize("whitelisted", [False, True])
+def test_yuri_command_bypasses_ai_generation(monkeypatch, tmp_path, whitelisted: bool) -> None:
+    class FailingReplyGenerationService:
+        async def generate_reply(self, **kwargs: object) -> object:
+            raise AssertionError("AI generation should not run for Yuri commands")
+
+    class FakeYuriService:
+        allow_nsfw: bool | None = None
+
+        async def get_random_image(
+            self,
+            *,
+            max_bytes: int,
+            allow_nsfw: bool,
+        ) -> YuriImageAsset:
+            self.allow_nsfw = allow_nsfw
+            return YuriImageAsset(
+                image_id=7,
+                filename="yuri-7.png",
+                data=b"png-bytes",
+                permalink=None,
+                is_nsfw=False,
+            )
+
+    handler = _build_handler(tmp_path)
+    if whitelisted:
+        handler._whitelist.add(2)
+    handler._reply_generation_service = cast(
+        ReplyGenerationService, FailingReplyGenerationService()
+    )
+    handler._yuri_service = FakeYuriService()
+
+    delivered: list[tuple[str, list[tuple[str, bytes]] | None]] = []
+
+    async def fake_deliver_reply_response(**kwargs: object) -> object:
+        delivered.append(
+            (
+                cast(str, kwargs["reply_content"]),
+                cast(list[tuple[str, bytes]] | None, kwargs.get("reply_attachments")),
+            )
+        )
+        return SimpleNamespace(
+            primary_delivered=True,
+            tracked_message_ids=[],
+            had_continuation_failures=False,
+        )
+
+    monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
+
+    message = cast(
+        discord.Message,
+        SimpleNamespace(
+            author=SimpleNamespace(id=2, display_name="friend"),
+            channel=SimpleNamespace(id=1),
+            content="eva yuri",
+            id=123,
+            reference=None,
+        ),
+    )
+    client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))
+
+    asyncio.run(handler.on_message(client, message))
+
+    assert delivered == [("✔ `yuri-7.png`", [("yuri-7.png", b"png-bytes")])]
+    assert handler._yuri_service.allow_nsfw is whitelisted

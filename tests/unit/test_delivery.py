@@ -10,6 +10,7 @@ from eva.discord.delivery import (
     close_application_group,
     deliver_owner_response,
     deliver_reply_response,
+    safe_reply,
 )
 
 
@@ -87,6 +88,21 @@ class FakeReplyMessage:
         if self._fail_reply:
             raise RuntimeError("reply failed")
         return FakeSentMessage(self._first_reply_id)
+
+
+class FakeSpoilerReplyMessage:
+    def __init__(self) -> None:
+        self.files: list[discord.File] = []
+
+    async def reply(
+        self,
+        *,
+        content: str,
+        files: list[discord.File],
+        suppress_embeds: bool,
+    ) -> FakeSentMessage:
+        self.files = files
+        return FakeSentMessage(20)
 
 
 class FakeApplicationGroup:
@@ -196,6 +212,24 @@ def test_deliver_reply_response_does_not_track_if_reply_fails() -> None:
 
     assert result.primary_delivered is False
     assert result.tracked_message_ids == []
+
+
+def test_safe_reply_marks_attachments_as_spoilers() -> None:
+    message = FakeSpoilerReplyMessage()
+
+    result = asyncio.run(
+        safe_reply(
+            cast(discord.Message, message),
+            "Marked NSFW",
+            attachments=[("yuri-1.png", b"image")],
+            spoiler_attachments=True,
+        )
+    )
+
+    assert result is not None
+    assert len(message.files) == 1
+    assert message.files[0].spoiler is True
+    assert message.files[0].filename == "SPOILER_yuri-1.png"
 
 
 def test_deliver_owner_response_marks_continuation_failures_without_tracking_unsent_ids() -> None:

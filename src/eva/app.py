@@ -18,6 +18,7 @@ from eva.ai import (
 from eva.ai.friend_request_review import FriendRequestReviewService
 from eva.captcha import NopeCHAClient
 from eva.config import Settings
+from eva.constants import YURI_DATABASE_FILENAME
 from eva.discord import SelfbotMessageHandler, create_discord_client
 from eva.discord.client import CaptchaHandler
 from eva.discord.commands import ALLOWED_ADMIN_IDS
@@ -41,6 +42,7 @@ from eva.state.user_memory import DEFAULT_USER_MEMORY_PATH
 from eva.state.whitelist import DEFAULT_WHITELIST_PATH
 from eva.terminal import TerminalService
 from eva.tools import Context7Service, PlaywrightService, ToolService
+from eva.yuri import YuriImageService
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,9 @@ class EvaApp:
                 max_output_chars=settings.terminal_max_output_chars,
             )
         self._download_service = DownloadService(client=YtDLPDownloadClient())
+        self._yuri_service = YuriImageService(
+            db_path=state_dir / YURI_DATABASE_FILENAME,
+        )
 
         self._tool_services: list[ToolService] = []
         if self._terminal_service is not None and settings.terminal_autonomous_enabled:
@@ -188,6 +193,7 @@ class EvaApp:
             summarization_service=self._summarization_service,
             terminal_service=self._terminal_service,
             download_service=self._download_service,
+            yuri_service=self._yuri_service,
             account_update_planner=self._account_update_planner,
             pending_account_updates=self._pending_account_updates,
             friend_request_handler=self._friend_request_handler,

@@ -8,6 +8,7 @@ class CommandOutcome:
     handled: bool
     content: str = ""
     attachments: list[tuple[str, bytes]] | None = None
+    spoiler_attachments: bool = False
     should_clear: bool = False
     close_application: bool = False
 

@@ -64,6 +64,7 @@ from eva.discord.triggers import (
 )
 from eva.discord.user_metadata import build_requester_context
 from eva.discord.watermark_commands import handle_watermark_command
+from eva.discord.yuri_commands import YuriImageProvider, handle_yuri_command
 from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
@@ -104,6 +105,7 @@ class SelfbotMessageHandler:
         account_update_planner: AccountUpdatePlanner | None = None,
         pending_account_updates: PendingAccountUpdateStore | None = None,
         friend_request_handler: FriendRequestHandler | None = None,
+        yuri_service: YuriImageProvider | None = None,
     ) -> None:
         self._settings = settings
         self._reply_generation_service = reply_generation_service
@@ -120,6 +122,7 @@ class SelfbotMessageHandler:
         self._account_update_planner = account_update_planner
         self._pending_account_updates = pending_account_updates
         self._friend_request_handler = friend_request_handler
+        self._yuri_service = yuri_service
         self._pending_recovery_notified = False
 
     async def handle_ready(self, client: discord.Client) -> None:
@@ -407,6 +410,25 @@ class SelfbotMessageHandler:
         ):
             return True
 
+        yuri_outcome = await handle_yuri_command(
+            message=message,
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+            yuri_service=self._yuri_service,
+            allow_nsfw=(
+                is_admin_user(user_id=message.author.id, is_owner=is_owner)
+                or self._whitelist.contains(message.author.id)
+            ),
+        )
+        if await self._handle_command_outcome(
+            outcome=yuri_outcome,
+            message=message,
+            is_owner=is_owner,
+            original_content=original_content,
+            channel_id=channel_id,
+        ):
+            return True
+
         reminder_outcome = await handle_reminder_command(
             message=message,
             content=original_content,
@@ -503,6 +525,7 @@ class SelfbotMessageHandler:
             original_content=original_content,
             content=outcome.content,
             attachments=outcome.attachments,
+            spoiler_attachments=outcome.spoiler_attachments,
         )
         if outcome.close_application:
             await close_application_group(message.channel)
@@ -843,6 +866,7 @@ class SelfbotMessageHandler:
         original_content: str,
         content: str,
         attachments: list[tuple[str, bytes]] | None = None,
+        spoiler_attachments: bool = False,
     ) -> None:
         if is_owner and not self._is_standalone_mode():
             await deliver_owner_response(
@@ -850,6 +874,7 @@ class SelfbotMessageHandler:
                 original_content=original_content,
                 reply_content=content,
                 reply_attachments=attachments,
+                spoiler_attachments=spoiler_attachments,
             )
             return
 
@@ -857,6 +882,7 @@ class SelfbotMessageHandler:
             message=message,
             reply_content=content,
             reply_attachments=attachments,
+            spoiler_attachments=spoiler_attachments,
         )
 
     def _clear_channel_memory(self, channel_id: int) -> None:

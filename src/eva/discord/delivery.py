@@ -29,10 +29,14 @@ class DeliveryResult:
     had_continuation_failures: bool = False
 
 
-def _build_files(attachments: list[tuple[str, bytes]]) -> list[discord.File]:
+def _build_files(
+    attachments: list[tuple[str, bytes]],
+    *,
+    spoiler: bool = False,
+) -> list[discord.File]:
     files: list[discord.File] = []
     for filename, data in attachments:
-        files.append(discord.File(fp=io.BytesIO(data), filename=filename))
+        files.append(discord.File(fp=io.BytesIO(data), filename=filename, spoiler=spoiler))
     return files
 
 
@@ -42,10 +46,11 @@ async def safe_edit(
     *,
     attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    spoiler_attachments: bool = False,
 ) -> bool:
     try:
         if attachments:
-            files = _build_files(attachments)
+            files = _build_files(attachments, spoiler=spoiler_attachments)
             await message.edit(
                 content=content, suppress=suppress_embeds, attachments=files
             )
@@ -63,13 +68,14 @@ async def safe_send(
     *,
     attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    spoiler_attachments: bool = False,
 ) -> discord.Message | None:
     send = getattr(channel, "send", None)
     if send is None:
         return None
     try:
         if attachments:
-            files = _build_files(attachments)
+            files = _build_files(attachments, spoiler=spoiler_attachments)
             return await send(content=content, files=files, suppress_embeds=suppress_embeds)
         return await send(content=content, suppress_embeds=suppress_embeds)
     except Exception:
@@ -83,10 +89,11 @@ async def safe_reply(
     *,
     attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    spoiler_attachments: bool = False,
 ) -> discord.Message | None:
     try:
         if attachments:
-            files = _build_files(attachments)
+            files = _build_files(attachments, spoiler=spoiler_attachments)
             return await message.reply(
                 content=content, files=files, suppress_embeds=suppress_embeds
             )
@@ -158,6 +165,7 @@ async def deliver_owner_response(
     reply_content: str,
     reply_attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    spoiler_attachments: bool = False,
     followup_delay_seconds: Callable[[str], float] | None = None,
 ) -> DeliveryResult:
     response_chunks = build_response_chunks(original_content, reply_content)
@@ -166,6 +174,7 @@ async def deliver_owner_response(
         response_chunks[0],
         attachments=reply_attachments,
         suppress_embeds=suppress_embeds,
+        spoiler_attachments=spoiler_attachments,
     )
     if not primary_delivered:
         return DeliveryResult(primary_delivered=False)
@@ -200,11 +209,16 @@ async def deliver_reply_response(
     reply_content: str,
     reply_attachments: list[tuple[str, bytes]] | None = None,
     suppress_embeds: bool = True,
+    spoiler_attachments: bool = False,
     followup_delay_seconds: Callable[[str], float] | None = None,
 ) -> DeliveryResult:
     chunks = build_plain_response_chunks(reply_content)
     first = await safe_reply(
-        message, chunks[0], attachments=reply_attachments, suppress_embeds=suppress_embeds
+        message,
+        chunks[0],
+        attachments=reply_attachments,
+        suppress_embeds=suppress_embeds,
+        spoiler_attachments=spoiler_attachments,
     )
     if first is None:
         return DeliveryResult(primary_delivered=False)

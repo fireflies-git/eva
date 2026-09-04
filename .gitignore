@@ -220,4 +220,5 @@ tracked_messages.json
 user_memory.json
 reminders.json
 pending_friend_requests.json
+yuri.db
 eva.exe # eva windows build

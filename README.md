@@ -67,6 +67,14 @@ TERMINAL_MAX_OUTPUT_CHARS=6000
 - In DMs, Eva falls back to a default 10 MiB upload limit.
 - If the downloaded file is too large for Discord, the command fails with an error.
 
+## Yuri Command
+
+- `eva yuri`
+- Sends one random image from the local `yuri.db` SQLite database as a Discord attachment.
+- The database is read from `STATE_DIR/yuri.db` (the default is `./yuri.db`) and is kept out of version control.
+- Non-whitelisted users receive only rows marked SFW; the owner, configured admins, and whitelisted users may receive NSFW rows.
+- NSFW rows are labeled and uploaded as Discord spoiler attachments.
+
 ## Channel Memory
 
 - Eva keeps separate local in-memory chat history per channel.

@@ -8,6 +8,7 @@ services:
       - STATE_DIR=/app/state
     volumes:
       - ./.env:/app/.env:ro
+      - ./yuri.db:/app/state/yuri.db:ro
       - eva-state:/app/state
 
 volumes:
