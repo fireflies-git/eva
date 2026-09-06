@@ -141,7 +141,21 @@ class TOSCheckService:
             "'i'm a minor').\n"
             "2. Promoting hatred, dehumanization, or violence against any group of "
             "people, including calls for a group to be hurt, killed, or excluded.\n"
-            "3. Extreme illegal content.\n\n"
+            "Analysis, quotation, classification, moderation, or de-escalation of hateful "
+            "material is acceptable when it does not advocate or facilitate violence.\n"
+            "3. Extreme illegal content, including sexual exploitation, trafficking, "
+            "coercion, non-consensual sexual abuse, or sexual violence.\n\n"
+            "Consensual adult sexual content, erotic fiction or roleplay involving adults, "
+            "flirtation, innuendo, kink, and vulgarity are not violations merely because "
+            "they are explicit or inappropriate. All sexual content must involve adults "
+            "and consent. Content involving minors, exploitation, coercion, or non-consensual "
+            "sexual acts is not acceptable.\n\n"
+            "Authorized defensive cybersecurity analysis, threat modeling, vulnerability "
+            "research, CTFs, sandboxed exploit reproduction, malware analysis, detection "
+            "engineering, incident response, and hardening are acceptable. Do not flag them "
+            "merely because they discuss exploits. Flag content that facilitates unauthorized "
+            "access, credential theft, persistence, exfiltration, evasion, destructive "
+            "compromise, or attacks on systems without authorization.\n\n"
             "Note: Swearing and slurs (including the hard-R n-word) are permitted by "
             "the owner in this context and are NOT violations by themselves. Only "
             "flag text that matches the three rules above.\n\n"
@@ -210,7 +224,11 @@ async def _generate_reply_with_tools(
             # Only the calls we actually answer may appear on the assistant
             # message, otherwise the next round 400s on unanswered tool_call_ids.
             answered_tool_calls = response.tool_calls[:MAX_TERMINAL_TOOL_CALLS_PER_ROUND]
-            assistant_message = _build_assistant_tool_message(response.content, answered_tool_calls)
+            assistant_message = _build_assistant_tool_message(
+                response.content,
+                answered_tool_calls,
+                reasoning_content=response.reasoning_content,
+            )
             tool_messages.append(assistant_message)
 
             for tool_call in answered_tool_calls:
@@ -261,6 +279,8 @@ def _build_conversation_messages(
 def _build_assistant_tool_message(
     content: str | None,
     tool_calls: Sequence[ModelToolCall],
+    *,
+    reasoning_content: str | None = None,
 ) -> ChatMessage:
     serialized_tool_calls: list[ToolCall] = [
         {
@@ -273,10 +293,13 @@ def _build_assistant_tool_message(
         }
         for tool_call in tool_calls
     ]
-    return {
+    message: ChatMessage = {
         "role": "assistant",
         "content": content or "",
         "tool_calls": serialized_tool_calls,
     }
+    if reasoning_content is not None:
+        message["reasoning_content"] = reasoning_content
+    return message
 
 

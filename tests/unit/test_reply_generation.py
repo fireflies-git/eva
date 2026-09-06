@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from typing import cast
 
 import discord
@@ -32,6 +33,14 @@ class StubTOSCheckService:
     async def check_tos_violation(self, text: str) -> bool:
         self.calls.append(text)
         return self.is_violation
+
+
+class StubSafeguardNotifier:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def notify_safeguard_hit(self, **kwargs: object) -> None:
+        self.calls.append(kwargs)
 
 
 class DummyChannel:
@@ -92,27 +101,73 @@ def test_reply_generation_uses_normal_text_path() -> None:
     assert tos_service.calls == ["normal"]
 
 
+def test_reply_generation_uses_admin_persona_when_requested() -> None:
+    response_service = StubResponseService("normal")
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=response_service,
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(
+                discord.abc.Messageable,
+                SimpleNamespace(guild=None, name="DM"),
+            ),
+            client=cast(
+                discord.Client,
+                SimpleNamespace(
+                    user=SimpleNamespace(name="eva", display_name="Eva"),
+                ),
+            ),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+            requester_is_admin=True,
+        )
+    )
+
+    system_prompt = cast(str, response_service.calls[0]["system_prompt"])
+    assert "Your admin bond" in system_prompt
+
+
 def test_reply_generation_blocks_tos_violations() -> None:
+    notifier = StubSafeguardNotifier()
+    client = DummyClient()
     reply_service = ReplyGenerationService(
         account_mode="assistant",
         response_service=StubResponseService("normal"),
         image_service=StubImageService(result=None),
         tos_check_service=StubTOSCheckService(is_violation=True),
+        safeguard_notifier=notifier,
     )
 
     reply = asyncio.run(
         reply_service.generate_reply(
             channel=cast(discord.abc.Messageable, DummyChannel()),
-            client=cast(discord.Client, DummyClient()),
+            client=cast(discord.Client, client),
             context_messages=[],
             history_messages=[],
             user_message="hello there",
             reply_context=None,
+            user_id=42,
+            channel_id=99,
         )
     )
 
     assert "violates my safety or TOS guidelines" in reply.content
     assert reply.attachments == []
+    assert notifier.calls == [
+        {
+            "client": client,
+            "requester_id": 42,
+            "channel_id": 99,
+            "reason": "TOS moderation blocked generated content",
+        }
+    ]
 
 
 def test_reply_generation_suppresses_dsml_tool_call_leak() -> None:
@@ -145,6 +200,76 @@ def test_reply_generation_suppresses_dsml_tool_call_leak() -> None:
     assert "DSML" not in reply.content
     assert "run_terminal_command" not in reply.content
     assert "couldn't complete that reply" in reply.content
+
+
+def test_reply_generation_sends_text_after_cutting_off_dsml_tool_call() -> None:
+    leaked_tool_call = (
+        "I checked that.\n"
+        "<｜｜DSML｜｜tool_calls>\n"
+        "<｜｜DSML｜｜invoke name=\"run_terminal_command\">\n"
+        "</｜｜DSML｜｜invoke>\n"
+        "</｜｜DSML｜｜tool_calls>"
+    )
+    notifier = StubSafeguardNotifier()
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(leaked_tool_call),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+        safeguard_notifier=notifier,
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="check the connection",
+            reply_context=None,
+            user_id=42,
+            channel_id=99,
+        )
+    )
+
+    assert reply.content.startswith(f"I checked that.{_WM}")
+    assert "couldn't complete that reply" not in reply.content
+    assert len(notifier.calls) == 1
+
+
+def test_reply_generation_alerts_admin_when_sanitizer_blocks_all_content() -> None:
+    notifier = StubSafeguardNotifier()
+    client = DummyClient()
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService("<think>private reasoning</think>"),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+        safeguard_notifier=notifier,
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, client),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello",
+            reply_context=None,
+            user_id=42,
+            channel_id=99,
+        )
+    )
+
+    assert "couldn't complete that reply" in reply.content
+    assert notifier.calls == [
+        {
+            "client": client,
+            "requester_id": 42,
+            "channel_id": 99,
+            "reason": "Output sanitizer removed all user-facing content",
+        }
+    ]
 
 
 def test_reply_generation_suppresses_identity_aware_transcript_leak() -> None:

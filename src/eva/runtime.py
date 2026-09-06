@@ -42,7 +42,12 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("API_BASE_URL", "https://inference.do-ai.run/v1", False, "AI API base URL"),
     EnvField("ACCOUNT_MODE", "assistant", False, "assistant or standalone mode"),
     EnvField("MODEL_NAME", "openai-gpt-oss-120b", False, "AI model name"),
-    EnvField("SPLIT_MODEL_NAME", "llama3.3-70b-instruct", False, "Follow-up split planner model"),
+    EnvField(
+        "SPLIT_MODEL_NAME",
+        "",
+        False,
+        "Follow-up split planner model (defaults to MODEL_NAME)",
+    ),
     EnvField("TRIGGER_PREFIX", "eva ", False, "Prefix used to trigger Eva"),
     EnvField(
         "RESPONSE_CONTEXT_MESSAGES",

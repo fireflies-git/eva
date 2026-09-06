@@ -65,6 +65,26 @@ def test_tos_check_allows_when_model_output_unparseable(caplog) -> None:
     assert "TOS moderation returned unexpected response" in caplog.text
 
 
+def test_tos_prompt_allows_consensual_adult_content() -> None:
+    client = StubModerationClient(response="NO")
+    service = TOSCheckService(client=client, model_name=MODERATION_MODEL)
+
+    asyncio.run(service.check_tos_violation("a fictional adult flirtation scene"))
+
+    messages = client.calls[0]["messages"]
+    assert isinstance(messages, list)
+    system_message = messages[0]
+    assert isinstance(system_message, dict)
+    prompt = system_message["content"]
+    assert isinstance(prompt, str)
+    assert "Consensual adult sexual content" in prompt
+    assert "must involve adults and consent" in prompt
+    assert "Content involving minors" in prompt
+    assert "Authorized defensive cybersecurity analysis" in prompt
+    assert "unauthorized access" in prompt
+    assert "does not advocate or facilitate violence" in prompt
+
+
 def test_tos_check_allows_reply_when_model_returns_empty_output(caplog) -> None:
     client = StubModerationClient(error=AIClientError("Model returned empty response content"))
     service = TOSCheckService(client=client, model_name=MODERATION_MODEL)

@@ -847,7 +847,7 @@ def test_review_service_parses_json_review() -> None:
     assert fake_client.calls[0]["model"] == "model"
     assert fake_client.calls[0]["temperature"] == 0.0
     messages = cast(list[dict[str, str]], fake_client.calls[0]["messages"])
-    assert "You are Eva, a standalone Discord assistant account." in messages[0][
+    assert "You are Eva, speaking directly with the people in this conversation." in messages[0][
         "content"
     ]
     assert "review in Eva's voice" in messages[0]["content"]

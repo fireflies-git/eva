@@ -18,7 +18,7 @@ SETTINGS_DEFAULTS = {
     "api_base_url": "https://inference.do-ai.run/v1",
     "account_mode": "assistant",
     "model_name": "openai-gpt-oss-120b",
-    "split_model_name": "llama3.3-70b-instruct",
+    "split_model_name": "",
     "trigger_prefix": "eva ",
     "max_history_messages": DEFAULT_MAX_HISTORY_MESSAGES,
     "response_context_messages": DEFAULT_RESPONSE_CONTEXT_MESSAGES,
@@ -233,7 +233,7 @@ def load_settings() -> Settings:
             model_name=model_name,
             split_model_name=_optional_env(
                 "SPLIT_MODEL_NAME",
-                default=SETTINGS_DEFAULTS["split_model_name"],
+                default=model_name,
             ),
             # TOS_MODEL_NAME defaults to the main model: the moderation check must
             # work out of the box on whatever provider is configured.

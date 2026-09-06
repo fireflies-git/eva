@@ -25,7 +25,7 @@ def build_capabilities_section(
 
     if tools_enabled:
         parts.append(
-            "You have a real shell inside leah's Docker container via the "
+            "You have a real shell available through the "
             "`run_terminal_command` tool. It's unrestricted — `curl`, `ping`, pipes, redirects, "
             "command chains, pip/npm/apt/pacman installs, anything. Use it whenever it would "
             "actually help: pinging or curling servers, reading files/logs/configs/git state, "

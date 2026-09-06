@@ -87,6 +87,17 @@ def test_load_settings_defaults_tos_model_to_main_model(monkeypatch) -> None:
     assert settings.tos_model_name == "deepseek-v4-flash"
 
 
+def test_load_settings_defaults_split_model_to_main_model(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("MODEL_NAME", "deepseek-v4-flash")
+    monkeypatch.delenv("SPLIT_MODEL_NAME", raising=False)
+
+    settings = load_settings()
+
+    assert settings.split_model_name == "deepseek-v4-flash"
+
+
 def test_load_settings_reads_tos_model_override(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("API_KEY", "key")

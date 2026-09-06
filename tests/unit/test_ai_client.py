@@ -15,6 +15,7 @@ class StubAIClient(OpenAICompatibleClient):
             timeout_seconds=30.0,
         )
         self._payload = payload
+        self.requests: list[dict[str, Any]] = []
 
     async def _request(
         self,
@@ -22,6 +23,8 @@ class StubAIClient(OpenAICompatibleClient):
         path: str,
         json: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if json is not None:
+            self.requests.append(json)
         return self._payload
 
 
@@ -100,3 +103,45 @@ def test_chat_completion_with_tools_parses_tool_calls() -> None:
     assert len(output.tool_calls) == 1
     assert output.tool_calls[0].id == "call-1"
     assert output.tool_calls[0].name == "shell"
+
+
+def test_chat_completion_with_tools_preserves_reasoning_content() -> None:
+    client = StubAIClient(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "reasoning_content": "private reasoning",
+                        "tool_calls": [],
+                    }
+                }
+            ]
+        }
+    )
+
+    output = asyncio.run(client.chat_completion_with_tools(messages=[], tools=[]))
+
+    assert output.reasoning_content == "private reasoning"
+
+
+def test_deepseek_v4_requests_disable_thinking_by_default() -> None:
+    client = OpenAICompatibleClient(
+        api_key="test",
+        base_url="https://api.deepseek.com",
+        default_model="deepseek-v4-flash",
+        timeout_seconds=30.0,
+    )
+
+    async def request(
+        method: str,
+        path: str,
+        json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        assert json is not None
+        assert json["thinking"] == {"type": "disabled"}
+        return {"choices": [{"message": {"content": "reply"}}]}
+
+    client._request = request  # type: ignore[method-assign]
+
+    assert _chat(client) == "reply"

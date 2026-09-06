@@ -35,6 +35,7 @@ class ModelToolCall:
 class ChatCompletionOutput:
     content: str | None
     tool_calls: list[ModelToolCall]
+    reasoning_content: str | None = None
 
 
 @runtime_checkable
@@ -58,11 +59,13 @@ class OpenAICompatibleClient:
         base_url: str,
         default_model: str,
         timeout_seconds: float,
+        thinking_enabled: bool | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
         self._timeout_seconds = timeout_seconds
+        self._thinking_enabled = thinking_enabled
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
@@ -90,13 +93,12 @@ class OpenAICompatibleClient:
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> str:
-        payload = {
-            "model": model or self._default_model,
-            "messages": list(messages),
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
+        payload = self._build_completion_payload(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
         data = await self._request("POST", "/chat/completions", json=payload)
 
         message = _extract_response_message(data)
@@ -115,15 +117,14 @@ class OpenAICompatibleClient:
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> ChatCompletionOutput:
-        payload = {
-            "model": model or self._default_model,
-            "messages": list(messages),
-            "tools": list(tools),
-            "tool_choice": "auto",
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
+        payload = self._build_completion_payload(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+        )
+        payload["tool_choice"] = "auto"
         data = await self._request("POST", "/chat/completions", json=payload)
 
         message = _extract_response_message(data)
@@ -132,10 +133,54 @@ class OpenAICompatibleClient:
         if isinstance(content, str) and content.strip():
             resolved_content = content.strip()
 
+        reasoning_content = message.get("reasoning_content")
+        resolved_reasoning_content = (
+            reasoning_content if isinstance(reasoning_content, str) else None
+        )
+
         return ChatCompletionOutput(
             content=resolved_content,
             tool_calls=_parse_tool_calls(message),
+            reasoning_content=resolved_reasoning_content,
         )
+
+    def _build_completion_payload(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+        model: str | None,
+        temperature: float,
+        max_tokens: int,
+        tools: Sequence[dict[str, object]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": model or self._default_model,
+            "messages": list(messages),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        if tools is not None:
+            payload["tools"] = list(tools)
+
+        thinking_enabled = self._resolve_thinking_enabled(model)
+        if thinking_enabled is not None:
+            # DeepSeek V4 defaults to exposing a separate reasoning stream. Eva
+            # only sends the visible content to Discord, so non-thinking mode is
+            # the reliable default for normal user-facing replies.
+            payload["thinking"] = {
+                "type": "enabled" if thinking_enabled else "disabled",
+            }
+        return payload
+
+    def _resolve_thinking_enabled(self, model: str | None) -> bool | None:
+        if self._thinking_enabled is not None:
+            return self._thinking_enabled
+
+        resolved_model = (model or self._default_model).strip().lower()
+        if resolved_model.startswith("deepseek-v4"):
+            return False
+        return None
 
     async def _request(
         self,

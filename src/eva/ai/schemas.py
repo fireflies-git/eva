@@ -17,6 +17,7 @@ class ToolCall(TypedDict):
 class ChatMessage(TypedDict):
     role: str
     content: str
+    reasoning_content: NotRequired[str | None]
     tool_call_id: NotRequired[str]
     name: NotRequired[str]
     tool_calls: NotRequired[list[ToolCall]]

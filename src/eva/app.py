@@ -23,6 +23,7 @@ from eva.discord import SelfbotMessageHandler, create_discord_client
 from eva.discord.client import CaptchaHandler
 from eva.discord.commands import ALLOWED_ADMIN_IDS
 from eva.discord.friend_requests import FriendRequestHandler
+from eva.discord.safeguards import DiscordSafeguardNotifier
 from eva.downloads import DownloadService, YtDLPDownloadClient
 from eva.images import ImageClient, ImageDetector, ImageGenerationService
 from eva.reminders import ReminderDetector, ReminderRunner, ReminderScheduler
@@ -150,6 +151,7 @@ class EvaApp:
             review_service=self._friend_request_review_service,
             admin_ids=ALLOWED_ADMIN_IDS,
         )
+        self._safeguard_notifier = DiscordSafeguardNotifier(admin_ids=ALLOWED_ADMIN_IDS)
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
         self._tracked_messages = TrackedMessageStore(
             path=state_dir / DEFAULT_TRACKED_MESSAGES_PATH.name
@@ -174,6 +176,7 @@ class EvaApp:
             autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
             playwright_enabled=settings.playwright_enabled,
             context7_enabled=settings.context7_api_key is not None,
+            safeguard_notifier=self._safeguard_notifier,
         )
         self._rate_limiter = RateLimiter(
             max_requests=settings.rate_limit_max_requests,

@@ -117,13 +117,27 @@ def strip_tool_call_markup(content: str) -> str:
     return cleaned.strip()
 
 
+def contains_tool_call_markup(content: str) -> bool:
+    """Return whether model output contains a provider tool-call envelope."""
+    if not content:
+        return False
+    return bool(_DSML_TOOL_BLOCK_RE.search(content) or _DSML_TOOL_MARKER_RE.search(content))
+
+
 def _normalize_plain_punctuation(content: str) -> str:
     """Remove decorative Unicode output while preserving fenced code blocks."""
     parts = re.split(r"(```.*?```)", content, flags=re.DOTALL)
+    plain_content = "".join(parts[0::2])
     for index in range(0, len(parts), 2):
         parts[index] = parts[index].replace("—", ",").replace("–", "-")
         parts[index] = _EMOJI_RE.sub("", parts[index])
-    return "".join(parts)
+    normalized = "".join(parts)
+    if not normalized.strip() and plain_content.strip():
+        # Formatting cleanup must not turn an intentional emoji-only reply into
+        # an empty response. Hidden reasoning and protocol markup have already
+        # been removed before this helper runs.
+        return content
+    return normalized
 
 
 def _ensure_question_marks(content: str) -> str:

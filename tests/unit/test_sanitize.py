@@ -1,4 +1,4 @@
-from eva.ai.sanitize import sanitize_response, strip_context_echo
+from eva.ai.sanitize import contains_tool_call_markup, sanitize_response, strip_context_echo
 
 _DSML_TOOL_CALL = (
     "<｜｜DSML｜｜tool_calls>\n"
@@ -12,6 +12,10 @@ _DSML_TOOL_CALL = (
 
 def test_sanitize_response_normalizes_em_dashes_and_unicode_emoji() -> None:
     assert sanitize_response("quiet — but okay 🙂") == "quiet , but okay"
+
+
+def test_sanitize_response_preserves_emoji_only_reply() -> None:
+    assert sanitize_response("🙂") == "🙂"
 
 
 def test_sanitize_response_preserves_code_block_punctuation_and_symbols() -> None:
@@ -38,6 +42,13 @@ def test_sanitize_response_keeps_text_around_dsml_tool_call() -> None:
     content = f"I checked that.\n{_DSML_TOOL_CALL}\nThe result is inconclusive."
 
     assert sanitize_response(content) == "I checked that.\n\nThe result is inconclusive."
+
+
+def test_contains_tool_call_markup_detects_protocol_without_blocking_text() -> None:
+    content = f"I checked that.\n{_DSML_TOOL_CALL}"
+
+    assert contains_tool_call_markup(content) is True
+    assert sanitize_response(content) == "I checked that."
 
 
 def test_strip_context_echo_removes_full_transcript_framing() -> None:

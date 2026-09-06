@@ -8,7 +8,12 @@ from typing import Protocol
 import discord
 
 from eva.ai.respond import ResponseGenerationResult
-from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
+from eva.ai.sanitize import (
+    contains_tool_call_markup,
+    sanitize_response,
+    strip_context_echo,
+    strip_response_watermark,
+)
 from eva.ai.schemas import ChatMessage
 from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
@@ -56,6 +61,17 @@ class TOSChecker(Protocol):
     async def check_tos_violation(self, text: str) -> bool: ...
 
 
+class SafeguardNotifier(Protocol):
+    async def notify_safeguard_hit(
+        self,
+        *,
+        client: discord.Client,
+        requester_id: int | None,
+        channel_id: int | None,
+        reason: str,
+    ) -> None: ...
+
+
 class ReminderRunner(Protocol):
     async def schedule_if_needed(
         self,
@@ -79,6 +95,7 @@ class ReplyGenerationService:
         autonomous_terminal_enabled: bool = False,
         playwright_enabled: bool = False,
         context7_enabled: bool = False,
+        safeguard_notifier: SafeguardNotifier | None = None,
     ) -> None:
         self._account_mode = account_mode
         self._response_service = response_service
@@ -89,6 +106,7 @@ class ReplyGenerationService:
         self._autonomous_terminal_enabled = autonomous_terminal_enabled
         self._playwright_enabled = playwright_enabled
         self._context7_enabled = context7_enabled
+        self._safeguard_notifier = safeguard_notifier
         self._watermark_enabled = True
 
     @property
@@ -111,6 +129,7 @@ class ReplyGenerationService:
         requester_context: str | None = None,
         user_id: int | None = None,
         channel_id: int | None = None,
+        requester_is_admin: bool = False,
     ) -> ReplyOutput:
         reminder_confirmation = await self._schedule_reminder_if_needed(
             user_message=user_message,
@@ -122,7 +141,12 @@ class ReplyGenerationService:
                 content=reminder_confirmation.content,
                 attachments=[],
             )
-            return await self._finalize_reply(reply)
+            return await self._finalize_reply(
+                reply,
+                client=client,
+                requester_id=user_id,
+                channel_id=channel_id,
+            )
 
         image_results = await self._run_image_if_needed(
             context_messages=context_messages,
@@ -142,6 +166,7 @@ class ReplyGenerationService:
                 autonomous_terminal_enabled=self._autonomous_terminal_enabled,
                 playwright_enabled=self._playwright_enabled,
                 context7_enabled=self._context7_enabled,
+                requester_is_admin=requester_is_admin,
             )
             content = await self._response_service.generate_reply(
                 system_prompt=system_prompt,
@@ -156,13 +181,30 @@ class ReplyGenerationService:
                 attachments=[],
             )
 
-        return await self._finalize_reply(reply)
+        return await self._finalize_reply(
+            reply,
+            client=client,
+            requester_id=user_id,
+            channel_id=channel_id,
+        )
 
-    async def _finalize_reply(self, reply: ReplyOutput) -> ReplyOutput:
+    async def _finalize_reply(
+        self,
+        reply: ReplyOutput,
+        *,
+        client: discord.Client,
+        requester_id: int | None,
+        channel_id: int | None,
+    ) -> ReplyOutput:
         """Run the shared reply tail: TOS check, code extraction, watermark."""
         is_violation = await self._tos_check_service.check_tos_violation(reply.content)
         if is_violation:
-            logger.warning("Generated reply blocked by TOS check.")
+            await self._report_safeguard_hit(
+                client=client,
+                requester_id=requester_id,
+                channel_id=channel_id,
+                reason="TOS moderation blocked generated content",
+            )
             blocked = f"{WARNING_MARK} I can't say that. It violates my safety or TOS guidelines."
             return ReplyOutput(
                 content=blocked,
@@ -177,7 +219,49 @@ class ReplyGenerationService:
                 allow_embeds=reply.allow_embeds,
             )
 
-        return _sanitize_and_watermark(reply, watermark_enabled=self._watermark_enabled)
+        had_protocol_leak = contains_tool_call_markup(reply.content)
+        finalized, sanitizer_blocked = _sanitize_and_watermark(
+            reply,
+            watermark_enabled=self._watermark_enabled,
+        )
+        if had_protocol_leak or sanitizer_blocked:
+            await self._report_safeguard_hit(
+                client=client,
+                requester_id=requester_id,
+                channel_id=channel_id,
+                reason=(
+                    "Output sanitizer removed a model protocol leak"
+                    if had_protocol_leak
+                    else "Output sanitizer removed all user-facing content"
+                ),
+            )
+        return finalized
+
+    async def _report_safeguard_hit(
+        self,
+        *,
+        client: discord.Client,
+        requester_id: int | None,
+        channel_id: int | None,
+        reason: str,
+    ) -> None:
+        logger.warning(
+            "SAFEGUARD_HIT reason=%s requester_id=%s channel_id=%s",
+            reason,
+            requester_id,
+            channel_id,
+        )
+        if self._safeguard_notifier is None:
+            return
+        try:
+            await self._safeguard_notifier.notify_safeguard_hit(
+                client=client,
+                requester_id=requester_id,
+                channel_id=channel_id,
+                reason=reason,
+            )
+        except Exception:
+            logger.exception("Failed to notify admins about safeguard hit")
 
     async def _schedule_reminder_if_needed(
         self,
@@ -276,21 +360,29 @@ def _extract_code_blocks_from_reply(text: str) -> tuple[str, list[tuple[str, byt
     return extract_code_blocks(text)
 
 
-def _sanitize_and_watermark(reply: ReplyOutput, *, watermark_enabled: bool) -> ReplyOutput:
+def _sanitize_and_watermark(
+    reply: ReplyOutput,
+    *,
+    watermark_enabled: bool,
+) -> tuple[ReplyOutput, bool]:
     """Strip artifacts and optionally append exactly one response watermark."""
     cleaned = sanitize_response(reply.content)
     cleaned = strip_context_echo(cleaned)
     cleaned = strip_response_watermark(cleaned)
     cleaned = _strip_trailing_split_trigger(cleaned)
-    if not cleaned and reply.content.strip():
+    sanitizer_blocked = not cleaned and bool(reply.content.strip())
+    if sanitizer_blocked:
         logger.warning("Model reply contained no user-facing content after sanitization")
         cleaned = PROTOCOL_LEAK_MESSAGE
     if watermark_enabled and cleaned:
         cleaned = f"{cleaned}\n{RESPONSE_WATERMARK}"
-    return ReplyOutput(
-        content=cleaned,
-        attachments=reply.attachments,
-        allow_embeds=reply.allow_embeds,
+    return (
+        ReplyOutput(
+            content=cleaned,
+            attachments=reply.attachments,
+            allow_embeds=reply.allow_embeds,
+        ),
+        sanitizer_blocked,
     )
 
 

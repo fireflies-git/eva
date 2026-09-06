@@ -756,6 +756,10 @@ class SelfbotMessageHandler:
                     requester_context=requester_context,
                     user_id=message.author.id,
                     channel_id=channel_id,
+                    requester_is_admin=is_admin_user(
+                        user_id=message.author.id,
+                        is_owner=is_owner,
+                    ),
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")

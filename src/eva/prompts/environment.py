@@ -22,12 +22,12 @@ def build_environment_section(hosts: tuple[HomeHost, ...] = HOME_HOSTS) -> str:
     if not hosts:
         return (
             "## Environment\n"
-            "You're in a Docker container on leah's machine. No known hosts are registered."
+            "You're connected to leah's machine. No known hosts are registered."
         )
 
     lines = [
         "## Environment",
-        "You're in a Docker container on leah's machine and can reach her home network "
+        "You're connected to leah's machine and can reach her home network "
         "directly. Known hosts:",
         "",
     ]

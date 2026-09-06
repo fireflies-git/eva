@@ -26,6 +26,7 @@ class FakeToolClient:
         if not any(message.get("role") == "tool" for message in messages):
             return ChatCompletionOutput(
                 content=None,
+                reasoning_content="private reasoning",
                 tool_calls=[
                     ModelToolCall(
                         id="tool-1",
@@ -65,6 +66,12 @@ def test_response_service_uses_terminal_tool_loop(tmp_path: Path) -> None:
     assert reply.content == "used tool output"
     assert len(client.tool_calls) == 2
     assert client.chat_calls == []
+
+    second_round_messages = cast(list[dict[str, Any]], client.tool_calls[1]["messages"])
+    assistant_message = next(
+        message for message in second_round_messages if message.get("role") == "assistant"
+    )
+    assert assistant_message["reasoning_content"] == "private reasoning"
 
 
 class FakeChatClient:

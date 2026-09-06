@@ -28,9 +28,13 @@ def build_system_prompt(
     autonomous_terminal_enabled: bool,
     playwright_enabled: bool = False,
     context7_enabled: bool = False,
+    requester_is_admin: bool = False,
 ) -> str:
     sections = [
-        build_persona_section(account_mode),
+        build_persona_section(
+            account_mode,
+            requester_is_admin=requester_is_admin,
+        ),
         build_capabilities_section(
             terminal_enabled=terminal_enabled,
             autonomous_terminal_enabled=autonomous_terminal_enabled,
