@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from eva.ai.client import ChatCompletionOutput, ModelToolCall
+from eva.ai.client import AIClientError, ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
 from eva.terminal import TerminalService
 from eva.tools import ToolService
@@ -81,6 +81,19 @@ class FakeChatClient:
     async def chat_completion(self, **kwargs: object) -> str:
         self.chat_calls.append(kwargs)
         return "chat reply"
+
+
+class RecoveringChatClient:
+    def __init__(self, responses: list[str | Exception]) -> None:
+        self.responses = responses
+        self.chat_calls: list[dict[str, object]] = []
+
+    async def chat_completion(self, **kwargs: object) -> str:
+        self.chat_calls.append(kwargs)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class FakeToolService:
@@ -210,3 +223,53 @@ def test_response_service_uses_local_history_when_discord_context_is_empty() -> 
         {"role": "assistant", "content": "old reply"},
         {"role": "user", "content": "new question"},
     ]
+
+
+def test_response_service_recovers_when_model_returns_hidden_reasoning_only() -> None:
+    client = RecoveringChatClient(
+        [
+            "<think>the model should refuse this request</think>",
+            "i can't help with that, but i can help with something safe",
+        ]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="do the unsafe thing",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "i can't help with that, but i can help with something safe"
+    assert len(client.chat_calls) == 2
+    recovery_messages = cast(list[dict[str, str]], client.chat_calls[1]["messages"])
+    assert "did not contain a visible user-facing answer" in recovery_messages[0]["content"]
+
+
+def test_response_service_uses_visible_fallback_when_recovery_fails() -> None:
+    client = RecoveringChatClient(
+        [
+            "<think>private reasoning only</think>",
+            AIClientError("provider unavailable"),
+        ]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="try again",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "i couldn't get a visible answer out of that. please try again."
+    assert len(client.chat_calls) == 2

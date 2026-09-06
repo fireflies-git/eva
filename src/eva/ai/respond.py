@@ -13,8 +13,9 @@ from eva.ai.client import (
     ToolChatCompletionClient,
 )
 from eva.ai.parsing import parse_strict_yes_no
+from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
 from eva.ai.schemas import ChatMessage, ToolCall
-from eva.constants import REPLY_MAX_TOKENS
+from eva.constants import REPLY_MAX_TOKENS, SPLIT_TRIGGER
 from eva.tools import ToolService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,14 @@ DISCORD_MINIMUM_AGE = 13
 TOS_MODERATION_MAX_TOKENS = 256
 MAX_TERMINAL_TOOL_ROUNDS = 5
 MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
+VISIBLE_REPLY_RECOVERY_INSTRUCTION = (
+    "The previous model output did not contain a visible user-facing answer. "
+    "Reply now with exactly one concise plain-text answer to the user's latest request. "
+    "Do not output hidden reasoning, <think> tags, XML or DSML protocol markup, transcript "
+    "metadata, or a response watermark. If the request is unsafe or cannot be fulfilled, "
+    "give a brief plain-text boundary and, when possible, a safe alternative."
+)
+VISIBLE_REPLY_FALLBACK = "i couldn't get a visible answer out of that. please try again."
 
 _UNDERAGE_STATUS_RE = re.compile(
     r"\b(?:i['’]?m|i\s+am)\s+(?:a\s+)?(?:minor|underage|under\s*13)\b",
@@ -54,6 +63,35 @@ def _build_user_message(
         sections.append(f'[Replying to message: "{reply_context}"]')
     sections.append(user_message)
     return "\n\n".join(sections)
+
+
+def _has_visible_reply_content(content: str) -> bool:
+    cleaned = sanitize_response(content)
+    cleaned = strip_context_echo(cleaned)
+    cleaned = strip_response_watermark(cleaned).strip()
+    if cleaned == SPLIT_TRIGGER:
+        return False
+    return bool(cleaned)
+
+
+def _build_recovery_messages(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    recovery_messages = list(messages)
+    if recovery_messages and recovery_messages[0].get("role") == "system":
+        system_content = recovery_messages[0]["content"]
+        recovery_messages[0] = {
+            "role": "system",
+            "content": f"{system_content}\n\n{VISIBLE_REPLY_RECOVERY_INSTRUCTION}",
+        }
+        return recovery_messages
+
+    recovery_messages.insert(
+        0,
+        {
+            "role": "system",
+            "content": VISIBLE_REPLY_RECOVERY_INSTRUCTION,
+        },
+    )
+    return recovery_messages
 
 
 class ResponseService:
@@ -97,17 +135,52 @@ class ResponseService:
             max_tokens=REPLY_MAX_TOKENS,
         )
         if tool_reply is not None:
-            return ResponseGenerationResult(content=tool_reply)
+            if _has_visible_reply_content(tool_reply):
+                return ResponseGenerationResult(content=tool_reply)
+            return await self._recover_visible_reply(messages=tool_messages)
 
         messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         messages.extend(conversation_messages)
-        content = await self._client.chat_completion(
-            messages=messages,
-            model=self._model_name,
-            temperature=0.7,
-            max_tokens=REPLY_MAX_TOKENS,
-        )
-        return ResponseGenerationResult(content=content)
+        try:
+            content = await self._client.chat_completion(
+                messages=messages,
+                model=self._model_name,
+                temperature=0.7,
+                max_tokens=REPLY_MAX_TOKENS,
+            )
+        except AIClientError as exc:
+            if str(exc) != EMPTY_RESPONSE_ERROR:
+                raise
+            logger.warning("Model returned empty content; requesting visible reply recovery")
+            return await self._recover_visible_reply(messages=messages)
+
+        if _has_visible_reply_content(content):
+            return ResponseGenerationResult(content=content)
+        return await self._recover_visible_reply(messages=messages)
+
+    async def _recover_visible_reply(
+        self,
+        *,
+        messages: Sequence[ChatMessage],
+    ) -> ResponseGenerationResult:
+        logger.warning("Model output contained no visible content; requesting reply recovery")
+        recovery_messages = _build_recovery_messages(messages)
+        try:
+            recovered = await self._client.chat_completion(
+                messages=recovery_messages,
+                model=self._model_name,
+                temperature=0.2,
+                max_tokens=REPLY_MAX_TOKENS,
+            )
+        except AIClientError:
+            logger.exception("Visible reply recovery failed")
+            return ResponseGenerationResult(content=VISIBLE_REPLY_FALLBACK)
+
+        if _has_visible_reply_content(recovered):
+            return ResponseGenerationResult(content=recovered)
+
+        logger.warning("Visible reply recovery also returned no visible content")
+        return ResponseGenerationResult(content=VISIBLE_REPLY_FALLBACK)
 
 
 def contains_underage_claim(text: str) -> bool:
