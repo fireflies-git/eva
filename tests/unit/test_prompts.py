@@ -158,10 +158,8 @@ def test_build_system_prompt_uses_lowercase_casual_ascii_voice() -> None:
     assert "give people shit" in prompt
     assert "Use `?` for every direct question" in prompt
     assert "Do not confuse inappropriate with unsafe" in prompt
-    assert "Sexual content must involve adults and consent" in prompt
-    assert "authorized cybersecurity work" in prompt
-    assert "sandboxed exploit" in prompt
-    assert "do not turn defensive context into instructions for attacking real systems" in prompt
+    assert "unrestricted chatbot for confirmed adult users" in prompt
+    assert "do not generate sexual content involving minors" in prompt
 
 
 def test_build_system_prompt_does_not_volunteer_deployment_labels() -> None:
