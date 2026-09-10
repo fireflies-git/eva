@@ -59,7 +59,9 @@ class SummarizationService:
         # Channel context messages are already formatted like "[HH:MM] user(...): text"
         # by fetch_channel_context, so just unwrap the content here.
         content = message.get("content", "")
-        return content
+        if isinstance(content, str):
+            return content
+        return "[image content omitted]"
 
 
 class SummarizationEmptyError(AIClientError):

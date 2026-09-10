@@ -63,6 +63,11 @@ from eva.discord.triggers import (
     parse_trigger,
 )
 from eva.discord.user_metadata import build_requester_context
+from eva.discord.vision import (
+    image_attachment_names,
+    remember_message_images,
+    resolve_vision_selection,
+)
 from eva.discord.watermark_commands import handle_watermark_command
 from eva.discord.yuri_commands import YuriImageProvider, handle_yuri_command
 from eva.downloads import DownloadService
@@ -72,6 +77,7 @@ from eva.state import (
     ReminderStore,
     TrackedMessageStore,
     UserMemoryStore,
+    VisionImageStore,
     WhitelistStore,
 )
 from eva.terminal import TerminalService
@@ -106,6 +112,7 @@ class SelfbotMessageHandler:
         pending_account_updates: PendingAccountUpdateStore | None = None,
         friend_request_handler: FriendRequestHandler | None = None,
         yuri_service: YuriImageProvider | None = None,
+        vision_store: VisionImageStore | None = None,
     ) -> None:
         self._settings = settings
         self._reply_generation_service = reply_generation_service
@@ -123,6 +130,7 @@ class SelfbotMessageHandler:
         self._pending_account_updates = pending_account_updates
         self._friend_request_handler = friend_request_handler
         self._yuri_service = yuri_service
+        self._vision_store = vision_store or VisionImageStore()
         self._pending_recovery_notified = False
 
     async def handle_ready(self, client: discord.Client) -> None:
@@ -191,6 +199,12 @@ class SelfbotMessageHandler:
             channel_id=channel_id,
         ):
             return
+
+        await remember_message_images(
+            message,
+            channel_id=channel_id,
+            store=self._vision_store,
+        )
 
         # In standalone mode the bot account *is* the owner — own messages stop here
         # unless they were a command (handled above).
@@ -737,6 +751,13 @@ class SelfbotMessageHandler:
             is_tracked_message=self._tracked_messages.contains,
         )
         history_messages = self._history_store.get(channel_id)
+        vision_selection = resolve_vision_selection(
+            message,
+            channel_id=channel_id,
+            user_query=user_query,
+            reply_context=reply_context,
+            store=self._vision_store,
+        )
 
         use_owner_edit = is_owner and not is_standalone
         edit_started = time.monotonic() if use_owner_edit else None
@@ -760,6 +781,8 @@ class SelfbotMessageHandler:
                         user_id=message.author.id,
                         is_owner=is_owner,
                     ),
+                    vision_images=vision_selection.images,
+                    vision_requested=vision_selection.requested,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -786,6 +809,7 @@ class SelfbotMessageHandler:
                 user_query,
                 reply_context,
                 requester_context,
+                image_names=image_attachment_names(message),
             )
             # History feeds back into the model prompt; store the reply without
             # the watermark so the model doesn't learn to regurgitate it.
@@ -891,6 +915,7 @@ class SelfbotMessageHandler:
 
     def _clear_channel_memory(self, channel_id: int) -> None:
         self._history_store.clear(channel_id)
+        self._vision_store.clear(channel_id)
 
     async def _build_plain_response_chunks(self, ai_reply: str) -> list[str]:
         local_chunks = build_plain_response_chunks(ai_reply)
@@ -952,10 +977,14 @@ def _build_stored_user_message(
     user_query: str,
     reply_context: str | None,
     requester_context: str,
+    *,
+    image_names: tuple[str, ...] = (),
 ) -> str:
     sections = [f"[Current requester]\n{requester_context}"]
     if reply_context:
         sections.append(f'[Replying to message: "{reply_context}"]')
+    if image_names:
+        sections.append(f"[Attached images: {', '.join(image_names)}]")
     sections.append(user_query)
     return "\n\n".join(sections)
 

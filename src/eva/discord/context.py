@@ -33,7 +33,7 @@ async def fetch_channel_context(
     raw_messages: list[discord.Message] = []
     try:
         async for msg in channel.history(limit=limit, oldest_first=False):
-            if not getattr(msg, "content", ""):
+            if not getattr(msg, "content", "") and not getattr(msg, "attachments", None):
                 continue
             if exclude_message_id is not None and getattr(msg, "id", None) == exclude_message_id:
                 continue
@@ -52,7 +52,11 @@ async def fetch_channel_context(
             account_mode=account_mode,
             is_tracked_message=is_tracked_message,
         )
-        if role == "assistant" and not strip_response_watermark(msg.content):
+        if (
+            role == "assistant"
+            and not strip_response_watermark(msg.content)
+            and not getattr(msg, "attachments", None)
+        ):
             continue
         serialized = _serialize_context_message(
             msg,
@@ -112,6 +116,8 @@ def _serialize_context_message(
         # Keep the visible watermark out of the model prompt so it doesn't
         # learn to regurgitate it.
         content = strip_response_watermark(content)
+    if not content:
+        content = "[no text]"
 
     message_id = getattr(msg, "id", "unknown")
     parts = [f"[{timestamp} message_id:{message_id}] {author}"]
@@ -202,13 +208,14 @@ async def fetch_reply_context(message: discord.Message) -> str | None:
         logger.exception("Failed to fetch reply context message")
         return None
 
-    if not ref_msg or not ref_msg.content:
+    if not ref_msg or (not ref_msg.content and not getattr(ref_msg, "attachments", None)):
         return None
     author = format_user_metadata(build_user_metadata(ref_msg.author))
     extras = _format_reply_context_extras(ref_msg)
     mentions = format_mentions_metadata(list(getattr(ref_msg, "mentions", [])))
 
-    parts = [f"[message_id:{ref_msg.id}] {author}: {ref_msg.content}"]
+    content = ref_msg.content or "[no text]"
+    parts = [f"[message_id:{ref_msg.id}] {author}: {content}"]
     if extras:
         parts.append(f" | {extras}")
     if mentions:

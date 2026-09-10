@@ -18,6 +18,23 @@ uv run eva settings set account-mode standalone
 - `assistant`: owner/selfbot-style behavior, no planned follow-up splitting
 - `standalone`: bot-account behavior, replies to all non-empty messages in 1:1 DMs, but requires `eva`, the bot username, a Discord mention, or a tracked reply in servers and group chats, with delayed follow-up splitting
 
+### DeepSeek Vision
+
+To let Eva read Discord image attachments, configure a vision-capable DeepSeek model:
+
+```env
+API_BASE_URL=https://api.deepseek.com
+MODEL_NAME=deepseek-flash
+```
+
+Ask explicitly, for example `eva describe this screenshot` with an image attached. Eva keeps
+recent image bytes only in bounded, channel-scoped memory. Normal messages with attachments do
+not send those images to the model. A later explicit follow-up such as `eva what does this say?`
+can use the most recent cached image in that channel. The cache is cleared by `eva clear` and is
+lost when Eva restarts; image bytes are never written to `STATE_DIR` or local chat history.
+Supported inline images are JPEG, PNG, GIF, and WebP; Eva keeps no more than four images per
+message and enforces bounded per-image, request, and process-memory limits.
+
 Friend request application commands (admin-only):
 
 - `eva review [@user]` accepts a pending request and opens a named application group with the reviewing admin; without a mention, it uses the most recent request

@@ -14,7 +14,7 @@ from eva.ai.sanitize import (
     strip_context_echo,
     strip_response_watermark,
 )
-from eva.ai.schemas import ChatMessage
+from eva.ai.schemas import ChatMessage, VisionImage
 from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_system_prompt
@@ -23,6 +23,7 @@ from eva.reminders import ReminderConfirmation
 logger = logging.getLogger(__name__)
 
 IMAGE_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't generate an image right now."
+VISION_UNAVAILABLE_MESSAGE = f"{WARNING_MARK} I couldn't access a supported image to read."
 PROTOCOL_LEAK_MESSAGE = f"{WARNING_MARK} I couldn't complete that reply."
 _IMAGE_ANSWER_PREFIX = "media generated:"
 
@@ -44,6 +45,7 @@ class ResponseGenerator(Protocol):
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
+        vision_images: Sequence[VisionImage] = (),
     ) -> ResponseGenerationResult: ...
 
 
@@ -130,7 +132,12 @@ class ReplyGenerationService:
         user_id: int | None = None,
         channel_id: int | None = None,
         requester_is_admin: bool = False,
+        vision_images: Sequence[VisionImage] = (),
+        vision_requested: bool = False,
     ) -> ReplyOutput:
+        if not vision_requested:
+            vision_images = ()
+
         reminder_confirmation = await self._schedule_reminder_if_needed(
             user_message=user_message,
             user_id=user_id,
@@ -143,6 +150,14 @@ class ReplyGenerationService:
             )
             return await self._finalize_reply(
                 reply,
+                client=client,
+                requester_id=user_id,
+                channel_id=channel_id,
+            )
+
+        if vision_requested and not vision_images:
+            return await self._finalize_reply(
+                ReplyOutput(content=VISION_UNAVAILABLE_MESSAGE, attachments=[]),
                 client=client,
                 requester_id=user_id,
                 channel_id=channel_id,
@@ -175,6 +190,7 @@ class ReplyGenerationService:
                 user_message=user_message,
                 reply_context=reply_context,
                 requester_context=requester_context,
+                vision_images=vision_images,
             )
             reply = ReplyOutput(
                 content=content.content,

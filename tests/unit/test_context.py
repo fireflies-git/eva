@@ -50,6 +50,7 @@ def _make_message(
     reference: object | None = None,
     edited_at: datetime | None = None,
     attachments: list[object] | None = None,
+    channel: object | None = None,
 ) -> object:
     fields: dict[str, object] = {
         "id": msg_id,
@@ -61,6 +62,7 @@ def _make_message(
         "reference": reference,
         "edited_at": edited_at,
         "attachments": attachments or [],
+        "channel": channel,
     }
     return SimpleNamespace(**fields)
 
@@ -323,6 +325,51 @@ def test_channel_context_includes_multiple_attachments() -> None:
     assert "attached: a.py, b.png" in context[0]["content"]
 
 
+def test_channel_context_keeps_attachment_only_messages() -> None:
+    author = _make_author(id=1, name="neo", display_name="Neo")
+    message = _make_message(
+        msg_id=10,
+        content="",
+        author=author,
+        attachments=[SimpleNamespace(filename="photo.png")],
+    )
+    channel = _FakeHistoryChannel([message])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+        )
+    )
+
+    assert len(context) == 1
+    assert "[no text]" in context[0]["content"]
+    assert "attached: photo.png" in context[0]["content"]
+
+
+def test_channel_context_keeps_attachment_only_assistant_messages() -> None:
+    assistant = _make_author(id=99, name="eva", display_name="Eva")
+    message = _make_message(
+        msg_id=10,
+        content="",
+        author=assistant,
+        attachments=[SimpleNamespace(filename="generated.webp")],
+    )
+    channel = _FakeHistoryChannel([message])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+            bot_user_id=99,
+        )
+    )
+
+    assert len(context) == 1
+    assert context[0]["role"] == "assistant"
+    assert "attached: generated.webp" in context[0]["content"]
+
+
 def test_channel_context_has_no_extras_when_message_is_plain() -> None:
     author = _make_author(id=1, name="neo", display_name="Neo")
     message = _make_message(
@@ -395,6 +442,30 @@ def test_fetch_reply_context_includes_reactions_on_referenced_message() -> None:
     assert reply_context is not None
     assert "👀 4" in reply_context
     assert "previous" not in reply_context
+
+
+def test_fetch_reply_context_keeps_attachment_only_message() -> None:
+    reply_author = _make_author(id=7, name="neo", display_name="Neo")
+    referenced_message = _make_message(
+        msg_id=123,
+        content="",
+        author=reply_author,
+        attachments=[SimpleNamespace(filename="diagram.webp")],
+    )
+    channel = _FakeReplyChannel(referenced_message)
+    message = _make_message(
+        msg_id=10,
+        content="describe this",
+        author=_make_author(id=1, name="eva", display_name="Eva"),
+        reference=SimpleNamespace(message_id=123),
+        channel=channel,
+    )
+
+    reply_context = asyncio.run(fetch_reply_context(cast(discord.Message, message)))
+
+    assert reply_context is not None
+    assert "[no text]" in reply_context
+    assert "attached: diagram.webp" in reply_context
 
 
 def test_fetch_channel_context_excludes_message_by_id() -> None:

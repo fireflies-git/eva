@@ -17,6 +17,7 @@ from eva.state.user_memory import (
     UserMemoryPersistenceError,
     UserMemoryStore,
 )
+from eva.state.vision_images import VisionImageStore
 from eva.state.whitelist import WhitelistPersistenceError, WhitelistStore
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "ReminderPersistenceError",
     "ReminderStore",
     "TrackedMessageStore",
+    "VisionImageStore",
     "UserMemoryError",
     "UserMemoryPersistenceError",
     "UserMemoryStore",

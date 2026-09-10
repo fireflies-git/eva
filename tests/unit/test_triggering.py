@@ -4,6 +4,7 @@ from typing import cast
 import discord
 
 from eva.discord.handlers import is_tracked_reply_trigger, parse_trigger
+from eva.discord.triggers import is_vision_request
 from eva.state import TrackedMessageStore
 
 
@@ -82,6 +83,16 @@ def test_parse_trigger_empty_query_after_mention() -> None:
         mention_user_id=123,
     )
     assert result.should_process is False
+
+
+def test_vision_request_requires_visual_intent_and_image_reference() -> None:
+    assert is_vision_request("describe this image") is True
+    assert is_vision_request("what does the screenshot say") is True
+    assert is_vision_request("what's on this chart") is True
+    assert is_vision_request("read this", has_image_context=True) is True
+    assert is_vision_request("I like this picture") is False
+    assert is_vision_request("generate an image of a fox") is False
+    assert is_vision_request("describe this", has_image_context=False) is False
 
 
 def test_is_tracked_reply_trigger_returns_true_for_tracked_reply() -> None:

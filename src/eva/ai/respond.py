@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import re
 from collections.abc import Sequence
@@ -14,7 +15,7 @@ from eva.ai.client import (
 )
 from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
-from eva.ai.schemas import ChatMessage, ToolCall
+from eva.ai.schemas import ChatMessage, ContentPart, ToolCall, VisionImage
 from eva.constants import REPLY_MAX_TOKENS, SPLIT_TRIGGER
 from eva.tools import ToolService
 
@@ -115,6 +116,7 @@ class ResponseService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
+        vision_images: Sequence[VisionImage] = (),
     ) -> ResponseGenerationResult:
         conversation_messages = _build_conversation_messages(
             history_messages=history_messages,
@@ -122,6 +124,7 @@ class ResponseService:
             user_message=user_message,
             reply_context=reply_context,
             requester_context=requester_context,
+            vision_images=vision_images,
         )
         tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         tool_messages.extend(conversation_messages)
@@ -323,18 +326,35 @@ def _build_conversation_messages(
     user_message: str,
     reply_context: str | None,
     requester_context: str | None,
+    vision_images: Sequence[VisionImage],
 ) -> list[ChatMessage]:
     # Discord context is the canonical chronological transcript. Local history is
     # only a fallback for channels where Discord history could not be fetched.
     messages: list[ChatMessage] = list(context_messages or history_messages)
 
-    messages.append(
-        {
-            "role": "user",
-            "content": _build_user_message(user_message, reply_context, requester_context),
-        }
-    )
+    user_content = _build_user_message(user_message, reply_context, requester_context)
+    if vision_images:
+        user_content = _build_vision_content(user_content, vision_images)
+    messages.append({"role": "user", "content": user_content})
     return messages
+
+
+def _build_vision_content(
+    text: str,
+    images: Sequence[VisionImage],
+) -> list[ContentPart]:
+    content: list[ContentPart] = [{"type": "text", "text": text}]
+    for image in images:
+        encoded = base64.b64encode(image.data).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image.mime_type};base64,{encoded}",
+                },
+            }
+        )
+    return content
 
 
 def _build_assistant_tool_message(

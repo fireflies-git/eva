@@ -174,6 +174,7 @@ def test_command_returns_summary(monkeypatch) -> None:
     # The system prompt must be the first message.
     messages = cast(list[ChatMessage], chat_client.calls[0]["messages"])
     assert messages[0]["role"] == "system"
+    assert isinstance(messages[0]["content"], str)
     assert "summariz" in messages[0]["content"].lower()
 
 
