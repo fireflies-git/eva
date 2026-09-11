@@ -24,16 +24,20 @@ To let Eva read Discord image attachments, configure a vision-capable DeepSeek m
 
 ```env
 API_BASE_URL=https://api.deepseek.com
-MODEL_NAME=deepseek-flash
+MODEL_NAME=deepseek-v4-flash-vision-exp
 ```
 
-Ask explicitly, for example `eva describe this screenshot` with an image attached. Eva keeps
-recent image bytes only in bounded, channel-scoped memory. Normal messages with attachments do
-not send those images to the model. A later explicit follow-up such as `eva what does this say?`
-can use the most recent cached image in that channel. The cache is cleared by `eva clear` and is
-lost when Eva restarts; image bytes are never written to `STATE_DIR` or local chat history.
-Supported inline images are JPEG, PNG, GIF, and WebP; Eva keeps no more than four images per
-message and enforces bounded per-image, request, and process-memory limits.
+Eva exposes an `inspect_attached_images` tool to its normal agent/tool loop whenever a current,
+replied-to, or recent cached image is available. The initial model request stays text-only; Eva
+decides independently whether visual evidence is needed and only then runs a separate DeepSeek
+vision pass. Explicit wording such as `eva what does this say?` can help, but no special
+`describe`/`read` command is required, and ordinary text requests with attachments do not send
+image bytes to DeepSeek.
+
+Eva keeps recent image bytes only in bounded, channel-scoped memory. The cache is cleared by
+`eva clear` and is lost when Eva restarts; image bytes are never written to `STATE_DIR` or local
+chat history. Supported inline images are JPEG, PNG, GIF, and WebP; Eva keeps no more than four
+images per message and enforces bounded per-image, request, and process-memory limits.
 
 Friend request application commands (admin-only):
 

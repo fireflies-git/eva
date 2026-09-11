@@ -23,7 +23,6 @@ from eva.reminders import ReminderConfirmation
 logger = logging.getLogger(__name__)
 
 IMAGE_FAILURE_MESSAGE = f"{WARNING_MARK} I couldn't generate an image right now."
-VISION_UNAVAILABLE_MESSAGE = f"{WARNING_MARK} I couldn't access a supported image to read."
 PROTOCOL_LEAK_MESSAGE = f"{WARNING_MARK} I couldn't complete that reply."
 _IMAGE_ANSWER_PREFIX = "media generated:"
 
@@ -46,6 +45,7 @@ class ResponseGenerator(Protocol):
         reply_context: str | None,
         requester_context: str | None,
         vision_images: Sequence[VisionImage] = (),
+        vision_context_available: bool = False,
     ) -> ResponseGenerationResult: ...
 
 
@@ -133,11 +133,8 @@ class ReplyGenerationService:
         channel_id: int | None = None,
         requester_is_admin: bool = False,
         vision_images: Sequence[VisionImage] = (),
-        vision_requested: bool = False,
+        vision_context_available: bool = False,
     ) -> ReplyOutput:
-        if not vision_requested:
-            vision_images = ()
-
         reminder_confirmation = await self._schedule_reminder_if_needed(
             user_message=user_message,
             user_id=user_id,
@@ -150,14 +147,6 @@ class ReplyGenerationService:
             )
             return await self._finalize_reply(
                 reply,
-                client=client,
-                requester_id=user_id,
-                channel_id=channel_id,
-            )
-
-        if vision_requested and not vision_images:
-            return await self._finalize_reply(
-                ReplyOutput(content=VISION_UNAVAILABLE_MESSAGE, attachments=[]),
                 client=client,
                 requester_id=user_id,
                 channel_id=channel_id,
@@ -182,6 +171,7 @@ class ReplyGenerationService:
                 playwright_enabled=self._playwright_enabled,
                 context7_enabled=self._context7_enabled,
                 requester_is_admin=requester_is_admin,
+                vision_enabled=vision_context_available or bool(vision_images),
             )
             content = await self._response_service.generate_reply(
                 system_prompt=system_prompt,
@@ -191,6 +181,7 @@ class ReplyGenerationService:
                 reply_context=reply_context,
                 requester_context=requester_context,
                 vision_images=vision_images,
+                vision_context_available=vision_context_available,
             )
             reply = ReplyOutput(
                 content=content.content,
@@ -349,6 +340,7 @@ class ReplyGenerationService:
                 )
 
         return ReplyOutput(content=IMAGE_FAILURE_MESSAGE, attachments=[])
+
 
 def _format_image_reply_text(answer: str) -> str:
     if not answer:

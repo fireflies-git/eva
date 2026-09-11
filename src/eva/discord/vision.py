@@ -9,7 +9,6 @@ import discord
 
 from eva.ai.schemas import VisionImage
 from eva.constants import MAX_VISION_IMAGE_BYTES, MAX_VISION_IMAGES_PER_MESSAGE
-from eva.discord.triggers import is_vision_request
 from eva.state.vision_images import VisionImageStore
 
 logger = logging.getLogger(__name__)
@@ -41,8 +40,8 @@ _CLEARLY_NON_IMAGE_EXTENSIONS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class VisionSelection:
-    requested: bool
     images: tuple[VisionImage, ...] = ()
+    has_image_context: bool = False
 
 
 def has_image_like_attachment(message: discord.Message) -> bool:
@@ -131,7 +130,6 @@ def resolve_vision_selection(
     message: discord.Message,
     *,
     channel_id: int,
-    user_query: str,
     reply_context: str | None,
     store: VisionImageStore,
 ) -> VisionSelection:
@@ -164,19 +162,16 @@ def resolve_vision_selection(
         or current_has_attachments
         or reply_has_attachments
     )
-    requested = is_vision_request(user_query, has_image_context=has_image_context)
-    if not requested:
-        return VisionSelection(requested=False)
 
     if current_images:
-        return VisionSelection(requested=True, images=current_images)
+        return VisionSelection(images=current_images, has_image_context=True)
     if current_has_attachments:
-        return VisionSelection(requested=True)
+        return VisionSelection(has_image_context=True)
     if reply_images:
-        return VisionSelection(requested=True, images=reply_images)
+        return VisionSelection(images=reply_images, has_image_context=True)
     if reply_has_attachments:
-        return VisionSelection(requested=True)
-    return VisionSelection(requested=True, images=latest_images)
+        return VisionSelection(has_image_context=True)
+    return VisionSelection(images=latest_images, has_image_context=has_image_context)
 
 
 def _get_attachments(message: discord.Message) -> list[object]:

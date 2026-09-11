@@ -754,7 +754,6 @@ class SelfbotMessageHandler:
         vision_selection = resolve_vision_selection(
             message,
             channel_id=channel_id,
-            user_query=user_query,
             reply_context=reply_context,
             store=self._vision_store,
         )
@@ -782,7 +781,7 @@ class SelfbotMessageHandler:
                         is_owner=is_owner,
                     ),
                     vision_images=vision_selection.images,
-                    vision_requested=vision_selection.requested,
+                    vision_context_available=vision_selection.has_image_context,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")

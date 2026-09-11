@@ -8,6 +8,7 @@ __all__ = [
     "Context7Service",
     "PlaywrightService",
     "ToolService",
+    "VisionInspectionTool",
 ]
 
 
@@ -29,3 +30,4 @@ class ToolService(Protocol):
 
 from eva.tools.context7_service import Context7Service  # noqa: E402
 from eva.tools.playwright_service import PlaywrightService  # noqa: E402
+from eva.tools.vision_service import VisionInspectionTool  # noqa: E402

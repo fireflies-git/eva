@@ -6,12 +6,12 @@ from typing import Any, cast
 
 import discord
 
-from eva.ai.client import ChatCompletionClient
-from eva.ai.orchestrator import ReplyGenerationService, ResponseGenerationResult
+from eva.ai.client import ChatCompletionClient, ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
 from eva.ai.schemas import VisionImage
 from eva.discord.vision import remember_message_images, resolve_vision_selection
 from eva.state.vision_images import VisionImageStore
+from eva.tools.vision_service import VisionInspectionTool
 
 
 class _FakeAttachment:
@@ -45,23 +45,38 @@ class _FakeChatClient:
         return "vision reply"
 
 
-class _FailingResponseService:
-    async def generate_reply(self, **kwargs: object) -> object:
-        raise AssertionError("the response model should not run without an image")
+class _AgentVisionClient:
+    def __init__(self, *, inspect_images: bool, max_inspection_calls: int = 1) -> None:
+        self.inspect_images = inspect_images
+        self.max_inspection_calls = max_inspection_calls
+        self.tool_calls: list[dict[str, object]] = []
+        self.vision_calls: list[dict[str, object]] = []
 
+    async def chat_completion_with_tools(self, **kwargs: object) -> ChatCompletionOutput:
+        snapshot = dict(kwargs)
+        snapshot["messages"] = [
+            dict(message) for message in cast(list[dict[str, object]], kwargs["messages"])
+        ]
+        self.tool_calls.append(snapshot)
+        if len(self.tool_calls) <= self.max_inspection_calls and self.inspect_images:
+            focus = (
+                "read the visible text" if len(self.tool_calls) == 1 else "double-check the finding"
+            )
+            return ChatCompletionOutput(
+                content=None,
+                tool_calls=[
+                    ModelToolCall(
+                        id="vision-1",
+                        name="inspect_attached_images",
+                        arguments=f'{{"focus":"{focus}"}}',
+                    )
+                ],
+            )
+        return ChatCompletionOutput(content="final answer", tool_calls=[])
 
-class _RecordingResponseService:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    async def generate_reply(self, **kwargs: object) -> ResponseGenerationResult:
-        self.calls.append(kwargs)
-        return ResponseGenerationResult("reply")
-
-
-class _AllowingTOSService:
-    async def check_tos_violation(self, text: str) -> bool:
-        return False
+    async def chat_completion(self, **kwargs: object) -> str:
+        self.vision_calls.append(kwargs)
+        return "The image contains the requested visible text."
 
 
 def _vision_image(
@@ -209,21 +224,32 @@ def test_vision_selection_prefers_current_then_reply_then_latest() -> None:
     reply_selection = resolve_vision_selection(
         reply_message,
         channel_id=10,
-        user_query="describe this",
         reply_context="[message_id:2] @user: [no text] | attached: reply.png",
         store=store,
     )
     assert reply_selection.images == (reply,)
+    assert reply_selection.has_image_context is True
 
     store.put(10, 4, [current])
     current_selection = resolve_vision_selection(
         reply_message,
         channel_id=10,
-        user_query="describe this",
         reply_context="[message_id:2] @user: [no text] | attached: reply.png",
         store=store,
     )
     assert current_selection.images == (current,)
+
+    latest_message = cast(
+        discord.Message,
+        SimpleNamespace(id=5, attachments=[], reference=None),
+    )
+    latest_selection = resolve_vision_selection(
+        latest_message,
+        channel_id=10,
+        reply_context=None,
+        store=store,
+    )
+    assert latest_selection.images == (current,)
 
 
 def test_vision_selection_does_not_fall_back_from_unavailable_current_image() -> None:
@@ -241,12 +267,11 @@ def test_vision_selection_does_not_fall_back_from_unavailable_current_image() ->
     selection = resolve_vision_selection(
         message,
         channel_id=10,
-        user_query="describe this image",
         reply_context=None,
         store=store,
     )
 
-    assert selection.requested is True
+    assert selection.has_image_context is True
     assert selection.images == ()
 
 
@@ -270,47 +295,152 @@ def test_vision_selection_blocks_fallback_for_unavailable_referenced_image() -> 
     selection = resolve_vision_selection(
         message,
         channel_id=10,
-        user_query="describe this image",
         reply_context=None,
         store=store,
     )
 
-    assert selection.requested is True
+    assert selection.has_image_context is True
     assert selection.images == ()
 
 
-def test_response_service_adds_images_only_to_final_user_message() -> None:
-    client = _FakeChatClient()
+def test_vision_tool_performs_a_separate_base64_vision_pass() -> None:
+    client = _AgentVisionClient(inspect_images=True)
     service = ResponseService(
         client=cast(ChatCompletionClient, client),
-        model_name="deepseek-flash",
+        model_name="deepseek-v4-flash-vision-exp",
     )
 
-    asyncio.run(
+    reply = asyncio.run(
         service.generate_reply(
             system_prompt="system prompt",
             context_messages=[{"role": "user", "content": "context"}],
             history_messages=[],
-            user_message="describe this image",
+            user_message="what does this say?",
             reply_context=None,
             requester_context=None,
             vision_images=[_vision_image(3, data=b"abc")],
+            vision_context_available=True,
         )
     )
 
-    messages = cast(list[dict[str, Any]], client.calls[0]["messages"])
-    assert isinstance(messages[0]["content"], str)
-    assert isinstance(messages[1]["content"], str)
-    user_content = messages[2]["content"]
-    assert isinstance(user_content, list)
-    assert user_content[0] == {"type": "text", "text": "describe this image"}
-    assert user_content[1] == {
+    assert reply.content == "final answer"
+    assert len(client.tool_calls) == 2
+    assert len(client.vision_calls) == 1
+
+    initial_messages = cast(list[dict[str, Any]], client.tool_calls[0]["messages"])
+    assert isinstance(initial_messages[-1]["content"], str)
+    assert "image_url" not in str(initial_messages)
+
+    vision_messages = cast(list[dict[str, Any]], client.vision_calls[0]["messages"])
+    assert vision_messages[0]["role"] == "system"
+    assert isinstance(vision_messages[0]["content"], str)
+    vision_content = vision_messages[1]["content"]
+    assert isinstance(vision_content, list)
+    assert vision_content[0] == {
+        "type": "text",
+        "text": "User request: what does this say?\n"
+        "Inspection focus: read the visible text\n"
+        "Inspect the attached image(s) and return only the findings the parent assistant "
+        "needs to answer the user.",
+    }
+    assert vision_content[1] == {
         "type": "image_url",
         "image_url": {"url": "data:image/png;base64,YWJj"},
     }
 
+    final_messages = cast(list[dict[str, Any]], client.tool_calls[1]["messages"])
+    assert any(
+        message.get("role") == "tool" and "Image inspection findings" in str(message.get("content"))
+        for message in final_messages
+    )
+    assert "image_url" not in str(final_messages)
 
-def test_response_service_keeps_normal_requests_text_only() -> None:
+
+def test_response_service_does_not_inspect_images_when_agent_declines_tool() -> None:
+    client = _AgentVisionClient(inspect_images=False)
+    service = ResponseService(
+        client=cast(ChatCompletionClient, client),
+        model_name="deepseek-v4-flash-vision-exp",
+    )
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="system prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="hello",
+            reply_context=None,
+            requester_context=None,
+            vision_images=[_vision_image(3, data=b"abc")],
+            vision_context_available=True,
+        )
+    )
+
+    assert reply.content == "final answer"
+    assert len(client.tool_calls) == 1
+    assert client.vision_calls == []
+    tool_definitions = cast(list[dict[str, Any]], client.tool_calls[0]["tools"])
+    assert tool_definitions[0]["function"]["name"] == "inspect_attached_images"
+
+
+def test_response_service_allows_multiple_agent_passthrough_rounds() -> None:
+    client = _AgentVisionClient(inspect_images=True, max_inspection_calls=2)
+    service = ResponseService(
+        client=cast(ChatCompletionClient, client),
+        model_name="deepseek-v4-flash-vision-exp",
+    )
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="system prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="compare the details in this image",
+            reply_context=None,
+            requester_context=None,
+            vision_images=[_vision_image(3, data=b"abc")],
+            vision_context_available=True,
+        )
+    )
+
+    assert reply.content == "final answer"
+    assert len(client.tool_calls) == 3
+    assert len(client.vision_calls) == 2
+
+
+def test_vision_tool_reports_unavailable_image_bytes_without_model_call() -> None:
+    client = _FakeChatClient()
+    tool = VisionInspectionTool(
+        client=cast(ChatCompletionClient, client),
+        model_name="deepseek-v4-flash-vision-exp",
+        user_request="what is in this?",
+        images=[],
+        image_context_available=True,
+    )
+
+    result = asyncio.run(tool.run_autonomous_tool("{}"))
+
+    assert "no readable supported image bytes" in result
+    assert client.calls == []
+
+
+def test_vision_tool_rejects_invalid_image_indexes() -> None:
+    client = _FakeChatClient()
+    tool = VisionInspectionTool(
+        client=cast(ChatCompletionClient, client),
+        model_name="deepseek-v4-flash-vision-exp",
+        user_request="inspect this",
+        images=[_vision_image(3)],
+        image_context_available=True,
+    )
+
+    result = asyncio.run(tool.run_autonomous_tool('{"image_indexes":[4]}'))
+
+    assert "out of range" in result
+    assert client.calls == []
+
+
+def test_response_service_without_image_context_does_not_add_vision_tool() -> None:
     client = _FakeChatClient()
     service = ResponseService(
         client=cast(ChatCompletionClient, client),
@@ -331,47 +461,3 @@ def test_response_service_keeps_normal_requests_text_only() -> None:
     messages = cast(list[dict[str, Any]], client.calls[0]["messages"])
     assert isinstance(messages[-1]["content"], str)
     assert "image_url" not in str(messages)
-
-
-def test_reply_generation_reports_missing_requested_image_without_response_call() -> None:
-    service = ReplyGenerationService(
-        response_service=cast(Any, _FailingResponseService()),
-        tos_check_service=_AllowingTOSService(),
-    )
-
-    reply = asyncio.run(
-        service.generate_reply(
-            channel=cast(discord.abc.Messageable, SimpleNamespace()),
-            client=cast(discord.Client, SimpleNamespace()),
-            context_messages=[],
-            history_messages=[],
-            user_message="describe this image",
-            reply_context=None,
-            vision_requested=True,
-        )
-    )
-
-    assert "supported image" in reply.content
-
-
-def test_reply_generation_drops_images_for_non_visual_requests() -> None:
-    response_service = _RecordingResponseService()
-    service = ReplyGenerationService(
-        response_service=cast(Any, response_service),
-        tos_check_service=_AllowingTOSService(),
-    )
-
-    asyncio.run(
-        service.generate_reply(
-            channel=cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM")),
-            client=cast(discord.Client, SimpleNamespace(user=None)),
-            context_messages=[],
-            history_messages=[],
-            user_message="hello",
-            reply_context=None,
-            vision_images=[_vision_image(3)],
-            vision_requested=False,
-        )
-    )
-
-    assert response_service.calls[0]["vision_images"] == ()

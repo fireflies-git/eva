@@ -29,6 +29,7 @@ def build_system_prompt(
     playwright_enabled: bool = False,
     context7_enabled: bool = False,
     requester_is_admin: bool = False,
+    vision_enabled: bool = False,
 ) -> str:
     sections = [
         build_persona_section(
@@ -40,6 +41,7 @@ def build_system_prompt(
             autonomous_terminal_enabled=autonomous_terminal_enabled,
             playwright_enabled=playwright_enabled,
             context7_enabled=context7_enabled,
+            vision_enabled=vision_enabled,
         ),
         build_environment_section(),
         build_formatting_section(),

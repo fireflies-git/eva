@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 import discord
@@ -13,32 +12,6 @@ class TriggerDecision:
     should_process: bool
     user_query: str = ""
     is_reply_trigger: bool = False
-
-
-_VISION_ACTION_RE = re.compile(
-    r"\b(?:describe|read|analy[sz]e|inspect|identify|recogni[sz]e|translate|ocr|"
-    r"extract(?:\s+(?:the\s+)?)?text|look\s+at|"
-    r"what(?:\s+is|['’]?s)\s+(?:in|on|this|that|it)|"
-    r"what\s+does\s+(?:this|that|it)\s+say|"
-    r"what\s+does\s+(?:the\s+)?(?:image|picture|photo(?:graph)?|screenshot|"
-    r"diagram|chart|graph|meme)\s+say)\b",
-    re.IGNORECASE,
-)
-_VISION_OBJECT_RE = re.compile(
-    r"\b(?:image|picture|photo(?:graph)?|screenshot|diagram|chart|graph|meme)\b",
-    re.IGNORECASE,
-)
-_VISION_DEICTIC_RE = re.compile(r"\b(?:this|that|it)\b", re.IGNORECASE)
-
-
-def is_vision_request(content: str, *, has_image_context: bool = False) -> bool:
-    """Return whether text explicitly asks Eva to inspect visual content."""
-    text = content.strip()
-    if not text or _VISION_ACTION_RE.search(text) is None:
-        return False
-    if _VISION_OBJECT_RE.search(text) is not None:
-        return True
-    return has_image_context and _VISION_DEICTIC_RE.search(text) is not None
 
 
 def decide_standalone_trigger(

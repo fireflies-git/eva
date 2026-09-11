@@ -7,9 +7,10 @@ def build_capabilities_section(
     autonomous_terminal_enabled: bool,
     playwright_enabled: bool = False,
     context7_enabled: bool = False,
+    vision_enabled: bool = False,
 ) -> str:
     tools_enabled = terminal_enabled and autonomous_terminal_enabled
-    has_any_tools = tools_enabled or playwright_enabled or context7_enabled
+    has_any_tools = tools_enabled or playwright_enabled or context7_enabled or vision_enabled
 
     if not has_any_tools:
         return (
@@ -50,6 +51,14 @@ def build_capabilities_section(
             "libraries, frameworks, and APIs. Provide a query and a library name to get "
             "relevant doc snippets with source links. Use this when the user asks how to "
             "use a specific function, what arguments a method takes, or how a library works."
+        )
+
+    if vision_enabled:
+        parts.append(
+            "You may have an `inspect_attached_images` tool when this conversation includes "
+            "image attachments. Decide independently whether visual evidence is needed and "
+            "call it before making claims about an image. Do not pretend to see image details "
+            "that the tool did not return."
         )
 
     parts.append(

@@ -8,7 +8,7 @@ from typing import Any, cast
 import discord
 
 import eva.discord.handlers as handlers
-from eva.ai.client import ChatCompletionClient
+from eva.ai.client import ChatCompletionClient, ChatCompletionOutput, ModelToolCall
 from eva.ai.orchestrator import ReplyGenerationService, ReplyOutput
 from eva.ai.respond import ResponseService
 from eva.ai.schemas import VisionImage
@@ -74,24 +74,34 @@ class _AllowingTOSService:
         return False
 
 
-class _RecordingChatClient:
-    def __init__(self) -> None:
-        self.messages: list[dict[str, object]] = []
+class _AgentChatClient:
+    def __init__(self, *, inspect_images: bool) -> None:
+        self.inspect_images = inspect_images
+        self.tool_calls: list[dict[str, object]] = []
+        self.vision_calls: list[dict[str, object]] = []
 
-    async def chat_completion(self, **kwargs: object) -> str:
-        self.messages = [
+    async def chat_completion_with_tools(self, **kwargs: object) -> ChatCompletionOutput:
+        snapshot = dict(kwargs)
+        snapshot["messages"] = [
             dict(message) for message in cast(list[dict[str, object]], kwargs["messages"])
         ]
-        return "model reply"
+        self.tool_calls.append(snapshot)
+        if len(self.tool_calls) == 1 and self.inspect_images:
+            return ChatCompletionOutput(
+                content=None,
+                tool_calls=[
+                    ModelToolCall(
+                        id="vision-1",
+                        name="inspect_attached_images",
+                        arguments="{}",
+                    )
+                ],
+            )
+        return ChatCompletionOutput(content="model reply", tool_calls=[])
 
-
-class _FailingResponseService:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def generate_reply(self, **kwargs: object) -> object:
-        self.calls += 1
-        raise AssertionError("response model should not run without a usable image")
+    async def chat_completion(self, **kwargs: object) -> str:
+        self.vision_calls.append(kwargs)
+        return "The image contains a test subject."
 
 
 def _settings(tmp_path: Path, *, account_mode: str) -> Settings:
@@ -204,9 +214,7 @@ def _patch_delivery(monkeypatch: Any, delivered: list[str]) -> None:
     monkeypatch.setattr(handlers, "deliver_reply_response", fake_deliver_reply_response)
 
 
-def test_handler_sends_current_attachment_for_explicit_visual_request(
-    monkeypatch, tmp_path
-) -> None:
+def test_handler_exposes_current_attachment_to_the_agent_harness(monkeypatch, tmp_path) -> None:
     response_service = _CapturingReplyService()
     handler = _handler(tmp_path, response_service)
     delivered: list[str] = []
@@ -215,7 +223,7 @@ def test_handler_sends_current_attachment_for_explicit_visual_request(
     message = _message(
         channel,
         message_id=1,
-        content="eva describe this screenshot",
+        content="eva hello",
         attachments=[_Attachment("screen.png", b"\x89PNG\r\n\x1a\nbytes")],
     )
 
@@ -223,7 +231,7 @@ def test_handler_sends_current_attachment_for_explicit_visual_request(
 
     assert delivered == ["captured reply"]
     assert len(response_service.calls) == 1
-    assert response_service.calls[0]["vision_requested"] is True
+    assert response_service.calls[0]["vision_context_available"] is True
     images = cast(tuple[VisionImage, ...], response_service.calls[0]["vision_images"])
     assert [image.filename for image in images] == ["screen.png"]
 
@@ -262,10 +270,12 @@ def test_handler_uses_referenced_and_latest_cached_images_for_followups(
     for call in response_service.calls:
         images = cast(tuple[VisionImage, ...], call["vision_images"])
         assert [image.filename for image in images] == ["photo.jpg"]
-        assert call["vision_requested"] is True
+        assert call["vision_context_available"] is True
 
 
-def test_handler_keeps_normal_attachment_requests_text_only(monkeypatch, tmp_path) -> None:
+def test_handler_passes_normal_attachment_candidates_without_explicit_visual_wording(
+    monkeypatch, tmp_path
+) -> None:
     response_service = _CapturingReplyService()
     handler = _handler(tmp_path, response_service)
     delivered: list[str] = []
@@ -281,17 +291,56 @@ def test_handler_keeps_normal_attachment_requests_text_only(monkeypatch, tmp_pat
     asyncio.run(handler.on_message(_client(), message))
 
     assert len(response_service.calls) == 1
-    assert response_service.calls[0]["vision_requested"] is False
-    assert response_service.calls[0]["vision_images"] == ()
+    assert response_service.calls[0]["vision_context_available"] is True
+    images = cast(tuple[VisionImage, ...], response_service.calls[0]["vision_images"])
+    assert [image.filename for image in images] == ["photo.png"]
 
 
-def test_handler_warns_without_calling_response_model_when_image_is_unavailable(
+def test_handler_reports_unavailable_image_context_to_the_agent_harness(
     monkeypatch,
     tmp_path,
 ) -> None:
-    failing_response = _FailingResponseService()
+    response_service = _CapturingReplyService()
+    reply_service = response_service
+    handler = _handler(tmp_path, reply_service)
+    delivered: list[str] = []
+    _patch_delivery(monkeypatch, delivered)
+    channel = _Channel()
+    message = _message(channel, message_id=1, content="eva what is in this?")
+
+    asyncio.run(handler.on_message(_client(), message))
+
+    assert len(response_service.calls) == 1
+    assert response_service.calls[0]["vision_context_available"] is False
+    assert response_service.calls[0]["vision_images"] == ()
+
+    unreadable = _message(
+        channel,
+        message_id=2,
+        content="here is something",
+        attachments=[_Attachment("broken.png", b"not-an-image")],
+    )
+    asyncio.run(handler.on_message(_client(), unreadable))
+    followup = _message(
+        channel,
+        message_id=3,
+        content="eva what is in this?",
+        reference=SimpleNamespace(message_id=unreadable.id, resolved=unreadable),
+    )
+    asyncio.run(handler.on_message(_client(), followup))
+
+    assert response_service.calls[-1]["vision_context_available"] is True
+    assert response_service.calls[-1]["vision_images"] == ()
+
+
+def test_handler_does_not_read_image_when_agent_declines_tool(monkeypatch, tmp_path) -> None:
+    client = _AgentChatClient(inspect_images=False)
+    response_service = ResponseService(
+        client=cast(ChatCompletionClient, client),
+        model_name="deepseek-v4-flash-vision-exp",
+    )
     reply_service = ReplyGenerationService(
-        response_service=cast(Any, failing_response),
+        response_service=response_service,
         tos_check_service=_AllowingTOSService(),
         account_mode="assistant",
     )
@@ -299,13 +348,18 @@ def test_handler_warns_without_calling_response_model_when_image_is_unavailable(
     delivered: list[str] = []
     _patch_delivery(monkeypatch, delivered)
     channel = _Channel()
-    message = _message(channel, message_id=1, content="eva describe this screenshot")
+    message = _message(
+        channel,
+        message_id=1,
+        content="eva hello",
+        attachments=[_Attachment("photo.png", b"\x89PNG\r\n\x1a\nbytes")],
+    )
 
     asyncio.run(handler.on_message(_client(), message))
 
-    assert failing_response.calls == 0
-    assert len(delivered) == 1
-    assert "supported image" in delivered[0]
+    assert delivered == ["model reply\n-# -eva"]
+    assert len(client.tool_calls) == 1
+    assert client.vision_calls == []
 
 
 def test_clear_command_removes_channel_vision_cache(monkeypatch, tmp_path) -> None:
@@ -342,11 +396,13 @@ def test_clear_command_removes_channel_vision_cache(monkeypatch, tmp_path) -> No
     assert handler._history_store.get(11)
 
 
-def test_handler_builds_deepseek_multimodal_payload_end_to_end(monkeypatch, tmp_path) -> None:
-    client = _RecordingChatClient()
+def test_handler_runs_agent_decision_and_separate_deepseek_vision_pass(
+    monkeypatch, tmp_path
+) -> None:
+    client = _AgentChatClient(inspect_images=True)
     response_service = ResponseService(
         client=cast(ChatCompletionClient, client),
-        model_name="deepseek-flash",
+        model_name="deepseek-v4-flash-vision-exp",
     )
     reply_service = ReplyGenerationService(
         response_service=response_service,
@@ -360,20 +416,26 @@ def test_handler_builds_deepseek_multimodal_payload_end_to_end(monkeypatch, tmp_
     message = _message(
         channel,
         message_id=1,
-        content="eva read this image",
+        content="eva what does this say?",
         attachments=[_Attachment("photo.webp", b"RIFFxxxxWEBPbytes")],
     )
 
     asyncio.run(handler.on_message(_client(), message))
 
     assert delivered == ["model reply\n-# -eva"]
-    assert client.messages[0]["role"] == "system"
-    assert isinstance(client.messages[-1]["content"], list)
-    user_content = cast(list[dict[str, object]], client.messages[-1]["content"])
+    initial_messages = cast(list[dict[str, object]], client.tool_calls[0]["messages"])
+    assert initial_messages[-1]["role"] == "user"
+    initial_content = initial_messages[-1]["content"]
+    assert isinstance(initial_content, str)
+    assert "image_url" not in str(initial_messages)
+
+    vision_messages = cast(list[dict[str, object]], client.vision_calls[0]["messages"])
+    assert isinstance(vision_messages[-1]["content"], list)
+    user_content = cast(list[dict[str, object]], vision_messages[-1]["content"])
     assert user_content[0]["type"] == "text"
-    assert cast(str, user_content[0]["text"]).endswith("read this image")
+    assert cast(str, user_content[0]["text"]).startswith("User request: what does this say?")
     assert user_content[1] == {
         "type": "image_url",
         "image_url": {"url": "data:image/webp;base64,UklGRnh4eHhXRUJQYnl0ZXM="},
     }
-    assert all(isinstance(message["content"], str) for message in client.messages[:-1])
+    assert "image_url" not in str(client.tool_calls[1]["messages"])
