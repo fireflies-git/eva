@@ -20,14 +20,22 @@ _THINK_EMPTY_RE = re.compile(
 
 # Some providers expose their internal tool protocol as DSML text in the normal
 # content field instead of returning structured ``tool_calls``. Never let that
-# protocol markup reach Discord.
+# protocol markup reach Discord. Keep the matcher tolerant of malformed output:
+# provider fragments can contain whitespace, escaped angle brackets, or a
+# truncated ``calls``/``invoke`` tag.
+_DSML_TAG_PREFIX = r"(?:\||｜){2}\s*DSML\s*(?:\||｜){2}\s*"
+_DSML_TOOL_TAG_START = rf"(?:\\)?<\s*/?\s*{_DSML_TAG_PREFIX}"
+_DSML_TOOL_TAG_END = rf"(?:\\)?</\s*{_DSML_TAG_PREFIX}"
+_DSML_TOOL_CALL_NAME = r"(?:(?:tool|function)[_\s-]*)?calls?"
+_DSML_TOOL_MARKER_NAME = rf"(?:{_DSML_TOOL_CALL_NAME}|invoke|parameter)"
+
 _DSML_TOOL_BLOCK_RE = re.compile(
-    r"<(?:\||｜){2}DSML(?:\||｜){2}tool_calls\b[^>]*>.*?"
-    r"(?:</(?:\||｜){2}DSML(?:\||｜){2}tool_calls\s*>|$)",
+    rf"{_DSML_TOOL_TAG_START}{_DSML_TOOL_CALL_NAME}\b[^>]*>.*?"
+    rf"(?:{_DSML_TOOL_TAG_END}{_DSML_TOOL_CALL_NAME}\s*>|$)",
     re.DOTALL | re.IGNORECASE,
 )
 _DSML_TOOL_MARKER_RE = re.compile(
-    r"<(?:\||｜){2}DSML(?:\||｜){2}(?:tool_calls|invoke|parameter)\b",
+    rf"{_DSML_TOOL_TAG_START}{_DSML_TOOL_MARKER_NAME}\b",
     re.IGNORECASE,
 )
 

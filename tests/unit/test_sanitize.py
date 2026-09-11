@@ -8,6 +8,10 @@ _DSML_TOOL_CALL = (
     "</｜｜DSML｜｜invoke>\n"
     "</｜｜DSML｜｜tool_calls>"
 )
+_MALFORMED_DSML_TOOL_CALLS = (
+    "\\</｜｜DSML｜｜ invoke>\n\\</｜｜DSML｜｜ calls>\n-# -eva",
+    '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="inspect_attached_images">',
+)
 
 
 def test_sanitize_response_normalizes_em_dashes_and_unicode_emoji() -> None:
@@ -36,6 +40,12 @@ def test_sanitize_response_does_not_change_code_question() -> None:
 
 def test_sanitize_response_removes_dsml_tool_call_markup() -> None:
     assert sanitize_response(_DSML_TOOL_CALL) == ""
+
+
+def test_sanitize_response_removes_malformed_dsml_tool_call_variants() -> None:
+    for leaked_content in _MALFORMED_DSML_TOOL_CALLS:
+        assert contains_tool_call_markup(leaked_content) is True
+        assert sanitize_response(leaked_content) == ""
 
 
 def test_sanitize_response_keeps_text_around_dsml_tool_call() -> None:

@@ -202,6 +202,35 @@ def test_reply_generation_suppresses_dsml_tool_call_leak() -> None:
     assert "couldn't complete that reply" in reply.content
 
 
+def test_reply_generation_suppresses_malformed_dsml_tool_call_leak() -> None:
+    leaked_tool_call = (
+        '<｜｜DSML｜｜ calls>\n'
+        '<｜｜DSML｜｜ invoke name="inspect_attached_images">'
+    )
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=StubResponseService(leaked_tool_call),
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+    )
+
+    reply = asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, DummyChannel()),
+            client=cast(discord.Client, DummyClient()),
+            context_messages=[],
+            history_messages=[],
+            user_message="check the connection",
+            reply_context=None,
+        )
+    )
+
+    assert "DSML" not in reply.content
+    assert "inspect_attached_images" not in reply.content
+    assert "couldn't complete that reply" in reply.content
+    assert reply.content.count(RESPONSE_WATERMARK) == 1
+
+
 def test_reply_generation_sends_text_after_cutting_off_dsml_tool_call() -> None:
     leaked_tool_call = (
         "I checked that.\n"
