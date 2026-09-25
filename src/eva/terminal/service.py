@@ -94,7 +94,7 @@ _FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset(
     {"-f", "--file", "-r", "--reference"}
 )
 _FORBIDDEN_GREP_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-r", "-R", "--recursive"}
+    {"-r", "-R", "--recursive", "-d", "--directories"}
 )
 _SENSITIVE_PATH_NAMES: Final[frozenset[str]] = frozenset(
     {
@@ -466,7 +466,10 @@ class TerminalService:
                 "Find execution and deletion actions are not allowed."
             )
         if executable_name == "grep" and any(
-            argument in _FORBIDDEN_GREP_OPTIONS for argument in argv[1:]
+            argument.lower() in _FORBIDDEN_GREP_OPTIONS
+            or argument.lower().startswith("--directories=")
+            or (argument.lower().startswith("-d") and not argument.startswith("--"))
+            for argument in argv[1:]
         ):
             raise TerminalCommandRejectedError(
                 "Recursive grep is not allowed in the terminal workdir."
