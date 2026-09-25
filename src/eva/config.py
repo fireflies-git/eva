@@ -12,7 +12,13 @@ from eva.constants import (
     DEFAULT_RESPONSE_CONTEXT_MESSAGES,
     X_MARK,
 )
-from eva.runtime import get_env_search_paths, get_resolved_env_path
+from eva.runtime import (
+    UnsafePathError,
+    get_env_search_paths,
+    get_resolved_env_path,
+    validate_secure_path,
+)
+from eva.security.urls import URLPolicyError, validate_url
 
 SETTINGS_DEFAULTS = {
     "api_base_url": "https://inference.do-ai.run/v1",
@@ -33,17 +39,28 @@ SETTINGS_DEFAULTS = {
     "image_incognito": True,
     "terminal_enabled": True,
     "terminal_autonomous_enabled": True,
-    "terminal_workdir": "/app",
+    "terminal_workdir": "/tmp/eva-terminal",  # nosec B108 - dedicated isolated work directory.
     "terminal_shell": "/bin/sh",
     "terminal_timeout_seconds": 15.0,
     "terminal_max_output_chars": 6000,
     "rate_limit_max_requests": 20,
     "rate_limit_window_seconds": 60.0,
     "state_dir": ".",
-    "playwright_enabled": True,
+    "playwright_enabled": False,
     "playwright_timeout_seconds": 30.0,
     "playwright_max_content_chars": 10000,
     "nopecha_enabled": True,
+    "autonomous_tool_scope": "owner_admin",
+    "terminal_command_mode": "allowlist",
+    "terminal_network_enabled": False,
+    "max_autonomous_tool_rounds": 3,
+    "max_autonomous_tool_calls": 6,
+    "max_autonomous_tool_concurrency": 2,
+    "interaction_log_enabled": False,
+    "tos_failure_mode": "fail_closed",
+    "allow_private_outbound": False,
+    "outbound_allowed_hosts": frozenset(),
+    "max_http_response_bytes": 1_048_576,
     "context7_api_key": None,
 }
 RESPONSE_CONTEXT_MESSAGES_MIN = 1
@@ -63,6 +80,17 @@ PLAYWRIGHT_TIMEOUT_SECONDS_MAX = 120.0
 PLAYWRIGHT_MAX_CONTENT_CHARS_MIN = 500
 PLAYWRIGHT_MAX_CONTENT_CHARS_MAX = 50000
 ACCOUNT_MODES = {"assistant", "standalone"}
+AUTONOMOUS_TOOL_SCOPES = {"disabled", "owner_admin", "whitelisted", "any"}
+TERMINAL_COMMAND_MODES = {"allowlist", "sandbox"}
+TOS_FAILURE_MODES = {"fail_closed", "fail_open"}
+AUTONOMOUS_TOOL_ROUNDS_MIN = 1
+AUTONOMOUS_TOOL_ROUNDS_MAX = 3
+AUTONOMOUS_TOOL_CALLS_MIN = 1
+AUTONOMOUS_TOOL_CALLS_MAX = 6
+AUTONOMOUS_TOOL_CONCURRENCY_MIN = 1
+AUTONOMOUS_TOOL_CONCURRENCY_MAX = 2
+HTTP_RESPONSE_BYTES_MIN = 64 * 1024
+HTTP_RESPONSE_BYTES_MAX = 20 * 1024 * 1024
 
 
 class ConfigError(RuntimeError):
@@ -106,6 +134,18 @@ class Settings:
     nopecha_enabled: bool
     nopecha_api_key: str | None
     context7_api_key: str | None
+    autonomous_tool_scope: str = "owner_admin"
+    terminal_command_mode: str = "allowlist"
+    terminal_network_enabled: bool = False
+    max_autonomous_tool_rounds: int = 3
+    max_autonomous_tool_calls: int = 6
+    max_autonomous_tool_concurrency: int = 2
+    interaction_log_enabled: bool = False
+    tos_failure_mode: str = "fail_closed"
+    allow_private_outbound: bool = False
+    max_http_response_bytes: int = 1_048_576
+    admin_user_ids: frozenset[int] = frozenset()
+    outbound_allowed_hosts: frozenset[str] = frozenset()
 
 
 def get_runtime_base_dir() -> Path:
@@ -197,8 +237,56 @@ def _optional_choice(name: str, *, default: str, choices: set[str]) -> str:
     return value
 
 
+def _optional_int_set(name: str, *, default: frozenset[int]) -> frozenset[int]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    values: set[int] = set()
+    for item in raw.split(","):
+        normalized = item.strip()
+        if not normalized:
+            continue
+        if not normalized.isascii() or not normalized.isdecimal() or int(normalized) <= 0:
+            raise ConfigError(f"{name} must contain only comma-separated Discord user IDs")
+        values.add(int(normalized))
+    if not values:
+        raise ConfigError(f"{name} must contain at least one Discord user ID")
+    return frozenset(values)
+
+
+def _optional_host_set(name: str, *, default: frozenset[str]) -> frozenset[str]:
+    """Parse an exact outbound host allowlist without accepting URL syntax."""
+
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    hosts: set[str] = set()
+    for item in raw.split(","):
+        candidate = item.strip()
+        if not candidate:
+            continue
+        if not candidate.isascii() or any(
+            character in candidate for character in "/?#@\\%"
+        ) or (
+            ":" in candidate and not (candidate.startswith("[") and candidate.endswith("]"))
+        ):
+            raise ConfigError(f"{name} must contain hostnames only")
+        try:
+            hosts.add(validate_url(f"https://{candidate}", allow_private=True).hostname)
+        except URLPolicyError as exc:
+            raise ConfigError(f"{name} contains an invalid hostname") from exc
+    if not hosts:
+        raise ConfigError(f"{name} must contain at least one hostname")
+    return frozenset(hosts)
+
+
 def load_settings() -> Settings:
-    env_path = get_env_path()
+    try:
+        env_path = get_env_path()
+    except UnsafePathError as exc:
+        raise ConfigError(f"Configured EVA_ENV_PATH is not safe: {exc}") from exc
     load_dotenv(dotenv_path=env_path)
 
     followup_delay_min_seconds = _optional_float(
@@ -218,13 +306,49 @@ def load_settings() -> Settings:
     )
 
     model_name = _optional_env("MODEL_NAME", default=SETTINGS_DEFAULTS["model_name"])
+    allow_private_outbound = _optional_bool(
+        "ALLOW_PRIVATE_OUTBOUND",
+        default=SETTINGS_DEFAULTS["allow_private_outbound"],
+    )
+    api_base_url = _optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"])
+    image_api_base_url = _optional_env(
+        "IMAGE_API_BASE_URL",
+        default=SETTINGS_DEFAULTS["image_api_base_url"],
+    )
+    state_dir_value = _optional_env("STATE_DIR", default=SETTINGS_DEFAULTS["state_dir"])
+    try:
+        validate_secure_path(Path(state_dir_value), expect_directory=True)
+        api_url = validate_url(api_base_url, allow_private=allow_private_outbound)
+        image_api_url = validate_url(image_api_base_url, allow_private=allow_private_outbound)
+    except UnsafePathError as exc:
+        raise ConfigError(f"Configured STATE_DIR is not safe: {exc}") from exc
+    except URLPolicyError as exc:
+        raise ConfigError(f"Configured API URL is not allowed: {exc}") from exc
+    if not allow_private_outbound and (
+        api_url.parsed.scheme != "https" or image_api_url.parsed.scheme != "https"
+    ):
+        raise ConfigError("API_BASE_URL and IMAGE_API_BASE_URL must use HTTPS")
 
     try:
+        nopecha_enabled = _optional_bool(
+            "NOPECHA_ENABLED",
+            default=SETTINGS_DEFAULTS["nopecha_enabled"],
+        )
+        nopecha_api_key = _optional_secret("NOPECHA_API_KEY")
+        terminal_network_enabled = _optional_bool(
+            "TERMINAL_NETWORK_ENABLED",
+            default=SETTINGS_DEFAULTS["terminal_network_enabled"],
+        )
+        if terminal_network_enabled:
+            raise ConfigError(
+                "TERMINAL_NETWORK_ENABLED cannot be enabled; terminal isolation "
+                "always denies network access"
+            )
         return Settings(
             discord_token=_required_env("DISCORD_TOKEN"),
             api_key=_required_env("API_KEY"),
             image_api_key=_optional_secret("IMAGE_API_KEY"),
-            api_base_url=_optional_env("API_BASE_URL", default=SETTINGS_DEFAULTS["api_base_url"]),
+            api_base_url=api_base_url,
             account_mode=_optional_choice(
                 "ACCOUNT_MODE",
                 default=SETTINGS_DEFAULTS["account_mode"],
@@ -253,10 +377,7 @@ def load_settings() -> Settings:
             min_loading_seconds=SETTINGS_DEFAULTS["min_loading_seconds"],
             followup_delay_min_seconds=followup_delay_min_seconds,
             followup_delay_max_seconds=followup_delay_max_seconds,
-            image_api_base_url=_optional_env(
-                "IMAGE_API_BASE_URL",
-                default=SETTINGS_DEFAULTS["image_api_base_url"],
-            ),
+            image_api_base_url=image_api_base_url,
             image_model_name=_optional_env(
                 "IMAGE_MODEL_NAME",
                 default=SETTINGS_DEFAULTS["image_model_name"],
@@ -309,7 +430,7 @@ def load_settings() -> Settings:
                 minimum=RATE_LIMIT_WINDOW_SECONDS_MIN,
                 maximum=RATE_LIMIT_WINDOW_SECONDS_MAX,
             ),
-            state_dir=_optional_env("STATE_DIR", default=SETTINGS_DEFAULTS["state_dir"]),
+            state_dir=state_dir_value,
             playwright_enabled=_optional_bool(
                 "PLAYWRIGHT_ENABLED",
                 default=SETTINGS_DEFAULTS["playwright_enabled"],
@@ -326,12 +447,64 @@ def load_settings() -> Settings:
                 minimum=PLAYWRIGHT_MAX_CONTENT_CHARS_MIN,
                 maximum=PLAYWRIGHT_MAX_CONTENT_CHARS_MAX,
             ),
-            nopecha_enabled=_optional_bool(
-                "NOPECHA_ENABLED",
-                default=SETTINGS_DEFAULTS["nopecha_enabled"],
-            ),
-            nopecha_api_key=_optional_secret("NOPECHA_API_KEY"),
+            nopecha_enabled=nopecha_enabled,
+            nopecha_api_key=nopecha_api_key,
             context7_api_key=_optional_secret("CONTEXT7_API_KEY"),
+            autonomous_tool_scope=_optional_choice(
+                "AUTONOMOUS_TOOL_SCOPE",
+                default=SETTINGS_DEFAULTS["autonomous_tool_scope"],
+                choices=AUTONOMOUS_TOOL_SCOPES,
+            ),
+            terminal_command_mode=_optional_choice(
+                "TERMINAL_COMMAND_MODE",
+                default=SETTINGS_DEFAULTS["terminal_command_mode"],
+                choices=TERMINAL_COMMAND_MODES,
+            ),
+            terminal_network_enabled=terminal_network_enabled,
+            max_autonomous_tool_rounds=_optional_int(
+                "MAX_AUTONOMOUS_TOOL_ROUNDS",
+                default=SETTINGS_DEFAULTS["max_autonomous_tool_rounds"],
+                minimum=AUTONOMOUS_TOOL_ROUNDS_MIN,
+                maximum=AUTONOMOUS_TOOL_ROUNDS_MAX,
+            ),
+            max_autonomous_tool_calls=_optional_int(
+                "MAX_AUTONOMOUS_TOOL_CALLS",
+                default=SETTINGS_DEFAULTS["max_autonomous_tool_calls"],
+                minimum=AUTONOMOUS_TOOL_CALLS_MIN,
+                maximum=AUTONOMOUS_TOOL_CALLS_MAX,
+            ),
+            max_autonomous_tool_concurrency=_optional_int(
+                "MAX_AUTONOMOUS_TOOL_CONCURRENCY",
+                default=SETTINGS_DEFAULTS["max_autonomous_tool_concurrency"],
+                minimum=AUTONOMOUS_TOOL_CONCURRENCY_MIN,
+                maximum=AUTONOMOUS_TOOL_CONCURRENCY_MAX,
+            ),
+            interaction_log_enabled=_optional_bool(
+                "INTERACTION_LOG_ENABLED",
+                default=SETTINGS_DEFAULTS["interaction_log_enabled"],
+            ),
+            tos_failure_mode=_optional_choice(
+                "TOS_FAILURE_MODE",
+                default=SETTINGS_DEFAULTS["tos_failure_mode"],
+                choices=TOS_FAILURE_MODES,
+            ),
+            allow_private_outbound=allow_private_outbound,
+            max_http_response_bytes=_optional_int(
+                "MAX_HTTP_RESPONSE_BYTES",
+                default=SETTINGS_DEFAULTS["max_http_response_bytes"],
+                minimum=HTTP_RESPONSE_BYTES_MIN,
+                maximum=HTTP_RESPONSE_BYTES_MAX,
+            ),
+            admin_user_ids=_optional_int_set(
+                "ADMIN_USER_IDS",
+                default=frozenset(
+                    {213766338005434370, 218675193592283137, 1202356249975595068}
+                ),
+            ),
+            outbound_allowed_hosts=_optional_host_set(
+                "OUTBOUND_ALLOWED_HOSTS",
+                default=SETTINGS_DEFAULTS["outbound_allowed_hosts"],
+            ),
         )
     except ConfigError as exc:
         candidates = ", ".join(str(path) for path in get_env_search_paths())

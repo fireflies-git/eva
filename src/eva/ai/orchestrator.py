@@ -19,6 +19,7 @@ from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WAR
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_system_prompt
 from eva.reminders import ReminderConfirmation
+from eva.tools import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class ResponseGenerator(Protocol):
         requester_context: str | None,
         vision_images: Sequence[VisionImage] = (),
         vision_context_available: bool = False,
+        tool_context: ToolExecutionContext | None = None,
     ) -> ResponseGenerationResult: ...
 
 
@@ -97,6 +99,7 @@ class ReplyGenerationService:
         autonomous_terminal_enabled: bool = False,
         playwright_enabled: bool = False,
         context7_enabled: bool = False,
+        autonomous_tool_scope: str = "owner_admin",
         safeguard_notifier: SafeguardNotifier | None = None,
     ) -> None:
         self._account_mode = account_mode
@@ -108,6 +111,10 @@ class ReplyGenerationService:
         self._autonomous_terminal_enabled = autonomous_terminal_enabled
         self._playwright_enabled = playwright_enabled
         self._context7_enabled = context7_enabled
+        normalized_scope = autonomous_tool_scope.strip().lower()
+        if normalized_scope not in {"disabled", "owner_admin", "whitelisted", "any"}:
+            raise ValueError(f"Unknown autonomous tool scope: {autonomous_tool_scope!r}")
+        self._autonomous_tool_scope = normalized_scope
         self._safeguard_notifier = safeguard_notifier
         self._watermark_enabled = True
 
@@ -134,6 +141,9 @@ class ReplyGenerationService:
         requester_is_admin: bool = False,
         vision_images: Sequence[VisionImage] = (),
         vision_context_available: bool = False,
+        requester_is_owner: bool = False,
+        requester_is_whitelisted: bool = False,
+        trigger_type: str = "unknown",
     ) -> ReplyOutput:
         reminder_confirmation = await self._schedule_reminder_if_needed(
             user_message=user_message,
@@ -162,16 +172,24 @@ class ReplyGenerationService:
         if image_results is not None:
             reply = self._generate_image_reply(image_results)
         else:
+            autonomous_tools_available = self._can_use_autonomous_tools(
+                user_id=user_id,
+                requester_is_owner=requester_is_owner,
+                requester_is_admin=requester_is_admin,
+                requester_is_whitelisted=requester_is_whitelisted,
+            )
             system_prompt = build_system_prompt(
                 channel,
                 client,
                 account_mode=self._account_mode,
-                terminal_enabled=self._terminal_enabled,
-                autonomous_terminal_enabled=self._autonomous_terminal_enabled,
-                playwright_enabled=self._playwright_enabled,
-                context7_enabled=self._context7_enabled,
+                terminal_enabled=self._terminal_enabled and autonomous_tools_available,
+                autonomous_terminal_enabled=self._autonomous_terminal_enabled
+                and autonomous_tools_available,
+                playwright_enabled=self._playwright_enabled and autonomous_tools_available,
+                context7_enabled=self._context7_enabled and autonomous_tools_available,
                 requester_is_admin=requester_is_admin,
-                vision_enabled=vision_context_available or bool(vision_images),
+                vision_enabled=autonomous_tools_available
+                and (vision_context_available or bool(vision_images)),
             )
             content = await self._response_service.generate_reply(
                 system_prompt=system_prompt,
@@ -182,6 +200,15 @@ class ReplyGenerationService:
                 requester_context=requester_context,
                 vision_images=vision_images,
                 vision_context_available=vision_context_available,
+                tool_context=ToolExecutionContext(
+                    requester_id=user_id,
+                    is_owner=requester_is_owner,
+                    is_admin=requester_is_admin,
+                    is_whitelisted=requester_is_whitelisted,
+                    account_mode=self._account_mode,
+                    channel_id=channel_id,
+                    trigger_type=trigger_type,
+                ),
             )
             reply = ReplyOutput(
                 content=content.content,
@@ -194,6 +221,22 @@ class ReplyGenerationService:
             requester_id=user_id,
             channel_id=channel_id,
         )
+
+    def _can_use_autonomous_tools(
+        self,
+        *,
+        user_id: int | None,
+        requester_is_owner: bool,
+        requester_is_admin: bool,
+        requester_is_whitelisted: bool,
+    ) -> bool:
+        if user_id is None or self._autonomous_tool_scope == "disabled":
+            return False
+        if self._autonomous_tool_scope == "owner_admin":
+            return requester_is_owner or requester_is_admin
+        if self._autonomous_tool_scope == "whitelisted":
+            return requester_is_owner or requester_is_admin or requester_is_whitelisted
+        return True
 
     async def _finalize_reply(
         self,

@@ -6,7 +6,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from eva.constants import MAX_TRACKED_MESSAGES
-from eva.state.atomic import write_text_atomic
+from eva.state.atomic import validate_state_path, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class TrackedMessageStore:
     ) -> None:
         if max_size <= 0:
             raise ValueError("max_size must be positive")
-        self._path = path
+        self._path = validate_state_path(path) if path is not None else None
         self._max_size = max_size
         self._message_ids: OrderedDict[int, None] = OrderedDict()
         self._load()

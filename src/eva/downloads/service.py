@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from urllib.parse import urlparse
 
 from eva.constants import DEFAULT_DM_DOWNLOAD_LIMIT_BYTES
 from eva.downloads.client import DownloadClientError, MediaDownloader
 from eva.downloads.schemas import DownloadedMediaAsset
+from eva.security.urls import URLPolicyError, validate_url_for_request
 
 
 class DownloadService:
@@ -15,9 +16,15 @@ class DownloadService:
         *,
         client: MediaDownloader,
         dm_filesize_limit_bytes: int = DEFAULT_DM_DOWNLOAD_LIMIT_BYTES,
+        allow_private_outbound: bool = False,
+        download_timeout_seconds: float = 300.0,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> None:
         self._client = client
         self._dm_filesize_limit_bytes = dm_filesize_limit_bytes
+        self._allow_private_outbound = allow_private_outbound
+        self._download_timeout_seconds = max(1.0, download_timeout_seconds)
+        self._allowed_hosts = allowed_hosts
 
     async def download_media(
         self,
@@ -25,19 +32,33 @@ class DownloadService:
         url: str,
         guild_filesize_limit: int | None,
     ) -> DownloadedMediaAsset:
-        if not _is_valid_url(url):
-            raise DownloadClientError("Please provide a valid URL")
+        try:
+            validated_url = await validate_url_for_request(
+                url,
+                allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
+            )
+        except URLPolicyError as exc:
+            raise DownloadClientError(
+                f"Please provide a valid URL (public URL required): {exc}"
+            ) from exc
 
         max_size = guild_filesize_limit or self._dm_filesize_limit_bytes
         max_size_mb = max_size / (1024 * 1024)
 
         with TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
-            downloaded_file = await self._client.download(
-                url=url,
-                max_filesize_mb=max_size_mb,
-                temp_dir=temp_dir,
-            )
+            try:
+                downloaded_file = await asyncio.wait_for(
+                    self._client.download(
+                        url=validated_url.value,
+                        max_filesize_mb=max_size_mb,
+                        temp_dir=temp_dir,
+                    ),
+                    timeout=self._download_timeout_seconds,
+                )
+            except TimeoutError as exc:
+                raise DownloadClientError("Media download timed out") from exc
 
             if not downloaded_file.path.exists():
                 raise DownloadClientError(
@@ -51,17 +72,21 @@ class DownloadService:
                     f"({filesize / 1024 / 1024:.1f}MB > {max_size_mb:.1f}MB)"
                 )
 
+            # Bound the final in-memory copy as well. A file can grow after
+            # the metadata check, especially when a downloader postprocessor
+            # is still finishing its output.
+            with downloaded_file.path.open("rb") as media_file:
+                data = media_file.read(max_size + 1)
+            if len(data) > max_size:
+                raise DownloadClientError(
+                    "Video file is too large to upload "
+                    f"({len(data) / 1024 / 1024:.1f}MB > {max_size_mb:.1f}MB)"
+                )
+
             return DownloadedMediaAsset(
                 filename=_build_attachment_filename(downloaded_file.path),
-                data=downloaded_file.path.read_bytes(),
+                data=data,
             )
-
-
-def _is_valid_url(url: str) -> bool:
-    parsed = urlparse(url.strip())
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
-
-
 def _build_attachment_filename(path: Path) -> str:
     filename = path.name.strip()
     return filename or "downloaded-media.mp4"

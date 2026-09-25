@@ -3,7 +3,24 @@
 from __future__ import annotations
 
 import os
+import stat
+import tempfile
 from pathlib import Path
+
+from eva.runtime import validate_secure_path
+
+
+def validate_state_path(path: Path) -> Path:
+    """Validate a persistent state file before reading or writing it."""
+
+    # Keep the stores' existing failure semantics for a directory supplied as
+    # a file path: construction succeeds and the first persistence attempt
+    # reports the write error.  The directory itself is still checked for
+    # symlinks and unsafe permissions.
+    candidate = Path(path).expanduser()
+    if candidate.exists() and candidate.is_dir():
+        return validate_secure_path(candidate, expect_directory=True)
+    return validate_secure_path(path)
 
 
 def write_text_atomic(path: Path, text: str) -> None:
@@ -12,6 +29,21 @@ def write_text_atomic(path: Path, text: str) -> None:
     A crash mid-write then damages only the temp file, never the live state
     file. ``os.replace`` is atomic for same-volume renames on Windows/POSIX.
     """
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(text, encoding="utf-8")
-    os.replace(tmp_path, path)
+    path = validate_state_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.tmp-",
+        dir=path.parent,
+        text=True,
+    )
+    tmp_path = Path(temp_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as temp_file:
+            temp_file.write(text)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        if os.name != "nt":
+            tmp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)

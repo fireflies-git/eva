@@ -7,6 +7,9 @@ from typing import Protocol, runtime_checkable
 __all__ = [
     "Context7Service",
     "PlaywrightService",
+    "ToolAuthorizationError",
+    "ToolAuthorizer",
+    "ToolExecutionContext",
     "ToolService",
     "VisionInspectionTool",
 ]
@@ -28,6 +31,11 @@ class ToolService(Protocol):
     async def run_autonomous_tool(self, arguments: str) -> str: ...
 
 
+from eva.tools.authorization import (  # noqa: E402
+    ToolAuthorizationError,
+    ToolAuthorizer,
+    ToolExecutionContext,
+)
 from eva.tools.context7_service import Context7Service  # noqa: E402
 from eva.tools.playwright_service import PlaywrightService  # noqa: E402
 from eva.tools.vision_service import VisionInspectionTool  # noqa: E402

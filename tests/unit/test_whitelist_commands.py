@@ -6,8 +6,9 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import discord
+import pytest
 
-from eva.discord.commands import handle_whitelist_command
+from eva.discord.commands import configured_admin_ids, handle_whitelist_command
 from eva.state import WhitelistStore
 
 
@@ -97,6 +98,13 @@ def test_whitelist_add_allows_hardcoded_admin_id(tmp_path: Path) -> None:
     assert handled is True
     assert whitelist.contains(123) is True
     assert _captured_messages(message) == [(False, "✔ <@123> added to whitelist.")]
+
+
+def test_configured_admin_ids_rejects_invalid_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADMIN_USER_IDS", "123, invalid")
+
+    with pytest.raises(ValueError, match="ADMIN_USER_IDS"):
+        configured_admin_ids()
 
 
 def test_whitelist_clear_is_blocked_for_non_admin(tmp_path: Path) -> None:

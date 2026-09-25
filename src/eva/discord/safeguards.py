@@ -36,7 +36,12 @@ class DiscordSafeguardNotifier:
                 user = client.get_user(admin_id)
                 if user is None:
                     user = await client.fetch_user(admin_id)
-                await user.send(body)
+                try:
+                    await user.send(body, allowed_mentions=discord.AllowedMentions.none())
+                except TypeError as exc:
+                    if "allowed_mentions" not in str(exc):
+                        raise
+                    await user.send(body)
             except Exception:
                 logger.exception("Failed to DM admin %s about a safeguard hit", admin_id)
             else:

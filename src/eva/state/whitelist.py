@@ -7,6 +7,8 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from eva.state.atomic import validate_state_path
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WHITELIST_PATH = Path("whitelist.db")
@@ -27,9 +29,9 @@ class WhitelistStore:
     """
 
     def __init__(self, path: Path = DEFAULT_WHITELIST_PATH) -> None:
-        self._path = path
+        self._path = validate_state_path(path)
         try:
-            self._connection = sqlite3.connect(path)
+            self._connection = sqlite3.connect(self._path)
             with self._connection:
                 self._connection.execute(_CREATE_TABLE)
             self._user_ids = {
@@ -38,7 +40,7 @@ class WhitelistStore:
             }
         except sqlite3.Error as exc:
             raise WhitelistPersistenceError(
-                f"Failed to open whitelist database at {path}"
+                f"Failed to open whitelist database at {self._path}"
             ) from exc
         self._migrate_legacy_json()
 
@@ -101,7 +103,9 @@ class WhitelistStore:
         Runs only when the database is empty, then renames the JSON file so a
         cleared whitelist cannot be resurrected on the next startup.
         """
-        legacy_path = self._path.parent / LEGACY_WHITELIST_JSON_NAME
+        legacy_path = validate_state_path(
+            self._path.parent / LEGACY_WHITELIST_JSON_NAME
+        )
         if legacy_path == self._path or not legacy_path.exists():
             return
         if self._user_ids:

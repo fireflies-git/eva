@@ -151,3 +151,52 @@ def test_load_settings_reads_nopecha_configuration(monkeypatch) -> None:
 
     assert settings.nopecha_enabled is False
     assert settings.nopecha_api_key == "key123"
+
+
+def test_load_settings_parses_outbound_host_allowlist(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("OUTBOUND_ALLOWED_HOSTS", "API.EXAMPLE.COM, docs.example.com")
+
+    settings = load_settings()
+
+    assert settings.outbound_allowed_hosts == frozenset(
+        {"api.example.com", "docs.example.com"}
+    )
+
+
+def test_load_settings_rejects_url_in_outbound_host_allowlist(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("OUTBOUND_ALLOWED_HOSTS", "https://example.com")
+
+    with pytest.raises(ConfigError, match="hostnames only"):
+        load_settings()
+
+
+def test_load_settings_rejects_terminal_network_override(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("TERMINAL_NETWORK_ENABLED", "true")
+
+    with pytest.raises(ConfigError, match="TERMINAL_NETWORK_ENABLED"):
+        load_settings()
+
+
+def test_load_settings_accepts_disabled_autonomous_tool_scope(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("AUTONOMOUS_TOOL_SCOPE", "disabled")
+
+    settings = load_settings()
+
+    assert settings.autonomous_tool_scope == "disabled"
+
+
+def test_load_settings_validates_admin_ids(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("ADMIN_USER_IDS", "123, invalid")
+
+    with pytest.raises(ConfigError, match="ADMIN_USER_IDS"):
+        load_settings()

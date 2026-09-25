@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from eva.constants import FRIEND_REQUEST_TTL_SECONDS
-from eva.state.atomic import write_text_atomic
+from eva.state.atomic import validate_state_path, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class PendingFriendRequestStore:
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be positive")
-        self._path = path
+        self._path = validate_state_path(path) if path is not None else None
         self._ttl_seconds = ttl_seconds
         self._clock = clock
         self._pending: dict[int, PendingFriendRequest] = {}

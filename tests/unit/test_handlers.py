@@ -468,7 +468,7 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         SimpleNamespace(
             author=SimpleNamespace(id=218675193592283137, display_name="admin"),
             channel=SimpleNamespace(id=1),
-            content="eva shell pwd",
+            content="eva shell python --version",
             id=123,
             reference=None,
         ),
@@ -561,7 +561,6 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         state_dir=".",
     )
     whitelist = WhitelistStore(tmp_path / "whitelist.json")
-    whitelist.add(2)
     handler = SelfbotMessageHandler(
         settings=settings,
         reply_generation_service=cast(ReplyGenerationService, FailingReplyGenerationService()),
@@ -600,15 +599,19 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
             return None
 
+    async def fake_edit(**kwargs: object) -> None:
+        return None
+
     message = cast(
         discord.Message,
         SimpleNamespace(
-            author=SimpleNamespace(id=2, display_name="friend"),
+            author=SimpleNamespace(id=213766338005434370, display_name="admin"),
             channel=SimpleNamespace(id=1, typing=lambda: DummyTypingContext()),
             guild=SimpleNamespace(filesize_limit=8 * 1024 * 1024),
             content="eva dl https://example.com/video",
             id=123,
             reference=None,
+            edit=fake_edit,
         ),
     )
     client = cast(discord.Client, SimpleNamespace(user=SimpleNamespace(id=1)))

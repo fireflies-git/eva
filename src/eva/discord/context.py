@@ -120,7 +120,7 @@ def _serialize_context_message(
         content = "[no text]"
 
     message_id = getattr(msg, "id", "unknown")
-    parts = [f"[{timestamp} message_id:{message_id}] {author}"]
+    parts = [f"[UNTRUSTED_DISCORD_DATA {timestamp} message_id:{message_id}] {author}"]
     if extras:
         parts.append(f" {extras}")
     parts.append(f": {content}")
@@ -215,7 +215,7 @@ async def fetch_reply_context(message: discord.Message) -> str | None:
     mentions = format_mentions_metadata(list(getattr(ref_msg, "mentions", [])))
 
     content = ref_msg.content or "[no text]"
-    parts = [f"[message_id:{ref_msg.id}] {author}: {content}"]
+    parts = [f"[UNTRUSTED_DISCORD_DATA message_id:{ref_msg.id}] {author}: {content}"]
     if extras:
         parts.append(f" | {extras}")
     if mentions:

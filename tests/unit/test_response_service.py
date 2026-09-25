@@ -8,7 +8,7 @@ from typing import Any, cast
 from eva.ai.client import AIClientError, ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
 from eva.terminal import TerminalService
-from eva.tools import ToolService
+from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
 
 
 class FakeToolClient:
@@ -50,6 +50,7 @@ def test_response_service_uses_terminal_tool_loop(tmp_path: Path) -> None:
         client=client,
         model_name="model",
         tool_services=[terminal_service],
+        tool_authorizer=ToolAuthorizer(),
     )
 
     reply = asyncio.run(
@@ -60,6 +61,7 @@ def test_response_service_uses_terminal_tool_loop(tmp_path: Path) -> None:
             user_message="where am i running",
             reply_context=None,
             requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_owner=True),
         )
     )
 
@@ -108,6 +110,114 @@ class FakeToolService:
         return "tool result"
 
 
+class ProtectedToolService:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls = 0
+
+    @property
+    def autonomous_tool_name(self) -> str:
+        return self.name
+
+    def build_autonomous_tool_definition(self) -> dict[str, object]:
+        return {"type": "function", "function": {"name": self.name}}
+
+    async def run_autonomous_tool(self, arguments: str) -> str:
+        self.calls += 1
+        return "tool result"
+
+
+class AuthorizeThenDenyToolAuthorizer(ToolAuthorizer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.checks = 0
+
+    def is_allowed(
+        self,
+        tool_name: str,
+        context: ToolExecutionContext | None,
+    ) -> bool:
+        self.checks += 1
+        return self.checks == 1
+
+
+def test_response_service_uses_bounded_per_requester_tool_buckets() -> None:
+    service = ResponseService(client=FakeChatClient(), model_name="model")
+
+    requester_bucket = service._get_requester_tool_semaphore(7)
+
+    assert service._get_requester_tool_semaphore(7) is requester_bucket
+    assert service._get_requester_tool_semaphore(8) is not requester_bucket
+    assert service._get_requester_tool_semaphore(None) is service._overflow_requester_tool_semaphore
+
+
+def test_unprivileged_requester_never_receives_autonomous_tool_definitions() -> None:
+    client = FakeToolClient()
+    tool_services: list[ToolService] = [
+        ProtectedToolService("run_terminal_command"),
+        ProtectedToolService("fetch_web_page"),
+        ProtectedToolService("lookup_documentation"),
+    ]
+    service = ResponseService(
+        client=client,
+        model_name="model",
+        tool_services=tool_services,
+        tool_authorizer=ToolAuthorizer(),
+    )
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="try the tools",
+            reply_context=None,
+            requester_context=None,
+            tool_context=ToolExecutionContext(
+                requester_id=42,
+                is_whitelisted=True,
+                account_mode="standalone",
+            ),
+        )
+    )
+
+    assert reply.content == "plain fallback"
+    assert client.tool_calls == []
+    assert len(client.chat_calls) == 1
+    assert all(cast(ProtectedToolService, tool).calls == 0 for tool in tool_services)
+
+
+def test_tool_authorization_is_rechecked_before_execution() -> None:
+    client = FakeToolClient()
+    terminal = ProtectedToolService("run_terminal_command")
+    service = ResponseService(
+        client=client,
+        model_name="model",
+        tool_services=[terminal],
+        tool_authorizer=AuthorizeThenDenyToolAuthorizer(),
+    )
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="use the tool",
+            reply_context=None,
+            requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_owner=True),
+        )
+    )
+
+    assert reply.content == "used tool output"
+    assert terminal.calls == 0
+    second_round_messages = cast(list[dict[str, Any]], client.tool_calls[1]["messages"])
+    tool_message = next(
+        message for message in second_round_messages if message.get("role") == "tool"
+    )
+    assert "not authorized" in tool_message["content"]
+
+
 class OverCallingToolClient:
     """First round emits more tool calls than the per-round cap allows."""
 
@@ -143,6 +253,7 @@ def test_tool_loop_caps_unanswered_tool_calls_on_assistant_message() -> None:
         client=client,
         model_name="model",
         tool_services=tool_services,
+        tool_authorizer=ToolAuthorizer(protected_tool_names={"fake_tool"}),
     )
 
     reply = asyncio.run(
@@ -153,6 +264,7 @@ def test_tool_loop_caps_unanswered_tool_calls_on_assistant_message() -> None:
             user_message="use the tool a lot",
             reply_context=None,
             requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_admin=True),
         )
     )
 
@@ -220,7 +332,10 @@ def test_response_service_uses_local_history_when_discord_context_is_empty() -> 
     messages = cast(list[dict[str, str]], client.chat_calls[0]["messages"])
     assert messages == [
         {"role": "system", "content": "prompt"},
-        {"role": "assistant", "content": "old reply"},
+        {
+            "role": "assistant",
+            "content": "[UNTRUSTED_HISTORY_DATA]\nold reply",
+        },
         {"role": "user", "content": "new question"},
     ]
 

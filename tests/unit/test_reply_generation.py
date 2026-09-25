@@ -134,6 +134,84 @@ def test_reply_generation_uses_admin_persona_when_requested() -> None:
     assert "Your admin bond" in system_prompt
 
 
+def test_whitelisted_compatibility_scope_exposes_autonomous_capabilities() -> None:
+    response_service = StubResponseService("normal")
+    reply_service = ReplyGenerationService(
+        account_mode="standalone",
+        response_service=response_service,
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+        terminal_enabled=True,
+        autonomous_terminal_enabled=True,
+        playwright_enabled=True,
+        context7_enabled=True,
+        autonomous_tool_scope="whitelisted",
+    )
+
+    asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(
+                discord.abc.Messageable,
+                SimpleNamespace(guild=None, name="DM"),
+            ),
+            client=cast(
+                discord.Client,
+                SimpleNamespace(
+                    user=SimpleNamespace(name="eva", display_name="Eva"),
+                ),
+            ),
+            context_messages=[],
+            history_messages=[],
+            user_message="look this up",
+            reply_context=None,
+            user_id=42,
+            requester_is_whitelisted=True,
+        )
+    )
+
+    system_prompt = cast(str, response_service.calls[0]["system_prompt"])
+    assert "run_terminal_command" in system_prompt
+    assert "fetch_web_page" in system_prompt
+    assert "lookup_documentation" in system_prompt
+
+
+def test_owner_exposes_autonomous_capabilities_without_admin_flag() -> None:
+    response_service = StubResponseService("normal")
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=response_service,
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+        terminal_enabled=True,
+        autonomous_terminal_enabled=True,
+        autonomous_tool_scope="owner_admin",
+    )
+
+    asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(
+                discord.abc.Messageable,
+                SimpleNamespace(guild=None, name="DM"),
+            ),
+            client=cast(
+                discord.Client,
+                SimpleNamespace(
+                    user=SimpleNamespace(name="eva", display_name="Eva"),
+                ),
+            ),
+            context_messages=[],
+            history_messages=[],
+            user_message="inspect the checkout",
+            reply_context=None,
+            user_id=1,
+            requester_is_owner=True,
+        )
+    )
+
+    system_prompt = cast(str, response_service.calls[0]["system_prompt"])
+    assert "run_terminal_command" in system_prompt
+
+
 def test_reply_generation_blocks_tos_violations() -> None:
     notifier = StubSafeguardNotifier()
     client = DummyClient()

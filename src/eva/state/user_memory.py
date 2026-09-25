@@ -6,7 +6,7 @@ import json
 import logging
 from pathlib import Path
 
-from eva.state.atomic import write_text_atomic
+from eva.state.atomic import validate_state_path, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class UserMemoryStore:
             raise ValueError("max_notes_per_user must be positive")
         if max_note_chars <= 0:
             raise ValueError("max_note_chars must be positive")
-        self._path = path
+        self._path = validate_state_path(path)
         self._max_notes_per_user = max_notes_per_user
         self._max_note_chars = max_note_chars
         self._notes: dict[int, list[str]] = {}

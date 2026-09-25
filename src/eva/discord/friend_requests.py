@@ -300,10 +300,19 @@ class FriendRequestHandler:
             admin = await client.fetch_user(admin_user_id)
         group = await client.create_group(admin, requester)
         await group.edit(name=f"{pending.requester_label}'s Application")
-        await group.send(
+        body = (
             f"Application started for **{pending.requester_label}**. "
             f"<@{admin_user_id}> and <@{pending.requester_id}>, please discuss the request here."
         )
+        try:
+            await group.send(
+                body,
+                allowed_mentions=discord.AllowedMentions(users=[admin, requester]),
+            )
+        except TypeError as exc:
+            if "allowed_mentions" not in str(exc):
+                raise
+            await group.send(body)
 
     @staticmethod
     def _missing_target_message(requester_id: int | None) -> str:
@@ -413,7 +422,12 @@ async def _fan_out_dm(
             user = client.get_user(admin_id)
             if user is None:
                 user = await client.fetch_user(admin_id)
-            await user.send(body)
+            try:
+                await user.send(body, allowed_mentions=discord.AllowedMentions.none())
+            except TypeError as exc:
+                if "allowed_mentions" not in str(exc):
+                    raise
+                await user.send(body)
         except Exception:
             logger.exception("Failed to DM admin %s about friend request", admin_id)
             continue

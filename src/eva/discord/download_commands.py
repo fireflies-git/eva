@@ -27,9 +27,10 @@ async def handle_download_command(
     if url is None:
         return CommandOutcome.not_handled()
 
-    is_allowed = is_admin_user(user_id=message.author.id, is_owner=is_owner) or whitelist.contains(
-        message.author.id
-    )
+    # Keep the whitelist dependency in the command boundary for compatibility,
+    # but external media fetching is privileged even for whitelisted chat users.
+    del whitelist
+    is_allowed = is_admin_user(user_id=message.author.id, is_owner=is_owner)
     if not is_allowed:
         return CommandOutcome(
             handled=True,

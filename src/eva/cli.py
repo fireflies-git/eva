@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import subprocess
+import os
+import subprocess  # nosec B404 - fixed internal CLI commands only.
 import sys
+import tempfile
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key
 
 from eva.config import ACCOUNT_MODES, SETTINGS_DEFAULTS
+from eva.runtime import get_resolved_env_path, validate_secure_path
 
 _SETTING_DEFINITIONS = {
     "account-mode": {
@@ -19,9 +22,7 @@ _SETTING_DEFINITIONS = {
 
 
 def _env_path() -> Path:
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
-        return Path(sys.argv[0]).resolve().parent / ".env"
-    return Path(".env")
+    return get_resolved_env_path()
 
 
 def _print_settings_usage() -> None:
@@ -70,10 +71,28 @@ def _set_setting(key: str, value: str) -> int:
         print(f"Invalid value for {key}: {value}. Allowed: {allowed}", file=sys.stderr)
         return 2
 
-    env_path = _env_path()
-    if not env_path.exists():
-        env_path.touch()
-    set_key(str(env_path), definition["env"], normalized_value)
+    env_path = validate_secure_path(_env_path())
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{env_path.name}.tmp-",
+        dir=env_path.parent,
+        text=True,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+            if env_path.exists():
+                temp_file.write(env_path.read_text(encoding="utf-8"))
+        if os.name != "nt":
+            temp_path.chmod(0o600)
+        set_key(str(temp_path), definition["env"], normalized_value)
+        if os.name != "nt":
+            temp_path.chmod(0o600)
+        os.replace(temp_path, env_path)
+        if os.name != "nt":
+            env_path.chmod(0o600)
+    finally:
+        temp_path.unlink(missing_ok=True)
     print(f"Set {definition['env']}={normalized_value} in {env_path}")
     return 0
 
@@ -85,7 +104,7 @@ def run_tests() -> None:
         command.extend(args)
     else:
         command.append("tests")
-    raise SystemExit(subprocess.call(command))
+    raise SystemExit(subprocess.call(command))  # nosec B603 - fixed executable and args.
 
 
 def run_lint() -> None:
@@ -95,7 +114,7 @@ def run_lint() -> None:
         command.extend(args)
     else:
         command.extend(["src", "tests"])
-    raise SystemExit(subprocess.call(command))
+    raise SystemExit(subprocess.call(command))  # nosec B603 - fixed executable and args.
 
 
 def run_build() -> None:
@@ -120,4 +139,4 @@ def run_build() -> None:
         command.extend(args)
 
     command.append("src/main.py")
-    raise SystemExit(subprocess.call(command))
+    raise SystemExit(subprocess.call(command))  # nosec B603 - fixed executable and args.
