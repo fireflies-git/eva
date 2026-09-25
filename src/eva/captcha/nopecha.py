@@ -82,7 +82,11 @@ class NopeCHAClient:
             raise NopeCHAError("NopeCHA client is not started")
         try:
             validate_url(self._api_url)
-            async with self._session.post(self._api_url, json=payload) as response:
+            async with self._session.post(
+                self._api_url,
+                json=payload,
+                allow_redirects=False,
+            ) as response:
                 text = await _read_response_text(response, max_bytes=_MAX_RESPONSE_BYTES)
                 if response.status != 200:
                     raise _error_for_status(response.status, text)
@@ -119,7 +123,11 @@ class NopeCHAClient:
                 params["key"] = self._api_key
             try:
                 validate_url(self._api_url)
-                async with self._session.get(self._api_url, params=params) as response:
+                async with self._session.get(
+                    self._api_url,
+                    params=params,
+                    allow_redirects=False,
+                ) as response:
                     text = await _read_response_text(response, max_bytes=_MAX_RESPONSE_BYTES)
                     if response.status != 200:
                         raise _error_for_status(response.status, text)

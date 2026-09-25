@@ -238,14 +238,14 @@ def test_ai_response_body_cap_rejects_oversized_payload() -> None:
     response = _BodyResponse(b"123", b"456")
 
     with pytest.raises(AIClientError, match="size limit"):
-        asyncio.run(read_ai_response_text(response, max_bytes=5))
+        asyncio.run(read_ai_response_text(cast(Any, response), max_bytes=5))
 
 
 def test_image_response_body_cap_rejects_oversized_payload() -> None:
     response = _BodyResponse(b"123", b"456")
 
     with pytest.raises(ImageClientError, match="exceeds max size"):
-        asyncio.run(_read_capped(response, max_bytes=5))
+        asyncio.run(_read_capped(cast(Any, response), max_bytes=5))
 
 
 def test_context7_response_body_cap_rejects_oversized_payload() -> None:
@@ -259,4 +259,4 @@ def test_nopecha_response_body_cap_rejects_oversized_payload() -> None:
     response = _BodyResponse(b"123", b"456")
 
     with pytest.raises(NopeCHAError, match="size limit"):
-        asyncio.run(read_nopecha_response_text(response, max_bytes=5))
+        asyncio.run(read_nopecha_response_text(cast(Any, response), max_bytes=5))
