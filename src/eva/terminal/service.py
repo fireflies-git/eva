@@ -72,6 +72,7 @@ _PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
         "ls",
         "realpath",
         "stat",
+        "sort",
         "tail",
         "wc",
     }
@@ -86,7 +87,9 @@ _GIT_STATUS_OPTIONS: Final[frozenset[str]] = frozenset(
 _FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset(
     {"-o", "--output", "--compress-program"}
 )
-_FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset({"-f", "--file"})
+_FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"-f", "--file", "-r", "--reference"}
+)
 _SHELL_OPERATOR_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:&&|\|\||[;&|><`]|\$\(|\$\{|\n|\r)"
 )
