@@ -18,6 +18,61 @@ class DownloadClientError(RuntimeError):
     pass
 
 
+_MAX_REDIRECTS = 5
+
+
+def _install_redirect_policy(
+    opener: Any,
+    redirect_handler_type: Any,
+    *,
+    allow_private_outbound: bool,
+    allowed_hosts: frozenset[str] | None,
+) -> None:
+    """Wrap an urllib redirect handler without breaking opener dispatch maps."""
+
+    for handler in getattr(opener, "handlers", ()):
+        if not isinstance(handler, redirect_handler_type):
+            continue
+
+        original_redirect_request = handler.redirect_request
+
+        def guarded_redirect_request(
+            req: Any,
+            fp: Any,
+            code: int,
+            msg: str,
+            headers: Any,
+            newurl: str,
+            *,
+            original: Any = original_redirect_request,
+        ) -> Any:
+            redirect_count = int(getattr(req, "_eva_redirect_count", 0))
+            if redirect_count >= _MAX_REDIRECTS:
+                raise DownloadClientError("Media download followed too many redirects")
+            try:
+                validate_url_for_request_sync(
+                    newurl,
+                    allow_private=allow_private_outbound,
+                    allowed_hosts=allowed_hosts,
+                )
+            except URLPolicyError as exc:
+                raise DownloadClientError(
+                    "Download redirect blocked by outbound URL policy"
+                ) from exc
+            redirected = original(req, fp, code, msg, headers, newurl)
+            if redirected is not None:
+                setattr(redirected, "_eva_redirect_count", redirect_count + 1)
+            return redirected
+
+        # Assign on the existing instance.  Replacing the handler in
+        # opener.handlers would leave urllib's dispatch tables pointing at
+        # the original object and silently bypass this wrapper.
+        handler.redirect_request = guarded_redirect_request
+        return
+
+    raise DownloadClientError("yt-dlp redirect handler was not installed")
+
+
 class MediaDownloader(Protocol):
     async def download(
         self,
@@ -95,12 +150,53 @@ class YtDLPDownloadClient:
         policy = self
         deadline = time.monotonic() + self._max_runtime_seconds
 
+        try:
+            from yt_dlp.networking._urllib import RedirectHandler, UrllibRH
+        except ImportError as exc:
+            raise DownloadClientError(
+                "yt-dlp does not expose the required HTTP redirect handler"
+            ) from exc
+        urllib_handler_base = cast(Any, UrllibRH)
+
         def enforce_deadline(_status: dict[str, Any]) -> None:
             if time.monotonic() >= deadline:
                 raise DownloadClientError("Media download exceeded its runtime limit")
 
+        class PolicyUrllibRH(urllib_handler_base):
+            def _create_instance(
+                self,
+                proxies: Any,
+                cookiejar: Any,
+                legacy_ssl_support: Any = None,
+            ) -> Any:
+                opener = super()._create_instance(
+                    proxies,
+                    cookiejar,
+                    legacy_ssl_support,
+                )
+                _install_redirect_policy(
+                    opener,
+                    RedirectHandler,
+                    allow_private_outbound=policy._allow_private_outbound,
+                    allowed_hosts=policy._allowed_hosts,
+                )
+                return opener
+
         class PolicyYoutubeDL(yt_dlp.YoutubeDL):  # type: ignore[misc, valid-type]
             """Re-validate every manifest, redirect, and segment request."""
+
+            def build_request_director(
+                self,
+                handlers: Any,
+                preferences: Any = None,
+            ) -> Any:
+                # Use the urllib handler so redirects pass through the policy
+                # handler above instead of being followed internally by a
+                # third-party requests implementation.
+                return super().build_request_director(
+                    cast(Any, [PolicyUrllibRH]),
+                    preferences,
+                )
 
             def urlopen(self, req: Any) -> Any:
                 if time.monotonic() >= deadline:

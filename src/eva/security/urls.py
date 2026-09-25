@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import threading
 from dataclasses import dataclass
 from urllib.parse import SplitResult, urlsplit
 
@@ -23,6 +24,7 @@ from aiohttp.abc import AbstractResolver, ResolveResult
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 _DEFAULT_DNS_TIMEOUT_SECONDS = 3.0
+_DNS_RESOLUTION_SLOTS = threading.BoundedSemaphore(16)
 _MAX_URL_LENGTH = 8192
 _IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -62,7 +64,7 @@ class PolicyResolver(AbstractResolver):
     ) -> list[ResolveResult]:
         try:
             answers = await asyncio.wait_for(
-                asyncio.to_thread(_resolve_records, host, port, family),
+                asyncio.to_thread(_resolve_records_bounded, host, port, family),
                 timeout=_DEFAULT_DNS_TIMEOUT_SECONDS,
             )
         except TimeoutError as exc:
@@ -198,9 +200,11 @@ def validate_url_for_request_sync(
 
     try:
         # ``getaddrinfo`` is blocking here because callers use this helper from
-        # yt-dlp's synchronous request callbacks. The timeout is enforced by
-        # the caller's bounded download runtime.
+        # yt-dlp's synchronous request callbacks. The bounded resolver keeps
+        # that callback from waiting indefinitely on the platform DNS stack.
         addresses = _resolve_addresses(validated.hostname, validated.parsed.port)
+    except TimeoutError as exc:
+        raise URLPolicyError("URL hostname resolution timed out") from exc
     except OSError as exc:
         raise URLPolicyError("URL hostname could not be resolved") from exc
 
@@ -221,7 +225,14 @@ def _resolve_addresses(hostname: str, port: int | None) -> set[_IPAddress]:
     # DNS policy depends on the address, but an accurate service avoids odd
     # resolver behavior for hosts with port-specific records.
     service = port if port is not None else 443
-    return {address for address, _, _ in _resolve_records(hostname, service, socket.AF_UNSPEC)}
+    return {
+        address
+        for address, _, _ in _resolve_records_bounded(
+            hostname,
+            service,
+            socket.AF_UNSPEC,
+        )
+    }
 
 
 def _resolve_records(
@@ -246,6 +257,57 @@ def _resolve_records(
         except ValueError:
             continue
     return addresses
+
+
+def _resolve_records_bounded(
+    hostname: str,
+    port: int,
+    family: socket.AddressFamily,
+) -> list[tuple[_IPAddress, socket.AddressFamily, int]]:
+    """Resolve DNS in a daemon thread with a caller-visible hard timeout.
+
+    ``socket.getaddrinfo`` has no timeout parameter, and cancelling an
+    executor future does not stop a resolver that is stuck in the platform
+    DNS stack.  A bounded daemon worker keeps URL validation from holding a
+    request open indefinitely while the semaphore prevents an unbounded pile
+    of stuck resolver threads.
+    """
+
+    if not _DNS_RESOLUTION_SLOTS.acquire(timeout=_DEFAULT_DNS_TIMEOUT_SECONDS):
+        raise TimeoutError("DNS resolver capacity is exhausted")
+
+    records: list[tuple[_IPAddress, socket.AddressFamily, int]] | None = None
+    error: Exception | None = None
+    completed = threading.Event()
+
+    def resolve() -> None:
+        nonlocal records, error
+        try:
+            records = _resolve_records(hostname, port, family)
+        except Exception as exc:
+            error = exc
+        finally:
+            _DNS_RESOLUTION_SLOTS.release()
+            completed.set()
+
+    worker = threading.Thread(
+        target=resolve,
+        name="eva-dns-resolution",
+        daemon=True,
+    )
+    try:
+        worker.start()
+    except BaseException:
+        _DNS_RESOLUTION_SLOTS.release()
+        raise
+
+    if not completed.wait(_DEFAULT_DNS_TIMEOUT_SECONDS):
+        raise TimeoutError("DNS resolution timed out")
+    if error is not None:
+        raise error
+    if records is None:
+        raise OSError("DNS resolver returned no result")
+    return records
 
 
 def _normalize_hostname(hostname: str) -> str:

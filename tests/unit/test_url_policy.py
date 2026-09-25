@@ -1,5 +1,6 @@
 import asyncio
 import socket
+import time
 
 import pytest
 
@@ -111,6 +112,20 @@ def test_sync_request_validator_rejects_private_download_subrequest(
 
     with pytest.raises(URLPolicyError, match="private"):
         validate_url_for_request_sync("http://segment.example/segment.ts")
+
+
+def test_sync_request_validator_bounds_stuck_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def blocked_getaddrinfo(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        time.sleep(0.2)
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", blocked_getaddrinfo)
+    monkeypatch.setattr("eva.security.urls._DEFAULT_DNS_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(URLPolicyError, match="timed out"):
+        validate_url_for_request_sync("https://example.com/")
 
 
 def test_validate_url_enforces_exact_host_allowlist() -> None:
