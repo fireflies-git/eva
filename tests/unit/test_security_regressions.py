@@ -148,8 +148,9 @@ def test_env_file_is_written_with_restrictive_permissions(tmp_path: Path) -> Non
 
 def test_logging_redacts_tokens_and_authorization_headers() -> None:
     message = (
-        "Authorization: Bearer bearer-secret API_KEY=api-secret "
-        "cookie=session-secret password=pass-secret"
+        "Authorization: Bearer bearer-secret X-API-Key=x-api-secret "
+        "Authorization: Basic basic-secret API_KEY=api-secret "
+        "cookie=session-secret password=pass-secret cat .env"
     )
 
     redacted = redact_secrets(message)
@@ -157,10 +158,18 @@ def test_logging_redacts_tokens_and_authorization_headers() -> None:
         logging.LogRecord("eva.test", logging.ERROR, __file__, 1, message, (), None)
     )
 
-    for secret in ("bearer-secret", "api-secret", "session-secret", "pass-secret"):
+    for secret in (
+        "bearer-secret",
+        "x-api-secret",
+        "basic-secret",
+        "api-secret",
+        "session-secret",
+        "pass-secret",
+    ):
         assert secret not in redacted
         assert secret not in formatted
-    assert redacted.count("[REDACTED]") == 4
+    assert "cat [REDACTED_ENV_PATH]" in redacted
+    assert redacted.count("[REDACTED]") == 6
 
 
 def test_autonomous_tool_output_is_redacted_and_bounded() -> None:

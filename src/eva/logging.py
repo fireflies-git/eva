@@ -43,13 +43,14 @@ class ColorFormatter(logging.Formatter):
 
 _AUTH_HEADER_RE = re.compile(
     r"(?ix)(?P<prefix>['\"]?authorization['\"]?\s*[:=]\s*)"
-    r"(?P<container_quote>['\"]?)bearer\s+"
+    r"(?P<container_quote>['\"]?)"
+    r"(?P<scheme>[a-z][a-z0-9_-]*\s+)?"
     r"(?P<token_quote>['\"]?)(?P<value>[^\s,;\"']+)"
     r"(?P=token_quote)(?P=container_quote)"
 )
 _SECRET_FIELD_RE = re.compile(
     r"(?ix)(?P<prefix>['\"]?"
-    r"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|discord[_-]?token|"
+    r"(?:x[-_]?api[-_]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|discord[_-]?token|"
     r"token|password|secret|cookie)['\"]?\s*[:=]\s*)"
     r"(?P<quote>['\"]?)(?P<value>[^\s,;\"']+)(?P=quote)"
 )
@@ -59,14 +60,15 @@ _SECRET_QUERY_RE = re.compile(
 )
 _ENV_PATH_RE = re.compile(
     r"(?ix)(?P<lead>^|[\s'\"=])(?P<path>"
-    r"(?:[a-z]:)?[^\s,;\"']*[\\/]\.env(?:[^\s,;\"']*)?)"
+    r"(?:(?:[a-z]:)?[^\s,;\"']*[\\/])?\.env(?:[^\s,;\"']*)?)"
 )
 
 
 def redact_secrets(value: str) -> str:
     redacted = _AUTH_HEADER_RE.sub(
         lambda match: (
-            f"{match.group('prefix')}{match.group('container_quote')}Bearer "
+            f"{match.group('prefix')}{match.group('container_quote')}"
+            f"{match.group('scheme') or ''}"
             f"{match.group('token_quote')}[REDACTED]"
             f"{match.group('token_quote')}{match.group('container_quote')}"
         ),
