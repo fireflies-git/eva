@@ -605,7 +605,7 @@ def test_download_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
     message = cast(
         discord.Message,
         SimpleNamespace(
-            author=SimpleNamespace(id=213766338005434370, display_name="admin"),
+            author=SimpleNamespace(id=2, display_name="user"),
             channel=SimpleNamespace(id=1, typing=lambda: DummyTypingContext()),
             guild=SimpleNamespace(filesize_limit=8 * 1024 * 1024),
             content="eva dl https://example.com/video",

@@ -7,7 +7,6 @@ import discord
 
 from eva.constants import CHECK_MARK, X_MARK
 from eva.discord.command_outcome import CommandOutcome
-from eva.discord.commands import is_admin_user
 from eva.downloads import DownloadClientError, DownloadService
 from eva.state import WhitelistStore
 
@@ -27,15 +26,9 @@ async def handle_download_command(
     if url is None:
         return CommandOutcome.not_handled()
 
-    # Keep the whitelist dependency in the command boundary for compatibility,
-    # but external media fetching is privileged even for whitelisted chat users.
+    # Keep these dependencies in the command boundary for compatibility. Downloads
+    # are intentionally available to every user who can send a message.
     del whitelist
-    is_allowed = is_admin_user(user_id=message.author.id, is_owner=is_owner)
-    if not is_allowed:
-        return CommandOutcome(
-            handled=True,
-            content=f"{X_MARK} You don't have permission to use download commands.",
-        )
 
     if download_service is None:
         return CommandOutcome(
@@ -68,6 +61,12 @@ async def handle_download_command(
         content=f"{CHECK_MARK} Downloaded `{asset.filename}`",
         attachments=[(asset.filename, asset.data)],
     )
+
+
+def is_download_command(*, content: str, trigger_prefix: str) -> bool:
+    """Return whether content is a download command, including a missing URL."""
+
+    return _parse_download_query(content=content, trigger_prefix=trigger_prefix) is not None
 
 
 def _parse_download_query(*, content: str, trigger_prefix: str) -> str | None:

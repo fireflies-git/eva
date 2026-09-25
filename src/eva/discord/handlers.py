@@ -49,7 +49,7 @@ from eva.discord.delivery import (
     safe_send,
     wait_before_followup,
 )
-from eva.discord.download_commands import handle_download_command
+from eva.discord.download_commands import handle_download_command, is_download_command
 from eva.discord.formatting import build_loading_text, build_plain_response_chunks
 from eva.discord.friend_requests import FriendRequestHandler
 from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
@@ -161,6 +161,11 @@ class SelfbotMessageHandler:
         if channel_id is None:
             return
 
+        is_download_request = is_download_command(
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+        )
+
         if not is_standalone:
             if is_admin and getattr(message.channel, "guild", object()) is None:
                 if await self._handle_friend_request_confirmation(
@@ -170,7 +175,11 @@ class SelfbotMessageHandler:
                     original_content=original_content,
                 ):
                     return
-            if not is_admin and not self._whitelist.contains(message.author.id):
+            if (
+                not is_download_request
+                and not is_admin
+                and not self._whitelist.contains(message.author.id)
+            ):
                 return
 
         if (

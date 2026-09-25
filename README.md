@@ -101,6 +101,7 @@ challenge data is sent to NopeCHA when a challenge occurs.
 - `eva dl <url>`
 - `eva download <url>`
 - Supports any site `yt-dlp` can handle.
+- Available to any user who can send Eva a message.
 - Uses the current guild upload limit when available.
 - In DMs, Eva falls back to a default 10 MiB upload limit.
 - If the downloaded file is too large for Discord, the command fails with an error.
