@@ -81,14 +81,34 @@ _PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
     }
 )
 _FORBIDDEN_FIND_ARGUMENTS: Final[frozenset[str]] = frozenset(
-    {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
+    {
+        "-delete",
+        "-exec",
+        "-execdir",
+        "-ok",
+        "-okdir",
+        "-fprint",
+        "-fprintf",
+        "-fls",
+        "-follow",
+        "-h",
+        "-l",
+    }
 )
+_FORBIDDEN_FILE_OPTIONS: Final[frozenset[str]] = frozenset({"-f", "--files-from"})
+_FORBIDDEN_FIND_FILE_LIST_OPTIONS: Final[frozenset[str]] = frozenset({"-files0-from"})
 _GIT_READ_ONLY_SUBCOMMANDS: Final[frozenset[str]] = frozenset({"status", "version"})
 _GIT_STATUS_OPTIONS: Final[frozenset[str]] = frozenset(
     {"--short", "--porcelain", "--branch", "--untracked-files=no"}
 )
 _FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-o", "--output", "--compress-program"}
+    {
+        "-o",
+        "--output",
+        "--compress-program",
+        "--temporary-directory",
+        "--files0-from",
+    }
 )
 _FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset(
     {"-f", "--file", "-r", "--reference"}
@@ -451,24 +471,47 @@ class TerminalService:
                 )
         if executable_name == "sort" and any(
             argument.lower().split("=", 1)[0] in _FORBIDDEN_SORT_OPTIONS
+            or argument.startswith("-o")
+            or argument.startswith("-T")
             for argument in argv[1:]
         ):
-            raise TerminalCommandRejectedError("Sort output files are not allowed.")
+            raise TerminalCommandRejectedError(
+                "Sort output, temporary-directory, and file-list options are not allowed."
+            )
         if executable_name == "date" and any(
             argument.lower().split("=", 1)[0] in _FORBIDDEN_DATE_OPTIONS
+            or argument.lower().startswith(("-f", "-r"))
             for argument in argv[1:]
         ):
             raise TerminalCommandRejectedError("Date input files are not allowed.")
         if executable_name == "find" and any(
-            argument.lower() in _FORBIDDEN_FIND_ARGUMENTS for argument in argv[1:]
+            argument.lower() in _FORBIDDEN_FIND_ARGUMENTS
+            or argument.lower().split("=", 1)[0] in _FORBIDDEN_FIND_FILE_LIST_OPTIONS
+            for argument in argv[1:]
         ):
             raise TerminalCommandRejectedError(
-                "Find execution and deletion actions are not allowed."
+                "Find execution, deletion, symlink, and file-list actions are not allowed."
             )
+        if executable_name == "file" and any(
+            argument.lower().split("=", 1)[0] in _FORBIDDEN_FILE_OPTIONS
+            or argument.lower().startswith("-f")
+            for argument in argv[1:]
+        ):
+            raise TerminalCommandRejectedError("File list options are not allowed.")
+        if executable_name == "wc" and any(
+            argument.lower().split("=", 1)[0] == "--files0-from"
+            for argument in argv[1:]
+        ):
+            raise TerminalCommandRejectedError("Wc file-list options are not allowed.")
         if executable_name == "grep" and any(
             argument.lower() in _FORBIDDEN_GREP_OPTIONS
             or argument.lower().startswith("--directories=")
             or (argument.lower().startswith("-d") and not argument.startswith("--"))
+            or (
+                argument.startswith("-")
+                and not argument.startswith("--")
+                and any(flag in argument[1:] for flag in ("r", "R"))
+            )
             for argument in argv[1:]
         ):
             raise TerminalCommandRejectedError(
