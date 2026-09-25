@@ -37,7 +37,7 @@ def test_missing_context_and_unknown_tools_fail_closed() -> None:
 
 
 def test_scope_all_requires_a_real_requester() -> None:
-    authorizer = ToolAuthorizer(scope="all")
+    authorizer = ToolAuthorizer(scope="any")
 
     assert authorizer.is_allowed("run_terminal_command", ToolExecutionContext(requester_id=7))
     assert not authorizer.is_allowed(
