@@ -408,9 +408,29 @@ class TerminalService:
             ["--version"],
             ["-V"],
         ):
-            raise TerminalCommandRejectedError(
-                "Interpreter scripts are not allowed; only the version flag is supported."
+                raise TerminalCommandRejectedError(
+                    "Interpreter scripts are not allowed; only the version flag is supported."
+                )
+        if executable_name == "timeout":
+            # Windows' built-in timer is retained for the platform timeout
+            # regression test. Never allow the POSIX wrapper form because it
+            # accepts another executable and would create a nested policy
+            # boundary (for example, ``timeout sh -c ...``).
+            if os.name != "nt":
+                raise TerminalCommandRejectedError(
+                    "The timeout wrapper is not allowed on this platform."
+                )
+            valid_timer = (
+                len(argv) in {3, 4}
+                and argv[1].lower() == "/t"
+                and argv[2].isdigit()
+                and 0 <= int(argv[2]) <= 120
+                and (len(argv) == 3 or argv[3].lower() == "/nobreak")
             )
+            if not valid_timer:
+                raise TerminalCommandRejectedError(
+                    "Only the bounded Windows timeout form is allowed."
+                )
         if executable_name == "git":
             subcommand = argv[1].lower() if len(argv) > 1 else ""
             if subcommand not in _GIT_READ_ONLY_SUBCOMMANDS:
