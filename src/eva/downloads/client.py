@@ -21,6 +21,32 @@ class DownloadClientError(RuntimeError):
 _MAX_REDIRECTS = 5
 
 
+def _enforce_download_limits(
+    status: dict[str, Any],
+    *,
+    deadline: float,
+    max_size_bytes: int,
+) -> None:
+    """Stop a download as soon as runtime or streamed size exceeds policy."""
+
+    if time.monotonic() >= deadline:
+        raise DownloadClientError("Media download exceeded its runtime limit")
+
+    downloaded_bytes = status.get("downloaded_bytes")
+    if isinstance(downloaded_bytes, (int, float)) and downloaded_bytes > max_size_bytes:
+        raise DownloadClientError("Media download exceeded its size limit")
+
+    for key in ("tmpfilename", "filename"):
+        filename = status.get(key)
+        if not isinstance(filename, str):
+            continue
+        try:
+            if Path(filename).is_file() and Path(filename).stat().st_size > max_size_bytes:
+                raise DownloadClientError("Media download exceeded its size limit")
+        except OSError:
+            continue
+
+
 def _install_redirect_policy(
     opener: Any,
     redirect_handler_type: Any,
@@ -149,6 +175,7 @@ class YtDLPDownloadClient:
 
         policy = self
         deadline = time.monotonic() + self._max_runtime_seconds
+        max_size_bytes = int(max_filesize_mb * 1024 * 1024)
 
         try:
             from yt_dlp.networking._urllib import RedirectHandler, UrllibRH
@@ -159,8 +186,11 @@ class YtDLPDownloadClient:
         urllib_handler_base = cast(Any, UrllibRH)
 
         def enforce_deadline(_status: dict[str, Any]) -> None:
-            if time.monotonic() >= deadline:
-                raise DownloadClientError("Media download exceeded its runtime limit")
+            _enforce_download_limits(
+                _status,
+                deadline=deadline,
+                max_size_bytes=max_size_bytes,
+            )
 
         class PolicyUrllibRH(urllib_handler_base):
             def _create_instance(

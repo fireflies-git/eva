@@ -6,6 +6,7 @@ import pytest
 
 from eva.downloads.client import (
     DownloadClientError,
+    _enforce_download_limits,
     _install_redirect_policy,
 )
 
@@ -96,3 +97,12 @@ def test_download_redirect_policy_caps_hops() -> None:
             "https://example.com/next",
         )
     assert handler.calls == 0
+
+
+def test_download_progress_hook_rejects_oversized_stream() -> None:
+    with pytest.raises(DownloadClientError, match="size limit"):
+        _enforce_download_limits(
+            {"downloaded_bytes": 1_001},
+            deadline=float("inf"),
+            max_size_bytes=1_000,
+        )
