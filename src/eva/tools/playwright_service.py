@@ -28,10 +28,12 @@ class PlaywrightService:
         timeout_seconds: float = 30.0,
         max_content_chars: int = 10000,
         allow_private_outbound: bool = False,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> None:
         self._timeout_seconds = timeout_seconds
         self._max_content_chars = max_content_chars
         self._allow_private_outbound = allow_private_outbound
+        self._allowed_hosts = allowed_hosts
         self._browser: Any = None
         self._playwright: Any = None
 
@@ -145,6 +147,7 @@ class PlaywrightService:
         validated = await validate_url_for_request(
             url,
             allow_private=self._allow_private_outbound,
+            allowed_hosts=self._allowed_hosts,
         )
         page = await self._browser.new_page()
         route_handler = self._route_handler
@@ -175,6 +178,7 @@ class PlaywrightService:
             await validate_url_for_request(
                 request_url,
                 allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
             )
         except URLPolicyError:
             await route.abort(error_code="blockedbyclient")

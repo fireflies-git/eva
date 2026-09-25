@@ -23,8 +23,14 @@ class MediaDownloader(Protocol):
 
 
 class YtDLPDownloadClient:
-    def __init__(self, *, allow_private_outbound: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        allow_private_outbound: bool = False,
+        allowed_hosts: frozenset[str] | None = None,
+    ) -> None:
         self._allow_private_outbound = allow_private_outbound
+        self._allowed_hosts = allowed_hosts
 
     async def download(
         self,
@@ -52,7 +58,11 @@ class YtDLPDownloadClient:
             # DownloadService performs the asynchronous DNS check.  Keep a
             # synchronous defense here for callers that use this client
             # directly, such as maintenance scripts.
-            validated_url = validate_url(url, allow_private=self._allow_private_outbound)
+            validated_url = validate_url(
+                url,
+                allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
+            )
         except URLPolicyError as exc:
             raise DownloadClientError(
                 f"Download URL blocked by outbound URL policy: {exc}"

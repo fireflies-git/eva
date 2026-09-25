@@ -53,11 +53,13 @@ class ImageClient:
         base_url: str,
         timeout_seconds: float,
         allow_private_outbound: bool = False,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._allow_private_outbound = allow_private_outbound
+        self._allowed_hosts = allowed_hosts
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
@@ -106,6 +108,7 @@ class ImageClient:
                 validated = await validate_url_for_request(
                     current_url,
                     allow_private=self._allow_private_outbound,
+                    allowed_hosts=self._allowed_hosts,
                 )
                 response_context = _session_get_no_redirects(
                     self._session,
@@ -187,6 +190,7 @@ class ImageClient:
             await validate_url_for_request(
                 self._base_url,
                 allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
             )
             async with self._session.post(
                 url,

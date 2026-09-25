@@ -18,11 +18,13 @@ class DownloadService:
         dm_filesize_limit_bytes: int = DEFAULT_DM_DOWNLOAD_LIMIT_BYTES,
         allow_private_outbound: bool = False,
         download_timeout_seconds: float = 300.0,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> None:
         self._client = client
         self._dm_filesize_limit_bytes = dm_filesize_limit_bytes
         self._allow_private_outbound = allow_private_outbound
         self._download_timeout_seconds = max(1.0, download_timeout_seconds)
+        self._allowed_hosts = allowed_hosts
 
     async def download_media(
         self,
@@ -34,6 +36,7 @@ class DownloadService:
             validated_url = await validate_url_for_request(
                 url,
                 allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
             )
         except URLPolicyError as exc:
             raise DownloadClientError(
