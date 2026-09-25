@@ -93,6 +93,73 @@ _QUESTION_START_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Formatting checks use these patterns to inspect only ordinary prose. Code,
+# URLs, quoted text, and blockquotes are content where capitalization may be
+# intentional and should not be mistaken for model shouting.
+_FENCED_CODE_RE = re.compile(r"```[\s\S]*?(?:```|$)")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>]+", re.IGNORECASE)
+_DOUBLE_QUOTED_TEXT_RE = re.compile(r'"(?:\\.|[^"\\\n])*"')
+_SINGLE_QUOTED_TEXT_RE = re.compile(r"(?<!\w)'[^'\n]{1,}'(?!\w)")
+_ALL_CAPS_TOKEN_RE = re.compile(r"\b[A-Z]{2,}(?:['’][A-Z]+)?\b")
+
+
+def _mask_non_prose_regions(content: str) -> str:
+    """Mask regions whose capitalization is not ordinary model prose."""
+
+    masked = list(content)
+    for pattern in (
+        _FENCED_CODE_RE,
+        _INLINE_CODE_RE,
+        _URL_RE,
+        _DOUBLE_QUOTED_TEXT_RE,
+        _SINGLE_QUOTED_TEXT_RE,
+    ):
+        # Each subsequent pattern must inspect the original content so a
+        # pattern cannot lose delimiters masked by an earlier one.
+        matches = pattern.finditer(content)
+        for match in matches:
+            for index in range(match.start(), match.end()):
+                if masked[index] != "\n":
+                    masked[index] = " "
+
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        if re.match(r"^\s*>", line):
+            for index in range(offset, offset + len(line)):
+                if masked[index] != "\n":
+                    masked[index] = " "
+        offset += len(line)
+    return "".join(masked)
+
+
+def contains_all_caps_flood(content: str) -> bool:
+    """Return whether ordinary prose contains unmistakable all-caps flooding.
+
+    One to three uppercase emphasis words are deliberately allowed. The guard
+    triggers only after at least five all-caps tokens or approximately thirty
+    uppercase letters remain once code, URLs, quotes, and blockquotes are
+    excluded.
+    """
+
+    if not content:
+        return False
+
+    prose = _mask_non_prose_regions(content)
+    all_caps_tokens = [
+        token for token in _ALL_CAPS_TOKEN_RE.findall(prose) if len(token) >= 5
+    ]
+    # Short all-caps tokens are usually acronyms or sparse emphasis (YOU, NOT,
+    # HTTP, JSON). Exclude them from both threshold measurements.
+    prose_without_short_caps = _ALL_CAPS_TOKEN_RE.sub(
+        lambda match: match.group(0) if len(match.group(0)) >= 5 else " " * len(match.group(0)),
+        prose,
+    )
+    uppercase_letters = sum(
+        1 for character in prose_without_short_caps if "A" <= character <= "Z"
+    )
+    return len(all_caps_tokens) >= 5 or uppercase_letters >= 30
+
 
 def sanitize_response(content: str) -> str:
     """Strip chain-of-thought / reasoning artifacts from AI output.
@@ -194,6 +261,14 @@ def strip_context_echo(content: str) -> str:
     cleaned = "\n".join(_TRANSCRIPT_LINE_RE.sub("", line) for line in kept_lines)
     cleaned = _TRANSCRIPT_MENTIONS_TRAILER_RE.sub("", cleaned)
     return cleaned.strip()
+
+
+def contains_context_echo(content: str) -> bool:
+    """Return whether output contains serialized Discord context framing."""
+
+    if not content:
+        return False
+    return strip_context_echo(content).strip() != content.strip()
 
 
 def strip_response_watermark(content: str) -> str:

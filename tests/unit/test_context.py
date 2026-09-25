@@ -621,3 +621,179 @@ def test_channel_context_keeps_watermark_text_in_user_messages() -> None:
 
     assert len(context) == 1
     assert "-# -eva" in context[0]["content"]
+
+
+def test_ranked_context_prioritizes_reply_chain_and_fetches_ancestors() -> None:
+    requester = _make_author(id=1, name="requester", display_name="Requester")
+    other = _make_author(id=2, name="other", display_name="Other")
+    parent = _make_message(
+        msg_id=1,
+        content="parent outside the history window",
+        author=other,
+        created_at=datetime(2026, 1, 1, 11, 57),
+        reference=SimpleNamespace(message_id=2),
+    )
+    ancestor = _make_message(
+        msg_id=2,
+        content="ancestor outside the history window",
+        author=other,
+        created_at=datetime(2026, 1, 1, 11, 56),
+    )
+    current = _make_message(
+        msg_id=99,
+        content="eva current request",
+        author=requester,
+        created_at=datetime(2026, 1, 1, 12, 0),
+        reference=SimpleNamespace(message_id=1),
+    )
+    unrelated = _make_message(
+        msg_id=3,
+        content="unrelated ambient message",
+        author=other,
+        created_at=datetime(2026, 1, 1, 11, 59),
+    )
+    channel = _FakeHistoryChannel(
+        [current, unrelated],
+        fetched_messages={1: parent, 2: ancestor},
+    )
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=2,
+            exclude_message_id=99,
+            requester_user_id=1,
+            reply_message_id=1,
+        )
+    )
+
+    contents = [str(message["content"]) for message in context]
+    assert any("ancestor outside the history window" in content for content in contents)
+    assert any("parent outside the history window" in content for content in contents)
+    assert all("eva current request" not in content for content in contents)
+    assert contents == sorted(
+        contents,
+        key=lambda content: ("ancestor" not in content, "parent" not in content),
+    )
+    assert "[PRIMARY_REPLY_CHAIN]" in "\n".join(contents)
+
+
+def test_ranked_context_caps_requester_eva_and_ambient_turns() -> None:
+    requester = _make_author(id=1, name="requester", display_name="Requester")
+    eva = _make_author(id=99, name="eva", display_name="Eva")
+    other = _make_author(id=2, name="other", display_name="Other")
+    messages: list[Any] = []
+    for index in range(1, 9):
+        messages.append(
+            _make_message(
+                msg_id=index,
+                content=f"requester turn {index}",
+                author=requester,
+                created_at=datetime(2026, 1, 1, 12, index),
+            )
+        )
+    for index in range(9, 13):
+        messages.append(
+            _make_message(
+                msg_id=index,
+                content=f"eva turn {index}",
+                author=eva,
+                created_at=datetime(2026, 1, 1, 12, index),
+            )
+        )
+    for index in range(13, 20):
+        messages.append(
+            _make_message(
+                msg_id=index,
+                content=f"ambient turn {index}",
+                author=other,
+                created_at=datetime(2026, 1, 1, 12, index),
+            )
+        )
+    channel = _FakeHistoryChannel(list(reversed(messages)))
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=30,
+            requester_user_id=1,
+            bot_user_id=99,
+            account_mode="standalone",
+        )
+    )
+
+    contents = [str(message["content"]) for message in context]
+    requester_eva = [
+        content
+        for content in contents
+        if "[REQUESTER_EVA_CONTEXT]" in content
+    ]
+    ambient = [content for content in contents if "[AMBIENT_CONTEXT]" in content]
+    assert len(requester_eva) == 6
+    assert len(ambient) == 4
+    assert all("requester turn" not in content for content in ambient)
+    assert all("eva turn" not in content for content in ambient)
+    assert contents == sorted(
+        contents,
+        key=lambda content: int(content.split("message_id:", 1)[1].split("]", 1)[0]),
+    )
+
+
+def test_ranked_context_total_cap_preserves_reply_chain_before_ambient() -> None:
+    requester = _make_author(id=1, name="requester", display_name="Requester")
+    other = _make_author(id=2, name="other", display_name="Other")
+    parent = _make_message(
+        msg_id=1,
+        content="parent " + ("p" * 700),
+        author=other,
+        created_at=datetime(2026, 1, 1, 11, 58),
+        reference=SimpleNamespace(message_id=2),
+    )
+    ancestor = _make_message(
+        msg_id=2,
+        content="ancestor " + ("a" * 700),
+        author=other,
+        created_at=datetime(2026, 1, 1, 11, 57),
+    )
+    requester_turn = _make_message(
+        msg_id=3,
+        content="requester turn " + ("r" * 700),
+        author=requester,
+        created_at=datetime(2026, 1, 1, 11, 59),
+    )
+    ambient = _make_message(
+        msg_id=4,
+        content="ambient turn " + ("x" * 700),
+        author=other,
+        created_at=datetime(2026, 1, 1, 11, 59, 30),
+    )
+    current = _make_message(
+        msg_id=99,
+        content="latest request",
+        author=requester,
+        created_at=datetime(2026, 1, 1, 12, 0),
+        reference=SimpleNamespace(message_id=1),
+    )
+    channel = _FakeHistoryChannel(
+        [current, ambient, requester_turn],
+        fetched_messages={1: parent, 2: ancestor},
+    )
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=4,
+            exclude_message_id=99,
+            requester_user_id=1,
+            reply_message_id=1,
+            max_message_chars=500,
+            max_total_chars=900,
+        )
+    )
+
+    joined = "\n".join(str(message["content"]) for message in context)
+    assert "parent" in joined
+    assert "ancestor" in joined
+    assert "ambient turn" not in joined
+    assert "requester turn" not in joined
+    assert len(joined) <= 900

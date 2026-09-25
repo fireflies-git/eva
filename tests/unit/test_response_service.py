@@ -450,3 +450,128 @@ def test_response_service_uses_visible_fallback_when_recovery_fails() -> None:
 
     assert reply.content == "i couldn't get a visible answer out of that. please try again."
     assert len(client.chat_calls) == 2
+
+
+def test_response_service_retries_all_caps_flood_once() -> None:
+    client = RecoveringChatClient(
+        [
+            "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING",
+            "actually YOU are wrong",
+        ]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="correct me",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "actually YOU are wrong"
+    assert len(client.chat_calls) == 2
+    retry_messages = cast(list[dict[str, str]], client.chat_calls[1]["messages"])
+    assert "formatting or context-leak problem" in retry_messages[0]["content"]
+
+
+def test_response_service_retries_context_echo_with_visible_answer() -> None:
+    leaked_context = (
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:12] @alice (alice) "
+        "[user_id:2]: copied line"
+    )
+    client = RecoveringChatClient(
+        [f"answer first\n{leaked_context}", "answer only"]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "answer only"
+    assert len(client.chat_calls) == 2
+
+
+def test_response_service_keeps_first_visible_reply_when_style_retry_fails() -> None:
+    first = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+    client = RecoveringChatClient([first, AIClientError("provider unavailable")])
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == first
+    assert len(client.chat_calls) == 2
+
+
+def test_response_service_skips_style_retry_for_vision_context() -> None:
+    first = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+    client = RecoveringChatClient([first])
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+            vision_context_available=True,
+        )
+    )
+
+    assert reply.content == first
+    assert len(client.chat_calls) == 1
+
+
+def test_response_service_skips_style_retry_for_tool_output() -> None:
+    first = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+
+    class CapsToolClient(FakeToolClient):
+        async def chat_completion_with_tools(self, **kwargs: object) -> ChatCompletionOutput:
+            self.tool_calls.append(kwargs)
+            return ChatCompletionOutput(content=first, tool_calls=[])
+
+    client = CapsToolClient()
+    service = ResponseService(
+        client=client,
+        model_name="model",
+        tool_services=[FakeToolService()],
+        tool_authorizer=ToolAuthorizer(protected_tool_names={"fake_tool"}),
+    )
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_owner=True),
+        )
+    )
+
+    assert reply.content == first
+    assert len(client.tool_calls) == 1
+    assert client.chat_calls == []

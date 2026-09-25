@@ -772,6 +772,8 @@ class SelfbotMessageHandler:
             is_tracked_message=self._tracked_messages.contains,
             max_message_chars=MAX_CONTEXT_MESSAGE_CHARS,
             max_total_chars=MAX_CONTEXT_TOTAL_CHARS,
+            requester_user_id=getattr(message.author, "id", None),
+            reply_message_id=getattr(getattr(message, "reference", None), "message_id", None),
         )
         history_messages = self._history_store.get(channel_id)
         vision_selection = resolve_vision_selection(

@@ -15,7 +15,13 @@ from eva.ai.client import (
     ToolChatCompletionClient,
 )
 from eva.ai.parsing import parse_strict_yes_no
-from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
+from eva.ai.sanitize import (
+    contains_all_caps_flood,
+    contains_context_echo,
+    sanitize_response,
+    strip_context_echo,
+    strip_response_watermark,
+)
 from eva.ai.schemas import ChatMessage, ToolCall, VisionImage
 from eva.constants import (
     MAX_CONTEXT_MESSAGE_CHARS,
@@ -48,6 +54,13 @@ VISIBLE_REPLY_RECOVERY_INSTRUCTION = (
     "give a brief plain-text boundary and, when possible, a safe alternative."
 )
 VISIBLE_REPLY_FALLBACK = "i couldn't get a visible answer out of that. please try again."
+STYLE_GUARD_INSTRUCTION = (
+    "The previous answer had a formatting or context-leak problem. Answer only the user's "
+    "latest request. Do not repeat Discord transcript metadata or copied context lines. "
+    "Use uppercase only for up to three important words; never write an all-caps sentence "
+    "or paragraph. Keep code, URLs, names, acronyms, and quoted text unchanged. Reply with "
+    "exactly one concise plain-text answer and do not mention this correction."
+)
 
 _UNDERAGE_STATUS_RE = re.compile(
     r"\b(?:i['’]?m|i\s+am)\s+(?:a\s+)?(?:minor|underage|under\s*13)\b",
@@ -112,6 +125,34 @@ def _build_recovery_messages(messages: Sequence[ChatMessage]) -> list[ChatMessag
         },
     )
     return recovery_messages
+
+
+def _build_style_guard_messages(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """Reuse the original prompt while asking for one clean text response."""
+
+    guarded_messages = list(messages)
+    if guarded_messages and guarded_messages[0].get("role") == "system":
+        system_content = guarded_messages[0]["content"]
+        guarded_messages[0] = {
+            "role": "system",
+            "content": f"{system_content}\n\n{STYLE_GUARD_INSTRUCTION}",
+        }
+        return guarded_messages
+
+    guarded_messages.insert(
+        0,
+        {
+            "role": "system",
+            "content": STYLE_GUARD_INSTRUCTION,
+        },
+    )
+    return guarded_messages
+
+
+def _needs_style_guard(content: str) -> bool:
+    """Identify clear context leaks or all-caps flooding in model output."""
+
+    return contains_context_echo(content) or contains_all_caps_flood(content)
 
 
 class ResponseService:
@@ -244,8 +285,43 @@ class ResponseService:
             return await self._recover_visible_reply(messages=messages)
 
         if _has_visible_reply_content(content):
+            if not vision_images and not vision_context_available:
+                return await self._recover_style_guard(
+                    content=content,
+                    messages=messages,
+                )
             return ResponseGenerationResult(content=content)
         return await self._recover_visible_reply(messages=messages)
+
+    async def _recover_style_guard(
+        self,
+        *,
+        content: str,
+        messages: Sequence[ChatMessage],
+    ) -> ResponseGenerationResult:
+        """Retry once when ordinary text clearly leaks context or shouts."""
+
+        if not _needs_style_guard(content):
+            return ResponseGenerationResult(content=content)
+
+        logger.warning("Model output triggered text style guard; requesting correction")
+        guarded_messages = _build_style_guard_messages(messages)
+        try:
+            corrected = await self._client.chat_completion(
+                messages=guarded_messages,
+                model=self._model_name,
+                temperature=0.2,
+                max_tokens=REPLY_MAX_TOKENS,
+            )
+        except AIClientError:
+            logger.exception("Text style guard recovery failed")
+            return ResponseGenerationResult(content=content)
+
+        if _has_visible_reply_content(corrected) and not _needs_style_guard(corrected):
+            return ResponseGenerationResult(content=corrected)
+
+        logger.warning("Text style guard recovery returned no clean visible content")
+        return ResponseGenerationResult(content=content)
 
     async def _recover_visible_reply(
         self,

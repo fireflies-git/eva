@@ -1,4 +1,10 @@
-from eva.ai.sanitize import contains_tool_call_markup, sanitize_response, strip_context_echo
+from eva.ai.sanitize import (
+    contains_all_caps_flood,
+    contains_context_echo,
+    contains_tool_call_markup,
+    sanitize_response,
+    strip_context_echo,
+)
 
 _DSML_TOOL_CALL = (
     "<｜｜DSML｜｜tool_calls>\n"
@@ -164,3 +170,38 @@ def test_strip_context_echo_keeps_normal_content() -> None:
 
 def test_strip_context_echo_handles_empty_input() -> None:
     assert strip_context_echo("") == ""
+
+
+def test_contains_context_echo_detects_serialized_discord_metadata() -> None:
+    echoed = (
+        "answer first\n"
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:12] @alice (alice) "
+        "[user_id:2]: copied line"
+    )
+
+    assert contains_context_echo(echoed) is True
+    assert contains_context_echo("answer first") is False
+
+
+def test_contains_all_caps_flood_allows_sparse_emphasis() -> None:
+    assert contains_all_caps_flood("actually YOU are wrong") is False
+    assert contains_all_caps_flood("you should NOT do that") is False
+
+
+def test_contains_all_caps_flood_detects_repeated_prose_caps() -> None:
+    content = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+
+    assert contains_all_caps_flood(content) is True
+
+
+def test_contains_all_caps_flood_ignores_code_urls_and_quotes() -> None:
+    content = (
+        'Use `THIS IS CODE` and https://example.test/THIS_PATH, then quote "THIS IS QUOTED".\n'
+        "> THIS IS A BLOCKQUOTE"
+    )
+
+    assert contains_all_caps_flood(content) is False
+
+
+def test_contains_all_caps_flood_ignores_short_acronyms() -> None:
+    assert contains_all_caps_flood("HTTP JSON XML API SQL TCP UDP DNS") is False

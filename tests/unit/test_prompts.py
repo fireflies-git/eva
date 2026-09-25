@@ -183,6 +183,53 @@ def test_build_system_prompt_uses_lowercase_casual_ascii_voice() -> None:
     assert "do not generate sexual content involving minors" in prompt
 
 
+def test_build_system_prompt_prioritizes_current_conversation_and_handles_ambiguity() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=False,
+        autonomous_terminal_enabled=False,
+    )
+
+    assert "Answer the latest direct user message" in prompt
+    assert "explicit reply chain" in prompt
+    assert "current requester's recent turns" in prompt
+    assert "unrelated channel chatter" in prompt
+    assert "one brief conditional assumption" in prompt
+    assert "identity, authorization, safety, or an irreversible action" in prompt
+    assert "never transfer a person's intent" in prompt
+
+
+def test_build_system_prompt_allows_sparse_uppercase_emphasis() -> None:
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+
+    prompt = build_system_prompt(
+        channel,
+        client,
+        account_mode="assistant",
+        terminal_enabled=False,
+        autonomous_terminal_enabled=False,
+    )
+
+    assert "one to three salient words" in prompt
+    assert "actually YOU are wrong" in prompt
+    assert "you should NOT do that" in prompt
+    assert "never write an entire sentence or paragraph in all caps" in prompt
+    assert "uppercase is emphasis, not shouting" in prompt
+    assert "proper nouns, acronyms, commands, URLs, code, and quoted user text" in prompt
+
+
 def test_build_system_prompt_does_not_volunteer_deployment_labels() -> None:
     channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
     client = cast(
@@ -243,3 +290,14 @@ def test_formatting_prompt_forbids_transcript_framing() -> None:
     assert "message_id" in prompt
     assert "user_id" in prompt
     assert "eva:" in prompt
+
+
+def test_formatting_prompt_allows_sparse_emphasis_without_all_caps_prose() -> None:
+    prompt = build_formatting_section()
+
+    assert "lowercase by default" in prompt
+    assert "uppercase one to three important words" in prompt
+    assert "never write all-caps prose" in prompt
+    assert "proper nouns, acronyms, commands, URLs, code" in prompt
+    assert "quoted or blockquoted text" in prompt
+    assert "uppercase as emphasis, not shouting" in prompt
