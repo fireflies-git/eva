@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from collections.abc import Awaitable
+from typing import Any, cast
 
 from eva.security.urls import URLPolicyError, validate_url_for_request
 
 logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_TOOL_NAME = "fetch_web_page"
+_MAX_REDIRECTS = 5
 
 
 class PlaywrightService:
@@ -164,16 +166,33 @@ class PlaywrightService:
             page = await self._browser.new_page()
         route_handler = self._route_handler
         websocket_handler = self._websocket_handler
+        request_route_target: Any = (
+            context
+            if context is not None and callable(getattr(context, "route", None))
+            else page
+        )
+        websocket_route_target: Any = (
+            context
+            if context is not None
+            and callable(getattr(context, "route_web_socket", None))
+            else page
+        )
         try:
-            # Route every browser request, not only the initial navigation.
-            # Public pages can embed images, scripts, or redirects targeting
-            # loopback and private network addresses.
-            route = getattr(page, "route", None)
-            if route is not None:
-                await route("**/*", route_handler)
-            route_web_socket = getattr(page, "route_web_socket", None)
-            if route_web_socket is not None:
-                await route_web_socket("**/*", websocket_handler)
+            # Route at the browser-context level so popups and newly opened
+            # pages receive the same policy as the initial page.
+            route: Any = getattr(request_route_target, "route", None)
+            if callable(route):
+                await cast(Awaitable[Any], route("**/*", route_handler))
+            route_web_socket: Any = getattr(
+                websocket_route_target,
+                "route_web_socket",
+                None,
+            )
+            if callable(route_web_socket):
+                await cast(
+                    Awaitable[Any],
+                    route_web_socket("**/*", websocket_handler),
+                )
             await page.goto(validated.value, timeout=int(self._timeout_seconds * 1000))
             # Slice in the browser before transferring text back to Python so a
             # page with a massive DOM cannot allocate an unbounded response.
@@ -183,16 +202,23 @@ class PlaywrightService:
             )
             return str(raw) if raw is not None else ""
         finally:
-            unroute = getattr(page, "unroute", None)
-            if unroute is not None:
+            unroute: Any = getattr(request_route_target, "unroute", None)
+            if callable(unroute):
                 try:
-                    await unroute("**/*", route_handler)
+                    await cast(Awaitable[Any], unroute("**/*", route_handler))
                 except Exception:
                     logger.debug("Failed to remove Playwright route", exc_info=True)
-            unroute_web_socket = getattr(page, "unroute_web_socket", None)
-            if unroute_web_socket is not None:
+            unroute_web_socket: Any = getattr(
+                websocket_route_target,
+                "unroute_web_socket",
+                None,
+            )
+            if callable(unroute_web_socket):
                 try:
-                    await unroute_web_socket("**/*", websocket_handler)
+                    await cast(
+                        Awaitable[Any],
+                        unroute_web_socket("**/*", websocket_handler),
+                    )
                 except Exception:
                     logger.debug("Failed to remove Playwright WebSocket route", exc_info=True)
             await page.close()
@@ -203,6 +229,9 @@ class PlaywrightService:
         """Allow only validated public requests made by the browser."""
         request = getattr(route, "request", None)
         request_url = getattr(request, "url", "")
+        if _redirect_depth(request) > _MAX_REDIRECTS:
+            await route.abort(error_code="blockedbyclient")
+            return
         try:
             await validate_url_for_request(
                 request_url,
@@ -241,3 +270,22 @@ def _safe_host(url: str) -> str:
         return urlsplit(url).hostname or "unknown"
     except ValueError:
         return "unknown"
+
+
+def _redirect_depth(request: Any) -> int:
+    """Count a request's redirect chain without trusting page content."""
+
+    depth = 0
+    seen: set[int] = set()
+    current = request
+    while current is not None:
+        marker = id(current)
+        if marker in seen:
+            return _MAX_REDIRECTS + 1
+        seen.add(marker)
+        current = getattr(current, "redirected_from", None)
+        if current is not None:
+            depth += 1
+        if depth > _MAX_REDIRECTS:
+            break
+    return depth
