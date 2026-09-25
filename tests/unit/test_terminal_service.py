@@ -166,6 +166,7 @@ def test_run_read_only_rejects_find_execution(tmp_path: Path) -> None:
         "git -C / status",
         "date --file=../secret.txt",
         "sort -o ../outside.txt input.txt",
+        "sort --compress-program=sh input.txt",
     ],
 )
 def test_run_read_only_rejects_escape_options(tmp_path: Path, command: str) -> None:

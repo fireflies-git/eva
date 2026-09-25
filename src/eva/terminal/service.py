@@ -83,7 +83,9 @@ _GIT_READ_ONLY_SUBCOMMANDS: Final[frozenset[str]] = frozenset({"status", "versio
 _GIT_STATUS_OPTIONS: Final[frozenset[str]] = frozenset(
     {"--short", "--porcelain", "--branch", "--untracked-files=no"}
 )
-_FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset({"-o", "--output"})
+_FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"-o", "--output", "--compress-program"}
+)
 _FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset({"-f", "--file"})
 _SHELL_OPERATOR_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:&&|\|\||[;&|><`]|\$\(|\$\{|\n|\r)"
@@ -427,6 +429,10 @@ class TerminalService:
                 argv[0],
                 "--no-pager",
                 "--no-optional-locks",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
                 *argv[1:],
             ]
         if not self._require_sandbox:
