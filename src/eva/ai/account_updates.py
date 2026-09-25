@@ -85,7 +85,10 @@ class AccountUpdatePlanner:
 
         payload = _parse_json_object(response)
         if payload is None:
-            logger.warning("Account update planner returned invalid JSON: %r", response)
+            logger.warning(
+                "Account update planner returned invalid JSON length=%s",
+                len(response),
+            )
             return None
         if payload.get("is_account_update") is not True:
             return None

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as jsonlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -62,6 +63,7 @@ class OpenAICompatibleClient:
         timeout_seconds: float,
         thinking_enabled: bool | None = None,
         allow_private_outbound: bool = False,
+        allowed_hosts: frozenset[str] | None = None,
         max_response_bytes: int = 1_048_576,
     ) -> None:
         self._api_key = api_key
@@ -70,6 +72,7 @@ class OpenAICompatibleClient:
         self._timeout_seconds = timeout_seconds
         self._thinking_enabled = thinking_enabled
         self._allow_private_outbound = allow_private_outbound
+        self._allowed_hosts = allowed_hosts
         self._max_response_bytes = max(64 * 1024, max_response_bytes)
         self._session: aiohttp.ClientSession | None = None
 
@@ -212,6 +215,7 @@ class OpenAICompatibleClient:
             await validate_url_for_request(
                 url,
                 allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
             )
             async with self._session.request(
                 method,
@@ -222,31 +226,25 @@ class OpenAICompatibleClient:
             ) as response:
                 text = await _read_response_text(response, max_bytes=self._max_response_bytes)
                 if response.status != 200:
-                    snippet = text[:300]
-                    raise AIClientError(f"Model API error HTTP {response.status}: {snippet}")
+                    raise AIClientError(f"Model API error HTTP {response.status}")
                 try:
-                    data = await response.json()
+                    data = jsonlib.loads(text)
                 except Exception as exc:
-                    raise AIClientError(f"Invalid JSON response: {text[:300]}") from exc
+                    raise AIClientError("Invalid JSON response") from exc
                 if not isinstance(data, dict):
                     raise AIClientError("Invalid API response type")
                 return data
         except TimeoutError as exc:
             raise AIClientError("Model API request timed out") from exc
         except aiohttp.ClientError as exc:
-            raise AIClientError(f"Model API network error: {exc}") from exc
+            raise AIClientError("Model API network error") from exc
         except URLPolicyError as exc:
             raise AIClientError(f"Model API URL blocked by outbound policy: {exc}") from exc
 
 
 async def _read_response_text(response: aiohttp.ClientResponse, *, max_bytes: int) -> str:
     content = getattr(response, "content", None)
-    if content is None or not hasattr(content, "iter_chunked"):
-        if hasattr(response, "read"):
-            raw = await response.read()
-        else:
-            raw = (await response.text()).encode("utf-8")
-    else:
+    if content is not None and hasattr(content, "iter_chunked"):
         chunks: list[bytes] = []
         total = 0
         async for chunk in content.iter_chunked(65_536):
@@ -255,6 +253,10 @@ async def _read_response_text(response: aiohttp.ClientResponse, *, max_bytes: in
                 raise AIClientError("Model API response exceeds configured size limit")
             chunks.append(chunk)
         raw = b"".join(chunks)
+    elif content is not None and hasattr(content, "read"):
+        raw = await content.read(max_bytes + 1)
+    else:
+        raise AIClientError("Model API response body cannot be read safely")
     if len(raw) > max_bytes:
         raise AIClientError("Model API response exceeds configured size limit")
     return raw.decode(getattr(response, "charset", None) or "utf-8", errors="replace")

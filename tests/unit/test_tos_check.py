@@ -54,14 +54,14 @@ def test_tos_check_blocks_when_model_says_yes() -> None:
     assert decision is True
 
 
-def test_tos_check_allows_when_model_output_unparseable(caplog) -> None:
+def test_tos_check_blocks_when_model_output_unparseable_by_default(caplog) -> None:
     client = StubModerationClient(response="maybe")
     service = TOSCheckService(client=client, model_name=MODERATION_MODEL)
 
     with caplog.at_level(logging.WARNING):
         decision = asyncio.run(service.check_tos_violation("hello"))
 
-    assert decision is False
+    assert decision is True
     assert "TOS moderation returned unexpected response" in caplog.text
 
 
@@ -85,15 +85,15 @@ def test_tos_prompt_allows_consensual_adult_content() -> None:
     assert "does not advocate or facilitate violence" in prompt
 
 
-def test_tos_check_allows_reply_when_model_returns_empty_output(caplog) -> None:
+def test_tos_check_blocks_reply_when_model_returns_empty_output_by_default(caplog) -> None:
     client = StubModerationClient(error=AIClientError("Model returned empty response content"))
     service = TOSCheckService(client=client, model_name=MODERATION_MODEL)
 
     with caplog.at_level(logging.DEBUG):
         decision = asyncio.run(service.check_tos_violation("hello"))
 
-    assert decision is False
-    assert "TOS moderation returned empty output; allowing reply" in caplog.text
+    assert decision is True
+    assert "TOS moderation returned empty output" in caplog.text
 
 
 @pytest.mark.parametrize(

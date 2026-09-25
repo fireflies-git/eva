@@ -73,12 +73,15 @@ class ResponseSplitService:
         try:
             payload = json.loads(candidate)
         except json.JSONDecodeError:
-            logger.warning("Split planner returned invalid JSON: %r", response)
+            logger.warning("Split planner returned invalid JSON length=%s", len(response))
             return None
 
         messages = payload.get("messages")
         if not isinstance(messages, list) or not messages:
-            logger.warning("Split planner returned invalid message payload: %r", payload)
+            logger.warning(
+                "Split planner returned invalid message payload keys=%s",
+                ",".join(sorted(str(key) for key in payload.keys())),
+            )
             return None
 
         cleaned: list[str] = []

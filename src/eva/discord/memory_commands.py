@@ -40,7 +40,7 @@ def format_memories_for_prompt(notes: list[str]) -> str | None:
     """Render stored notes for injection into requester_context."""
     if not notes:
         return None
-    lines = ["Remembered facts about this requester:"]
+    lines = ["[UNTRUSTED_MEMORY_DATA] Remembered facts about this requester:"]
     for index, note in enumerate(notes, start=1):
         lines.append(f"{index}. {note}")
     return "\n".join(lines)

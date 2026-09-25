@@ -37,9 +37,12 @@ class SummarizationService:
         user_prompt_parts = []
         if requester_context:
             user_prompt_parts.append(
-                f"Requester context (for tone, not summary content):\n{requester_context}"
+                "[UNTRUSTED_REQUESTER_CONTEXT] (for tone, not summary content):\n"
+                f"{requester_context}"
             )
-        user_prompt_parts.append(f"Channel messages to summarize:\n{joined}")
+        user_prompt_parts.append(
+            f"[UNTRUSTED_DISCORD_DATA] Channel messages to summarize:\n{joined}"
+        )
         user_prompt = "\n\n".join(user_prompt_parts)
 
         messages: list[ChatMessage] = [

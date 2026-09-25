@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 from eva.downloads.schemas import DownloadedMediaFile
-from eva.security.urls import URLPolicyError, validate_url, validate_url_for_request
+from eva.security.urls import (
+    URLPolicyError,
+    validate_url,
+    validate_url_for_request,
+    validate_url_for_request_sync,
+)
 
 
 class DownloadClientError(RuntimeError):
@@ -28,9 +34,11 @@ class YtDLPDownloadClient:
         *,
         allow_private_outbound: bool = False,
         allowed_hosts: frozenset[str] | None = None,
+        max_runtime_seconds: float = 300.0,
     ) -> None:
         self._allow_private_outbound = allow_private_outbound
         self._allowed_hosts = allowed_hosts
+        self._max_runtime_seconds = max(1.0, max_runtime_seconds)
 
     async def download(
         self,
@@ -84,6 +92,32 @@ class YtDLPDownloadClient:
         except ImportError as exc:
             raise DownloadClientError("yt-dlp is not installed.") from exc
 
+        policy = self
+        deadline = time.monotonic() + self._max_runtime_seconds
+
+        def enforce_deadline(_status: dict[str, Any]) -> None:
+            if time.monotonic() >= deadline:
+                raise DownloadClientError("Media download exceeded its runtime limit")
+
+        class PolicyYoutubeDL(yt_dlp.YoutubeDL):  # type: ignore[misc, valid-type]
+            """Re-validate every manifest, redirect, and segment request."""
+
+            def urlopen(self, req: Any) -> Any:
+                if time.monotonic() >= deadline:
+                    raise DownloadClientError("Media download exceeded its runtime limit")
+                request_url = req if isinstance(req, str) else req.url
+                try:
+                    validate_url_for_request_sync(
+                        request_url,
+                        allow_private=policy._allow_private_outbound,
+                        allowed_hosts=policy._allowed_hosts,
+                    )
+                except URLPolicyError as exc:
+                    raise DownloadClientError(
+                        "Download subrequest blocked by outbound URL policy"
+                    ) from exc
+                return super().urlopen(req)
+
         ydl_opts = {
             "format": (
                 f"best[filesize<={max_filesize_mb}M]/"
@@ -95,12 +129,21 @@ class YtDLPDownloadClient:
             "no_warnings": True,
             "noplaylist": True,
             "playlistend": 1,
+            "allowed_protocols": (
+                "http",
+                "https",
+                "m3u8_native",
+                "http_dash_segments",
+            ),
+            "hls_prefer_native": True,
+            "enable_file_urls": False,
             "max_filesize": int(max_filesize_mb * 1024 * 1024),
             "restrictfilenames": True,
             "retries": 1,
             "fragment_retries": 1,
             "socket_timeout": 30,
             "match_filter": _reject_long_media,
+            "progress_hooks": [enforce_deadline],
             "merge_output_format": "mp4",
             "postprocessors": [
                 {
@@ -111,17 +154,20 @@ class YtDLPDownloadClient:
         }
 
         try:
-            with yt_dlp.YoutubeDL(cast(Any, ydl_opts)) as ydl:
+            with PolicyYoutubeDL(cast(Any, ydl_opts)) as ydl:
                 info = cast(dict[str, Any], ydl.extract_info(validated_url.value, download=True))
                 path = _resolve_download_path(ydl=ydl, info=info, temp_dir=temp_dir)
         except Exception as exc:
-            raise DownloadClientError(f"An error occurred while downloading: {exc}") from exc
+            raise DownloadClientError("An error occurred while downloading media") from exc
 
         return DownloadedMediaFile(path=path)
 
 
 def _resolve_download_path(*, ydl: Any, info: dict[str, Any], temp_dir: Path) -> Path:
-    prepared = Path(str(ydl.prepare_filename(info)))
+    workdir = temp_dir.resolve()
+    prepared = Path(str(ydl.prepare_filename(info))).resolve()
+    if not _is_relative_to(prepared, workdir):
+        raise DownloadClientError("Downloaded media path escaped its temporary directory")
     candidates = [prepared]
 
     if prepared.suffix.lower() != ".mp4":
@@ -129,13 +175,27 @@ def _resolve_download_path(*, ydl: Any, info: dict[str, Any], temp_dir: Path) ->
 
     for candidate in candidates:
         if candidate.exists():
-            return candidate
+            resolved = candidate.resolve()
+            if not _is_relative_to(resolved, workdir):
+                raise DownloadClientError("Downloaded media path escaped its temporary directory")
+            return resolved
 
     files = sorted(path for path in temp_dir.iterdir() if path.is_file())
     if len(files) == 1:
-        return files[0]
+        resolved = files[0].resolve()
+        if not _is_relative_to(resolved, workdir):
+            raise DownloadClientError("Downloaded media path escaped its temporary directory")
+        return resolved
 
     return candidates[-1]
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def _reject_long_media(info: dict[str, Any], *, max_seconds: int = 900) -> str | None:

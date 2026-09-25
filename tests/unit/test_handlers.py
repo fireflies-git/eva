@@ -468,7 +468,7 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
         SimpleNamespace(
             author=SimpleNamespace(id=218675193592283137, display_name="admin"),
             channel=SimpleNamespace(id=1),
-            content="eva shell pwd",
+            content="eva shell python --version",
             id=123,
             reference=None,
         ),

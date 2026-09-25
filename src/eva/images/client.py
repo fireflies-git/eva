@@ -34,9 +34,23 @@ def _parse_content_length(raw: str | None) -> int | None:
 
 async def _read_capped(response: aiohttp.ClientResponse, *, max_bytes: int) -> bytes:
     """Read the body in chunks, aborting as soon as it exceeds ``max_bytes``."""
+    content = getattr(response, "content", None)
+    if content is not None and not hasattr(content, "iter_chunked"):
+        if hasattr(content, "read"):
+            raw = await content.read(max_bytes + 1)
+        else:
+            raise ImageClientError("Image response body cannot be read safely")
+        if len(raw) > max_bytes:
+            raise ImageClientError(
+                f"Image download exceeds max size ({len(raw)} bytes > {max_bytes} bytes)"
+            )
+        return raw
+
     chunks: list[bytes] = []
     total = 0
-    async for chunk in response.content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
+    if content is None:
+        raise ImageClientError("Image response body cannot be read safely")
+    async for chunk in content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
         chunks.append(chunk)
         total += len(chunk)
         if total > max_bytes:
@@ -164,7 +178,7 @@ class ImageClient:
                 f"Image download URL blocked by outbound URL policy: {exc}"
             ) from exc
         except aiohttp.ClientError as exc:
-            raise ImageClientError(f"Image download network error: {exc}") from exc
+            raise ImageClientError("Image download network error") from exc
 
         filename = self._pick_filename(
             url=url,
@@ -223,8 +237,7 @@ class ImageClient:
 
                     data = json.loads(text)
                 except Exception as exc:
-                    excerpt = self._compact_error_body(text)
-                    raise ImageClientError(f"Invalid image JSON response: {excerpt}") from exc
+                    raise ImageClientError("Invalid image JSON response") from exc
                 if not isinstance(data, dict):
                     raise ImageClientError("Invalid image API response type")
                 return data
@@ -233,7 +246,7 @@ class ImageClient:
         except URLPolicyError as exc:
             raise ImageClientError(f"Image API URL blocked by outbound URL policy: {exc}") from exc
         except aiohttp.ClientError as exc:
-            raise ImageClientError(f"Image API network error: {exc}") from exc
+            raise ImageClientError("Image API network error") from exc
 
     def _build_images(self, data: dict[str, Any]) -> list[GeneratedImage]:
         raw = data.get("images")
@@ -350,15 +363,7 @@ class ImageClient:
     def _format_http_error(self, *, prefix: str, status: int, body: str) -> str:
         if status in _TRANSIENT_HTTP_STATUS_CODES:
             return f"{prefix} HTTP {status}: upstream service temporarily unavailable"
-        excerpt = self._compact_error_body(body)
-        return f"{prefix} HTTP {status}: {excerpt}"
-
-    def _compact_error_body(self, body: str) -> str:
-        compact = " ".join(body.split())
-        if not compact:
-            return "empty response body"
-        return compact[:300]
-
+        return f"{prefix} HTTP {status}: upstream request rejected"
 
 def _session_get_no_redirects(session: Any, url: str) -> Any:
     """Call ``session.get`` with redirects disabled.
@@ -390,5 +395,8 @@ async def _read_error_body(response: Any) -> str:
                 break
         charset = getattr(response, "charset", None) or "utf-8"
         return b"".join(chunks).decode(charset, errors="replace")
-    text = await response.text()
-    return text[:_ERROR_BODY_MAX_BYTES]
+    if content is not None and hasattr(content, "read"):
+        raw = await content.read(_ERROR_BODY_MAX_BYTES + 1)
+        charset = getattr(response, "charset", None) or "utf-8"
+        return raw[:_ERROR_BODY_MAX_BYTES].decode(charset, errors="replace")
+    raise ImageClientError("Image error response body cannot be read safely")

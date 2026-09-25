@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import discord
 
@@ -50,7 +50,7 @@ def _make_message(
     reference: object | None = None,
     edited_at: datetime | None = None,
     attachments: list[object] | None = None,
-) -> object:
+) -> Any:
     fields: dict[str, object] = {
         "id": msg_id,
         "content": content,

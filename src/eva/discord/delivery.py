@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import discord
 
 from eva.discord.formatting import build_plain_response_chunks, build_response_chunks
 
 logger = logging.getLogger(__name__)
+_NO_MENTIONS = discord.AllowedMentions.none()
 
 
 class ApplicationGroupChannel(Protocol):
@@ -51,11 +52,14 @@ async def safe_edit(
     try:
         if attachments:
             files = _build_files(attachments, spoiler=spoiler_attachments)
-            await message.edit(
-                content=content, suppress=suppress_embeds, attachments=files
+            await _edit_message(
+                message,
+                content=content,
+                suppress=suppress_embeds,
+                attachments=files,
             )
         else:
-            await message.edit(content=content, suppress=suppress_embeds)
+            await _edit_message(message, content=content, suppress=suppress_embeds)
         return True
     except Exception:
         logger.exception("Failed to edit message")
@@ -76,8 +80,13 @@ async def safe_send(
     try:
         if attachments:
             files = _build_files(attachments, spoiler=spoiler_attachments)
-            return await send(content=content, files=files, suppress_embeds=suppress_embeds)
-        return await send(content=content, suppress_embeds=suppress_embeds)
+            return await _send_message(
+                send,
+                content=content,
+                files=files,
+                suppress_embeds=suppress_embeds,
+            )
+        return await _send_message(send, content=content, suppress_embeds=suppress_embeds)
     except Exception:
         logger.exception("Failed to send continuation message")
         return None
@@ -94,13 +103,88 @@ async def safe_reply(
     try:
         if attachments:
             files = _build_files(attachments, spoiler=spoiler_attachments)
-            return await message.reply(
-                content=content, files=files, suppress_embeds=suppress_embeds
+            return await _reply_message(
+                message,
+                content=content,
+                files=files,
+                suppress_embeds=suppress_embeds,
             )
-        return await message.reply(content=content, suppress_embeds=suppress_embeds)
+        return await _reply_message(message, content=content, suppress_embeds=suppress_embeds)
     except Exception:
         logger.exception("Failed to reply to message")
         return None
+
+
+async def _edit_message(
+    message: discord.Message,
+    *,
+    content: str,
+    suppress: bool,
+    attachments: list[discord.File] | None = None,
+) -> None:
+    kwargs: dict[str, Any] = {
+        "content": content,
+        "suppress": suppress,
+        "allowed_mentions": _NO_MENTIONS,
+    }
+    if attachments is not None:
+        kwargs["attachments"] = attachments
+    edit = cast(Callable[..., Awaitable[object]], message.edit)
+    try:
+        await edit(**kwargs)
+    except TypeError as exc:
+        if "allowed_mentions" not in str(exc):
+            raise
+        kwargs.pop("allowed_mentions", None)
+        await edit(**kwargs)
+
+
+async def _send_message(
+    send: Callable[..., object],
+    *,
+    content: str,
+    suppress_embeds: bool,
+    files: list[discord.File] | None = None,
+) -> discord.Message | None:
+    kwargs: dict[str, Any] = {
+        "content": content,
+        "suppress_embeds": suppress_embeds,
+        "allowed_mentions": _NO_MENTIONS,
+    }
+    if files is not None:
+        kwargs["files"] = files
+    send_async = cast(Callable[..., Awaitable[object]], send)
+    try:
+        return cast(discord.Message | None, await send_async(**kwargs))
+    except TypeError as exc:
+        if "allowed_mentions" not in str(exc):
+            raise
+        kwargs.pop("allowed_mentions", None)
+        return cast(discord.Message | None, await send_async(**kwargs))
+
+
+async def _reply_message(
+    message: discord.Message,
+    *,
+    content: str,
+    suppress_embeds: bool,
+    files: list[discord.File] | None = None,
+) -> discord.Message | None:
+    kwargs: dict[str, Any] = {
+        "content": content,
+        "suppress_embeds": suppress_embeds,
+        "allowed_mentions": _NO_MENTIONS,
+    }
+    if files is not None:
+        kwargs["files"] = files
+    reply = cast(Callable[..., Awaitable[object]], message.reply)
+    try:
+        return cast(discord.Message | None, await reply(**kwargs))
+    except TypeError as exc:
+        if "allowed_mentions" not in str(exc):
+            raise
+        kwargs.pop("allowed_mentions", None)
+        return cast(discord.Message | None, await reply(**kwargs))
 
 
 async def safe_reply_or_edit(message: discord.Message, is_owner: bool, content: str) -> None:

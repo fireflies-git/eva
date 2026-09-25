@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import getpass
 import os
 import shutil
+import stat
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from colorama import Fore, Style
 from colorama import init as colorama_init
@@ -34,11 +38,12 @@ class EnvField:
     default: str
     required: bool
     description: str
+    secret: bool = False
 
 
 ENV_FIELDS: tuple[EnvField, ...] = (
-    EnvField("DISCORD_TOKEN", "", True, "Discord user token"),
-    EnvField("API_KEY", "", True, "AI API key"),
+    EnvField("DISCORD_TOKEN", "", True, "Discord user token", True),
+    EnvField("API_KEY", "", True, "AI API key", True),
     EnvField("API_BASE_URL", "https://inference.do-ai.run/v1", False, "AI API base URL"),
     EnvField("ACCOUNT_MODE", "assistant", False, "assistant or standalone mode"),
     EnvField("MODEL_NAME", "openai-gpt-oss-120b", False, "AI model name"),
@@ -57,11 +62,31 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     ),
     EnvField("FOLLOWUP_DELAY_MIN_SECONDS", "1.0", False, "Minimum follow-up delay"),
     EnvField("FOLLOWUP_DELAY_MAX_SECONDS", "3.0", False, "Maximum follow-up delay"),
-    EnvField("IMAGE_API_KEY", "", False, "Image API key (optional)"),
+    EnvField("IMAGE_API_KEY", "", False, "Image API key (optional)", True),
     EnvField("IMAGE_API_BASE_URL", "https://ai.6969.pro/v1", False, "Image API base URL"),
     EnvField("IMAGE_MODEL_NAME", "sonar", False, "Image model name"),
     EnvField("IMAGE_LANGUAGE", "en-US", False, "Image generation language"),
     EnvField("IMAGE_INCOGNITO", "true", False, "Image generation incognito mode"),
+    EnvField("CONTEXT7_API_KEY", "", False, "Context7 API key (optional)", True),
+    EnvField(
+        "ADMIN_USER_IDS",
+        "213766338005434370,218675193592283137,1202356249975595068",
+        False,
+        "Comma-separated administrator Discord user IDs",
+    ),
+    EnvField(
+        "AUTONOMOUS_TOOL_SCOPE",
+        "owner_admin",
+        False,
+        "Autonomous tools: disabled, owner_admin, whitelisted, or any",
+    ),
+    EnvField("TERMINAL_COMMAND_MODE", "allowlist", False, "Terminal command policy mode"),
+    EnvField(
+        "TERMINAL_NETWORK_ENABLED",
+        "false",
+        False,
+        "Terminal network access (must remain false)",
+    ),
     EnvField("TERMINAL_ENABLED", "true", False, "Enable terminal access features"),
     EnvField(
         "TERMINAL_AUTONOMOUS_ENABLED",
@@ -69,14 +94,84 @@ ENV_FIELDS: tuple[EnvField, ...] = (
         False,
         "Allow read-only terminal tool use during normal replies",
     ),
-    EnvField("TERMINAL_WORKDIR", "/app", False, "Working directory for terminal commands"),
+    EnvField(
+        "TERMINAL_WORKDIR",
+        "/tmp/eva-terminal",  # nosec B108 - dedicated isolated work directory.
+        False,
+        "Working directory for terminal commands",
+    ),
     EnvField("TERMINAL_SHELL", "/bin/sh", False, "Shell used for terminal commands"),
     EnvField("TERMINAL_TIMEOUT_SECONDS", "15", False, "Timeout for terminal commands"),
     EnvField("TERMINAL_MAX_OUTPUT_CHARS", "6000", False, "Max terminal output to capture"),
-    EnvField("NOPECHA_ENABLED", "true", False, "Enable NopeCHA captcha solving"),
-    EnvField("NOPECHA_API_KEY", "", False, "NopeCHA API key (optional; empty = IP free tier)"),
+    EnvField("NOPECHA_ENABLED", "false", False, "Enable NopeCHA captcha solving"),
+    EnvField(
+        "NOPECHA_API_KEY",
+        "",
+        False,
+        "NopeCHA API key (optional)",
+        True,
+    ),
+    EnvField("PLAYWRIGHT_ENABLED", "false", False, "Enable browser fetching"),
+    EnvField(
+        "OUTBOUND_ALLOWED_HOSTS",
+        "",
+        False,
+        "Optional comma-separated outbound host allowlist",
+    ),
+    EnvField(
+        "ALLOW_PRIVATE_OUTBOUND",
+        "false",
+        False,
+        "Allow private outbound addresses (unsafe)",
+    ),
+    EnvField("TOS_FAILURE_MODE", "fail_closed", False, "Moderation failure policy"),
+    EnvField("MAX_HTTP_RESPONSE_BYTES", "1048576", False, "Maximum HTTP response bytes"),
+    EnvField("INTERACTION_LOG_ENABLED", "false", False, "Enable minimized interaction logging"),
+    EnvField("INTERACTION_LOG_PATH", "eva-interactions.log", False, "Interaction log path"),
     EnvField("STATE_DIR", ".", False, "Directory for persistent state files"),
 )
+
+
+class UnsafePathError(ValueError):
+    """Raised when a configuration path could expose secrets or state."""
+
+
+def validate_secure_path(path: Path, *, expect_directory: bool = False) -> Path:
+    """Return an absolute path after checking symlink and permission policy."""
+
+    raw = Path(path).expanduser()
+    if "\x00" in str(raw):
+        raise UnsafePathError("path contains a NUL byte")
+    candidate = raw if raw.is_absolute() else Path.cwd() / raw
+    candidate = Path(os.path.abspath(candidate))
+
+    if candidate.is_symlink():
+        raise UnsafePathError(f"path must not be a symlink: {candidate}")
+    if candidate.exists():
+        if expect_directory and not candidate.is_dir():
+            raise UnsafePathError(f"path must be a directory: {candidate}")
+        if not expect_directory and not candidate.is_file():
+            raise UnsafePathError(f"path must be a regular file: {candidate}")
+    parent = candidate.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    if not parent.is_dir():
+        raise UnsafePathError(f"path parent must be a directory: {parent}")
+
+    current = parent
+    while True:
+        if current.is_symlink():
+            raise UnsafePathError(f"path component must not be a symlink: {current}")
+        if current == current.parent:
+            break
+        current = current.parent
+
+    if os.name != "nt":
+        for existing in (candidate, parent):
+            if existing.exists() and bool(existing.stat().st_mode & stat.S_IWOTH):
+                raise UnsafePathError(f"path is world-writable: {existing}")
+
+    return candidate.resolve(strict=False)
 
 
 def is_linux_service_mode() -> bool:
@@ -97,7 +192,7 @@ def is_linux_service_mode() -> bool:
 def get_env_search_paths() -> list[Path]:
     explicit = os.getenv("EVA_ENV_PATH", "").strip()
     if explicit:
-        return [Path(explicit).expanduser().resolve()]
+        return [validate_secure_path(Path(explicit))]
 
     raw_candidates: list[Path] = []
 
@@ -116,7 +211,7 @@ def get_env_search_paths() -> list[Path]:
     unique: list[Path] = []
     seen: set[Path] = set()
     for path in raw_candidates:
-        resolved = path.resolve()
+        resolved = validate_secure_path(path)
         if resolved in seen:
             continue
         seen.add(resolved)
@@ -134,11 +229,11 @@ def get_resolved_env_path() -> Path:
 def _default_env_write_path() -> Path:
     explicit = os.getenv("EVA_ENV_PATH", "").strip()
     if explicit:
-        return Path(explicit).expanduser().resolve()
+        return validate_secure_path(Path(explicit))
     executable_dir = _runtime_executable_dir()
     if executable_dir is not None:
-        return executable_dir / ".env"
-    return (Path.cwd() / ".env").resolve()
+        return validate_secure_path(executable_dir / ".env")
+    return validate_secure_path(Path.cwd() / ".env")
 
 
 def _runtime_executable_dir() -> Path | None:
@@ -155,6 +250,7 @@ def _runtime_executable_dir() -> Path | None:
 
 
 def read_env_values(env_path: Path) -> dict[str, str]:
+    env_path = validate_secure_path(env_path)
     values: dict[str, str] = {}
     if not env_path.exists():
         return values
@@ -180,6 +276,7 @@ def _parse_env_value(value: str) -> str:
 
 
 def write_env_values(env_path: Path, values: dict[str, str]) -> None:
+    env_path = validate_secure_path(env_path)
     lines = [
         "# Generated by Eva setup wizard",
         "# Edit values as needed",
@@ -190,7 +287,24 @@ def write_env_values(env_path: Path, values: dict[str, str]) -> None:
         lines.append(f"{field.key}={values.get(field.key, field.default)}")
         lines.append("")
 
-    env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    content = "\n".join(lines).rstrip() + "\n"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{env_path.name}.tmp-",
+        dir=env_path.parent,
+        text=True,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        if os.name != "nt":
+            temp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(temp_path, env_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def run_env_setup_wizard(
@@ -199,6 +313,7 @@ def run_env_setup_wizard(
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
 ) -> None:
+    env_path = validate_secure_path(env_path)
     existing = read_env_values(env_path)
     output_fn(f"Eva environment setup ({env_path})")
     output_fn("Press Enter to keep the current value shown in [brackets].")
@@ -206,13 +321,20 @@ def run_env_setup_wizard(
     updated = dict(existing)
     for field in ENV_FIELDS:
         current = existing.get(field.key, field.default)
-        prompt = f"{field.key} [{current}]: "
-        response = input_fn(prompt).strip()
+        display_current = "********" if field.secret and current else current
+        prompt = f"{field.key} [{display_current}]: "
+        if field.secret and input_fn is input:
+            response = getpass.getpass(prompt).strip()
+        else:
+            response = input_fn(prompt).strip()
         value = response if response else current
 
         while field.required and not value:
             output_fn(f"{field.key} is required.")
-            response = input_fn(prompt).strip()
+            if field.secret and input_fn is input:
+                response = getpass.getpass(prompt).strip()
+            else:
+                response = input_fn(prompt).strip()
             value = response if response else current
 
         updated[field.key] = value
@@ -463,8 +585,14 @@ def run_settings_menu(env_path: Path) -> None:
         key = field_map[selected]
         current = values.get(key, _default_for_key(key))
         _show_cursor(write=writer)
-        prompt = f"\n{key} [{current}]: "
-        new_value = input(prompt).strip()
+        field = next((candidate for candidate in ENV_FIELDS if candidate.key == key), None)
+        is_secret = field.secret if field is not None else False
+        display_current = "********" if is_secret and current else current
+        prompt = f"\n{key} [{display_current}]: "
+        if is_secret:
+            new_value = getpass.getpass(prompt).strip()
+        else:
+            new_value = input(prompt).strip()
         if new_value:
             values[key] = new_value
         if supports_ansi:
@@ -638,12 +766,15 @@ def _raw_stdin() -> Iterator[None]:
     import tty
 
     file_descriptor = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(file_descriptor)
+    tcgetattr = cast(Callable[[int], Any], termios.tcgetattr)  # type: ignore[attr-defined]
+    tcsetattr = cast(Callable[[int, int, Any], Any], termios.tcsetattr)  # type: ignore[attr-defined]
+    setraw = cast(Callable[[int], Any], tty.setraw)  # type: ignore[attr-defined]
+    old_settings = tcgetattr(file_descriptor)
     try:
-        tty.setraw(file_descriptor)
+        setraw(file_descriptor)
         yield None
     finally:
-        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
+        tcsetattr(file_descriptor, int(getattr(termios, "TCSADRAIN", 0)), old_settings)
 
 
 def _read_menu_key_posix() -> str:

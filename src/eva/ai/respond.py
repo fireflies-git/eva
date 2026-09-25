@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Sequence
@@ -16,7 +17,8 @@ from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
 from eva.ai.schemas import ChatMessage, ToolCall
 from eva.constants import REPLY_MAX_TOKENS, SPLIT_TRIGGER
-from eva.tools import ToolService
+from eva.logging import redact_secrets
+from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
 
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
@@ -24,8 +26,11 @@ DISCORD_MINIMUM_AGE = 13
 # Reasoning models spend reasoning tokens from the same max_tokens budget, so a
 # tiny budget starves the YES/NO verdict and silently fails open on empty output.
 TOS_MODERATION_MAX_TOKENS = 256
-MAX_TERMINAL_TOOL_ROUNDS = 5
+MAX_TERMINAL_TOOL_ROUNDS = 3
 MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
+MAX_AUTONOMOUS_TOOL_CALLS_PER_RESPONSE = 6
+MAX_AUTONOMOUS_TOOL_ARGUMENT_CHARS = 16_384
+MAX_AUTONOMOUS_TOOL_RESULT_CHARS = 20_000
 VISIBLE_REPLY_RECOVERY_INSTRUCTION = (
     "The previous model output did not contain a visible user-facing answer. "
     "Reply now with exactly one concise plain-text answer to the user's latest request. "
@@ -58,9 +63,9 @@ def _build_user_message(
 ) -> str:
     sections: list[str] = []
     if requester_context:
-        sections.append(f"[Current requester]\n{requester_context}")
+        sections.append(f"[UNTRUSTED_REQUESTER_CONTEXT]\n{requester_context}")
     if reply_context:
-        sections.append(f'[Replying to message: "{reply_context}"]')
+        sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{reply_context}"]')
     sections.append(user_message)
     return "\n\n".join(sections)
 
@@ -101,10 +106,24 @@ class ResponseService:
         client: ChatCompletionClient,
         model_name: str,
         tool_services: Sequence[ToolService] = (),
+        tool_authorizer: ToolAuthorizer | None = None,
+        max_tool_rounds: int = MAX_TERMINAL_TOOL_ROUNDS,
+        max_tool_calls: int = MAX_AUTONOMOUS_TOOL_CALLS_PER_RESPONSE,
+        max_tool_concurrency: int = 2,
     ) -> None:
         self._client = client
         self._model_name = model_name
         self._tool_services = list(tool_services)
+        # A missing context must fail closed.  The Discord boundary supplies
+        # trusted requester facts for normal replies.
+        self._tool_authorizer = tool_authorizer or ToolAuthorizer()
+        # These are hard safety ceilings. Configuration can lower the budgets,
+        # but it cannot expand the number of autonomous calls or concurrency.
+        self._max_tool_rounds = min(max(1, max_tool_rounds), MAX_TERMINAL_TOOL_ROUNDS)
+        self._max_tool_calls = min(
+            max(1, max_tool_calls), MAX_AUTONOMOUS_TOOL_CALLS_PER_RESPONSE
+        )
+        self._tool_semaphore = asyncio.Semaphore(min(max(1, max_tool_concurrency), 2))
 
     async def generate_reply(
         self,
@@ -115,6 +134,7 @@ class ResponseService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
+        tool_context: ToolExecutionContext | None = None,
     ) -> ResponseGenerationResult:
         conversation_messages = _build_conversation_messages(
             history_messages=history_messages,
@@ -131,6 +151,11 @@ class ResponseService:
             model_name=self._model_name,
             messages=tool_messages,
             tool_services=self._tool_services,
+            tool_authorizer=self._tool_authorizer,
+            tool_context=tool_context,
+            max_tool_rounds=self._max_tool_rounds,
+            max_tool_calls=self._max_tool_calls,
+            tool_semaphore=self._tool_semaphore,
             temperature=0.7,
             max_tokens=REPLY_MAX_TOKENS,
         )
@@ -198,9 +223,16 @@ def contains_underage_claim(text: str) -> bool:
 
 
 class TOSCheckService:
-    def __init__(self, *, client: ChatCompletionClient, model_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        client: ChatCompletionClient,
+        model_name: str,
+        failure_mode: str = "fail_closed",
+    ) -> None:
         self._client = client
         self._model_name = model_name
+        self._failure_mode = failure_mode
 
     async def check_tos_violation(self, text: str) -> bool:
         if contains_underage_claim(text):
@@ -219,7 +251,11 @@ class TOSCheckService:
             "a real individual.\n\n"
             "Everything else is permitted regardless of how dark, explicit, offensive, "
             "or profane it is. Swearing, slurs, graphic content, taboo topics, and "
-            "mature themes are NOT violations.\n\n"
+            "mature themes are NOT violations. Consensual adult sexual content is "
+            "permitted; it must involve adults and consent. Content involving minors "
+            "is a violation. Authorized defensive cybersecurity analysis is permitted; "
+            "unauthorized access is not. The response does not advocate or facilitate "
+            "violence.\n\n"
             "Reply with exactly 'YES' if it violates these rules, or 'NO' if it is "
             "acceptable. Say nothing else."
         )
@@ -236,15 +272,19 @@ class TOSCheckService:
             )
         except AIClientError as exc:
             if str(exc) == EMPTY_RESPONSE_ERROR:
-                logger.debug("TOS moderation returned empty output; allowing reply")
-                return False
+                logger.warning("TOS moderation returned empty output")
+                return self._failure_mode == "fail_closed"
             logger.exception("TOS moderation request failed")
-            return False
+            return self._failure_mode == "fail_closed"
 
         decision = parse_strict_yes_no(response)
         if decision is None:
-            logger.warning("TOS moderation returned unexpected response: %r", response)
-            return False
+            logger.warning(
+                "TOS moderation returned unexpected response type=%s length=%s",
+                type(response).__name__,
+                len(response),
+            )
+            return self._failure_mode == "fail_closed"
         return decision
 
 
@@ -254,6 +294,11 @@ async def _generate_reply_with_tools(
     model_name: str,
     messages: Sequence[ChatMessage],
     tool_services: Sequence[ToolService],
+    tool_authorizer: ToolAuthorizer,
+    tool_context: ToolExecutionContext | None,
+    max_tool_rounds: int,
+    max_tool_calls: int,
+    tool_semaphore: asyncio.Semaphore,
     temperature: float,
     max_tokens: int,
 ) -> str | None:
@@ -263,12 +308,29 @@ async def _generate_reply_with_tools(
         return None
 
     tool_client = cast(ToolChatCompletionClient, client)
+    authorized_services = [
+        service
+        for service in tool_services
+        if tool_authorizer.is_allowed(service.autonomous_tool_name, tool_context)
+    ]
+    for service in tool_services:
+        if service not in authorized_services:
+            logger.info(
+                "autonomous_tool_denied tool=%s requester_id=%s",
+                service.autonomous_tool_name,
+                tool_context.requester_id if tool_context is not None else None,
+            )
+    if not authorized_services:
+        return None
+
     tool_messages: list[ChatMessage] = list(messages)
-    tool_definitions = [svc.build_autonomous_tool_definition() for svc in tool_services]
-    name_to_service = {svc.autonomous_tool_name: svc for svc in tool_services}
+    tool_definitions = [svc.build_autonomous_tool_definition() for svc in authorized_services]
+    name_to_service = {svc.autonomous_tool_name: svc for svc in authorized_services}
+    total_tool_calls = 0
+    requester_id = tool_context.requester_id if tool_context is not None else None
 
     try:
-        for _ in range(MAX_TERMINAL_TOOL_ROUNDS):
+        for _ in range(max_tool_rounds):
             response = await tool_client.chat_completion_with_tools(
                 messages=tool_messages,
                 tools=tool_definitions,
@@ -284,7 +346,19 @@ async def _generate_reply_with_tools(
 
             # Only the calls we actually answer may appear on the assistant
             # message, otherwise the next round 400s on unanswered tool_call_ids.
-            answered_tool_calls = response.tool_calls[:MAX_TERMINAL_TOOL_CALLS_PER_ROUND]
+            remaining_calls = max_tool_calls - total_tool_calls
+            if remaining_calls <= 0:
+                raise AIClientError("Model exceeded tool-call limit")
+            answered_tool_calls = response.tool_calls[
+                : min(MAX_TERMINAL_TOOL_CALLS_PER_ROUND, remaining_calls)
+            ]
+            total_tool_calls += len(answered_tool_calls)
+            logger.info(
+                "autonomous_tool_budget requester_id=%s round_calls=%s total_calls=%s",
+                requester_id,
+                len(answered_tool_calls),
+                total_tool_calls,
+            )
             assistant_message = _build_assistant_tool_message(
                 response.content,
                 answered_tool_calls,
@@ -295,25 +369,55 @@ async def _generate_reply_with_tools(
             for tool_call in answered_tool_calls:
                 service = name_to_service.get(tool_call.name)
                 if service is None:
-                    result = f"Tool error: unknown tool '{tool_call.name}'."
+                    result = "Tool error: unknown tool."
+                elif not tool_authorizer.is_allowed(tool_call.name, tool_context):
+                    # Re-check immediately before execution.  This is kept
+                    # outside the prompt so untrusted model text cannot grant
+                    # itself a capability.
+                    logger.warning(
+                        "autonomous_tool_denied tool=%s requester_id=%s",
+                        tool_call.name,
+                        tool_context.requester_id if tool_context is not None else None,
+                    )
+                    result = f"Tool error: requester is not authorized to use '{tool_call.name}'."
+                elif len(tool_call.arguments) > MAX_AUTONOMOUS_TOOL_ARGUMENT_CHARS:
+                    result = "Tool error: arguments exceed the configured size limit."
                 else:
                     try:
-                        result = await service.run_autonomous_tool(tool_call.arguments)
+                        async with tool_semaphore:
+                            result = await service.run_autonomous_tool(tool_call.arguments)
                     except Exception as exc:
-                        result = f"Tool error: {exc}"
+                        logger.warning(
+                            "autonomous_tool_failed tool=%s requester_id=%s error_type=%s",
+                            tool_call.name,
+                            tool_context.requester_id if tool_context is not None else None,
+                            type(exc).__name__,
+                        )
+                        result = "Tool error: execution failed."
+
+                result = _sanitize_tool_result(result)
 
                 tool_messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "name": tool_call.name,
-                        "content": result,
+                        "content": f"[UNTRUSTED_TOOL_OUTPUT]\n{result}",
                     }
                 )
         raise AIClientError("Model exceeded tool-call limit")
     except AIClientError:
         logger.exception("Autonomous tool flow failed; falling back to plain reply")
         return None
+
+
+def _sanitize_tool_result(result: str) -> str:
+    """Keep tool output bounded and remove common secret formats before prompting."""
+
+    sanitized = redact_secrets(result if isinstance(result, str) else str(result))
+    if len(sanitized) > MAX_AUTONOMOUS_TOOL_RESULT_CHARS:
+        return sanitized[:MAX_AUTONOMOUS_TOOL_RESULT_CHARS] + "\n[tool output truncated]"
+    return sanitized
 
 
 def _build_conversation_messages(
@@ -326,7 +430,17 @@ def _build_conversation_messages(
 ) -> list[ChatMessage]:
     # Discord context is the canonical chronological transcript. Local history is
     # only a fallback for channels where Discord history could not be fetched.
-    messages: list[ChatMessage] = list(context_messages or history_messages)
+    messages: list[ChatMessage] = []
+    if context_messages:
+        messages.extend(context_messages)
+    else:
+        for message in history_messages:
+            messages.append(
+                {
+                    "role": message["role"],
+                    "content": f"[UNTRUSTED_HISTORY_DATA]\n{message['content']}",
+                }
+            )
 
     messages.append(
         {

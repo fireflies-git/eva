@@ -1,4 +1,4 @@
-"""NopeCHA captcha solving for Discord challenges (IP free tier by default)."""
+"""Opt-in NopeCHA captcha solving for Discord challenges."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from eva.constants import (
     NOPECHA_POLL_INTERVAL_SECONDS,
     NOPECHA_TIMEOUT_SECONDS,
 )
-from eva.security.urls import PolicyResolver, URLPolicyError, validate_url
+from eva.security.urls import PolicyResolver, URLPolicyError, validate_url_for_request
 
 logger = logging.getLogger(__name__)
 _MAX_RESPONSE_BYTES = 256 * 1024
@@ -30,8 +30,8 @@ class NopeCHAError(RuntimeError):
 class NopeCHAClient:
     """Solves ``discord.CaptchaRequired`` challenges via the NopeCHA token API.
 
-    Without an API key the free tier is used, which is quota'd by the request
-    IP (about 100 solves/day). Datacenter IPs may be rejected with a 403.
+    The application only constructs this client when an operator explicitly
+    enables it and supplies an API key. Datacenter IPs may still be rejected.
     """
 
     def __init__(
@@ -41,11 +41,15 @@ class NopeCHAClient:
         api_url: str = NOPECHA_API_URL,
         timeout_seconds: float = NOPECHA_TIMEOUT_SECONDS,
         poll_interval_seconds: float = NOPECHA_POLL_INTERVAL_SECONDS,
+        allow_private_outbound: bool = False,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._api_url = api_url
         self._timeout_seconds = timeout_seconds
         self._poll_interval_seconds = poll_interval_seconds
+        self._allow_private_outbound = allow_private_outbound
+        self._allowed_hosts = allowed_hosts
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
@@ -54,7 +58,7 @@ class NopeCHAClient:
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
                 connector=aiohttp.TCPConnector(
-                    resolver=PolicyResolver(),
+                    resolver=PolicyResolver(allow_private=self._allow_private_outbound),
                     use_dns_cache=False,
                 ),
             )
@@ -81,7 +85,11 @@ class NopeCHAClient:
         if self._session is None:
             raise NopeCHAError("NopeCHA client is not started")
         try:
-            validate_url(self._api_url)
+            await validate_url_for_request(
+                self._api_url,
+                allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
+            )
             async with self._session.post(
                 self._api_url,
                 json=payload,
@@ -96,17 +104,21 @@ class NopeCHAClient:
         except TimeoutError as exc:
             raise NopeCHAError("NopeCHA job creation timed out") from exc
         except aiohttp.ClientError as exc:
-            raise NopeCHAError(f"NopeCHA network error: {exc}") from exc
+            raise NopeCHAError("NopeCHA network error") from exc
         except URLPolicyError as exc:
             raise NopeCHAError(f"NopeCHA URL blocked by outbound policy: {exc}") from exc
         except Exception as exc:
-            raise NopeCHAError(f"Invalid NopeCHA job response: {exc}") from exc
+            logger.warning(
+                "NopeCHA job response handling failed error_type=%s",
+                type(exc).__name__,
+            )
+            raise NopeCHAError("Invalid NopeCHA job response") from exc
 
         if not isinstance(data, dict):
             raise NopeCHAError("Invalid NopeCHA job response")
         job_id = data.get("data")
         if not isinstance(job_id, str) or not job_id:
-            raise NopeCHAError(f"NopeCHA rejected the job: {data!r}")
+            raise NopeCHAError("NopeCHA rejected the job")
         return job_id
 
     async def _poll_job(self, job_id: str) -> str:
@@ -122,7 +134,11 @@ class NopeCHAClient:
             if self._api_key:
                 params["key"] = self._api_key
             try:
-                validate_url(self._api_url)
+                await validate_url_for_request(
+                    self._api_url,
+                    allow_private=self._allow_private_outbound,
+                    allowed_hosts=self._allowed_hosts,
+                )
                 async with self._session.get(
                     self._api_url,
                     params=params,
@@ -137,17 +153,23 @@ class NopeCHAClient:
             except TimeoutError as exc:
                 raise NopeCHAError("NopeCHA poll timed out") from exc
             except aiohttp.ClientError as exc:
-                raise NopeCHAError(f"NopeCHA network error: {exc}") from exc
+                raise NopeCHAError("NopeCHA network error") from exc
             except URLPolicyError as exc:
                 raise NopeCHAError(f"NopeCHA URL blocked by outbound policy: {exc}") from exc
             except Exception as exc:
-                raise NopeCHAError(f"Invalid NopeCHA poll response: {exc}") from exc
+                logger.warning(
+                    "NopeCHA poll response handling failed error_type=%s",
+                    type(exc).__name__,
+                )
+                raise NopeCHAError("Invalid NopeCHA poll response") from exc
 
             if not isinstance(data, dict):
                 raise NopeCHAError("Invalid NopeCHA poll response")
             error = data.get("error")
             if isinstance(error, str) and error:
-                raise NopeCHAError(f"NopeCHA error: {error}")
+                # Do not reflect arbitrary provider text into logs or Discord;
+                # it can contain request metadata or secret-bearing URLs.
+                raise NopeCHAError("NopeCHA rejected the captcha request")
             solution = data.get("data")
             if isinstance(solution, str) and solution:
                 return solution
@@ -186,25 +208,19 @@ def _build_job_payload(
 
 
 def _error_for_status(status: int, text: str) -> NopeCHAError:
-    snippet = text[:200]
     lowered = text.lower()
     if status == 403:
         return NopeCHAError(
             "NopeCHA banned this IP (BannedUser); captcha solving unavailable"
         )
     if status == 402 or "no credit" in lowered:
-        return NopeCHAError(f"NopeCHA has no credit for this request: {snippet}")
-    return NopeCHAError(f"NopeCHA HTTP {status}: {snippet}")
+        return NopeCHAError("NopeCHA has no credit for this request")
+    return NopeCHAError(f"NopeCHA HTTP {status}")
 
 
 async def _read_response_text(response: aiohttp.ClientResponse, *, max_bytes: int) -> str:
     content = getattr(response, "content", None)
-    if content is None or not hasattr(content, "iter_chunked"):
-        if hasattr(response, "read"):
-            raw = await response.read()
-        else:
-            raw = (await response.text()).encode("utf-8")
-    else:
+    if content is not None and hasattr(content, "iter_chunked"):
         chunks: list[bytes] = []
         total = 0
         async for chunk in content.iter_chunked(65_536):
@@ -213,6 +229,12 @@ async def _read_response_text(response: aiohttp.ClientResponse, *, max_bytes: in
                 raise NopeCHAError("NopeCHA response exceeds configured size limit")
             chunks.append(chunk)
         raw = b"".join(chunks)
+    elif content is not None and hasattr(content, "read"):
+        raw = await content.read(max_bytes + 1)
+    else:
+        # Lightweight adapters may expose only ``text()``. Real aiohttp
+        # responses take one of the bounded branches above.
+        raw = (await response.text()).encode("utf-8")
     if len(raw) > max_bytes:
         raise NopeCHAError("NopeCHA response exceeds configured size limit")
     return raw.decode(getattr(response, "charset", None) or "utf-8", errors="replace")

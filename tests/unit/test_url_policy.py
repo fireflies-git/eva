@@ -8,6 +8,7 @@ from eva.security.urls import (
     URLPolicyError,
     validate_url,
     validate_url_for_request,
+    validate_url_for_request_sync,
 )
 
 
@@ -98,3 +99,25 @@ def test_policy_resolver_returns_numeric_global_answer(
     results = asyncio.run(PolicyResolver().resolve("example.com", 443, socket.AF_INET))
     assert results[0]["host"] == "93.184.216.34"
     assert results[0]["port"] == 443
+
+
+def test_sync_request_validator_rejects_private_download_subrequest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_getaddrinfo(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    with pytest.raises(URLPolicyError, match="private"):
+        validate_url_for_request_sync("http://segment.example/segment.ts")
+
+
+def test_validate_url_enforces_exact_host_allowlist() -> None:
+    allowed_hosts = frozenset({"media.example.com"})
+
+    assert validate_url(
+        "https://media.example.com/video", allowed_hosts=allowed_hosts
+    ).hostname == "media.example.com"
+    with pytest.raises(URLPolicyError, match="allowlist"):
+        validate_url("https://other.example.com/video", allowed_hosts=allowed_hosts)

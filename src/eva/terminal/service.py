@@ -8,7 +8,9 @@ import re
 import shlex
 import shutil
 import signal
-import subprocess
+import stat
+import subprocess  # nosec B404 - required for process-group termination.
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final, cast
@@ -52,6 +54,7 @@ _DEFAULT_ALLOWED_COMMANDS: Final[frozenset[str]] = frozenset(
         # Useful for checking timeout handling. It cannot access the network
         # or mutate the working directory by itself.
         "sleep",
+        "timeout",
         # Interpreters are accepted only for harmless version checks below;
         # scripts and -c/-m execution are explicitly rejected.
         "python",
@@ -90,6 +93,21 @@ _FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset(
 _FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset(
     {"-f", "--file", "-r", "--reference"}
 )
+_FORBIDDEN_GREP_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"-r", "-R", "--recursive"}
+)
+_SENSITIVE_PATH_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        ".env",
+        "whitelist.db",
+        "tracked_messages.json",
+        "user_memory.json",
+        "reminders.json",
+        "pending_friend_requests.json",
+        "yuri.db",
+        "docker.sock",
+    }
+)
 _SHELL_OPERATOR_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:&&|\|\||[;&|><`]|\$\(|\$\{|\n|\r)"
 )
@@ -104,6 +122,45 @@ class TerminalClientError(RuntimeError):
 
 class TerminalCommandRejectedError(TerminalClientError):
     pass
+
+
+def _prepare_workdir(workdir: str | Path) -> Path:
+    """Create and validate the directory exposed to terminal commands.
+
+    The default lives below ``/tmp``, which is shared and commonly writable.
+    Refuse symlinks and directories owned by another user so an attacker cannot
+    replace the configured path with a link to application state or secrets.
+    """
+
+    raw = Path(workdir).expanduser()
+    if "\x00" in str(raw):
+        raise TerminalClientError("Terminal workdir contains a NUL byte")
+    candidate = Path(os.path.abspath(raw))
+
+    for component in (candidate, *candidate.parents):
+        if component.is_symlink():
+            raise TerminalClientError("Terminal workdir must not contain symlinks")
+
+    try:
+        candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise TerminalClientError("Terminal workdir could not be created") from exc
+
+    if candidate.is_symlink() or not candidate.is_dir():
+        raise TerminalClientError("Terminal workdir must be a real directory")
+
+    if os.name != "nt":
+        try:
+            metadata = candidate.stat()
+            current_uid = getattr(os, "getuid", lambda: metadata.st_uid)()
+            if metadata.st_uid != current_uid:
+                raise TerminalClientError("Terminal workdir is owned by another user")
+            if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                candidate.chmod(stat.S_IRWXU)
+        except OSError as exc:
+            raise TerminalClientError("Terminal workdir could not be inspected") from exc
+
+    return candidate.resolve()
 
 
 class TerminalService:
@@ -135,13 +192,7 @@ class TerminalService:
         max_file_size_bytes: int = 8 * 1024 * 1024,
         max_memory_bytes: int = 512 * 1024 * 1024,
     ) -> None:
-        self._workdir = Path(workdir).expanduser()
-        try:
-            self._workdir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            # The command boundary reports a clear error if the configured
-            # directory cannot be created or accessed.
-            pass
+        self._workdir = _prepare_workdir(workdir)
         # Kept in the constructor for compatibility with explicit terminal
         # settings. Commands are no longer passed through this shell.
         self._shell = shell
@@ -394,6 +445,12 @@ class TerminalService:
             raise TerminalCommandRejectedError(
                 "Find execution and deletion actions are not allowed."
             )
+        if executable_name == "grep" and any(
+            argument in _FORBIDDEN_GREP_OPTIONS for argument in argv[1:]
+        ):
+            raise TerminalCommandRejectedError(
+                "Recursive grep is not allowed in the terminal workdir."
+            )
         if executable_name in _PATH_ARGUMENT_COMMANDS:
             self._validate_path_arguments(argv[1:])
         return trimmed, argv
@@ -417,6 +474,10 @@ class TerminalService:
             if not _is_relative_to(resolved, workdir):
                 raise TerminalCommandRejectedError(
                     "Command paths must stay inside the terminal workdir."
+                )
+            if _is_sensitive_path(resolved, workdir):
+                raise TerminalCommandRejectedError(
+                    "Command paths may not access secrets or persistent state."
                 )
 
     def _build_process_argv(
@@ -443,7 +504,10 @@ class TerminalService:
             # between validation and process creation.
             return [executable, *command_argv[1:]]
 
-        sandbox = self._sandbox_executable or shutil.which("bwrap")
+        sandbox = self._sandbox_executable or shutil.which(
+            "bwrap",
+            path=self._safe_environment.get("PATH"),
+        )
         if sandbox is None:
             raise TerminalClientError("Terminal sandbox is required but bubblewrap is unavailable.")
         if os.name != "posix":
@@ -465,13 +529,27 @@ class TerminalService:
             "--dev",
             "/dev",
             "--tmpfs",
-            "/tmp",
+            "/tmp",  # nosec B108 - sandbox tmpfs is isolated by bubblewrap.
         ]
         for directory in ("/usr", "/bin", "/lib", "/lib64", "/etc"):
             if Path(directory).exists():
                 sandbox_args.extend(["--ro-bind", directory, directory])
         sandbox_args.extend(["--", *command_argv])
         return sandbox_args
+
+
+def _is_sensitive_path(path: Path, workdir: Path) -> bool:
+    try:
+        relative_parts = path.relative_to(workdir).parts
+    except ValueError:
+        return True
+    for part in relative_parts:
+        lowered = part.lower()
+        if lowered == ".git" or lowered in _SENSITIVE_PATH_NAMES:
+            return True
+        if lowered == ".env" or lowered.startswith(".env."):
+            return True
+    return False
 
 
 def format_terminal_result(result: TerminalCommandResult) -> str:
@@ -501,8 +579,26 @@ def format_terminal_result(result: TerminalCommandResult) -> str:
 
 
 def _build_safe_environment(workdir: Path) -> dict[str, str]:
-    raw_path = os.environ.get("PATH", os.defpath)
-    path_entries = [entry for entry in raw_path.split(os.pathsep) if entry]
+    # Do not inherit the operator's PATH. It can contain a writable checkout,
+    # a virtual environment, or another directory that supplies a trojan binary
+    # under an allowlisted name. Keep only fixed system locations instead.
+    if os.name == "nt":
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        path_entries = [
+            str(Path(sys.executable).resolve().parent),
+            str(Path(system_root) / "System32"),
+            system_root,
+        ]
+    else:
+        path_entries = [
+            str(Path(sys.executable).resolve().parent),
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
     environment = {
         "PATH": os.pathsep.join(path_entries),
         "LANG": "C.UTF-8",

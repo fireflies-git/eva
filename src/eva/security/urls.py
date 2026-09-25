@@ -166,6 +166,28 @@ async def validate_url_for_request(
     reduce DNS-rebinding and redirect-based SSRF risk.
     """
 
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                validate_url_for_request_sync,
+                url,
+                allow_private=allow_private,
+                allowed_hosts=allowed_hosts,
+            ),
+            timeout=max(0.1, dns_timeout_seconds),
+        )
+    except TimeoutError as exc:
+        raise URLPolicyError("URL hostname resolution timed out") from exc
+
+
+def validate_url_for_request_sync(
+    url: str,
+    *,
+    allow_private: bool = False,
+    allowed_hosts: frozenset[str] | set[str] | None = None,
+) -> ValidatedURL:
+    """Synchronous URL validation for blocking downloader callbacks."""
+
     validated = validate_url(
         url,
         allow_private=allow_private,
@@ -175,12 +197,10 @@ async def validate_url_for_request(
         return validated
 
     try:
-        addresses = await asyncio.wait_for(
-            asyncio.to_thread(_resolve_addresses, validated.hostname, validated.parsed.port),
-            timeout=max(0.1, dns_timeout_seconds),
-        )
-    except TimeoutError as exc:
-        raise URLPolicyError("URL hostname resolution timed out") from exc
+        # ``getaddrinfo`` is blocking here because callers use this helper from
+        # yt-dlp's synchronous request callbacks. The timeout is enforced by
+        # the caller's bounded download runtime.
+        addresses = _resolve_addresses(validated.hostname, validated.parsed.port)
     except OSError as exc:
         raise URLPolicyError("URL hostname could not be resolved") from exc
 
@@ -198,7 +218,9 @@ def _resolve_addresses(hostname: str, port: int | None) -> set[_IPAddress]:
     normalize them before policy evaluation.
     """
 
-    service = port or 443
+    # DNS policy depends on the address, but an accurate service avoids odd
+    # resolver behavior for hosts with port-specific records.
+    service = port if port is not None else 443
     return {address for address, _, _ in _resolve_records(hostname, service, socket.AF_UNSPEC)}
 
 
@@ -261,4 +283,5 @@ __all__ = [
     "PolicyResolver",
     "validate_url",
     "validate_url_for_request",
+    "validate_url_for_request_sync",
 ]

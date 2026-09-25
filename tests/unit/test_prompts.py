@@ -54,7 +54,8 @@ def test_build_system_prompt_advertises_terminal_tool_when_enabled() -> None:
     )
 
     assert "run_terminal_command" in prompt
-    assert "unrestricted" in prompt
+    assert "policy-controlled" in prompt
+    assert "It's unrestricted" not in prompt
 
 
 def test_build_system_prompt_omits_terminal_capability_when_disabled() -> None:
@@ -91,13 +92,12 @@ def test_build_system_prompt_includes_home_network() -> None:
         autonomous_terminal_enabled=True,
     )
 
-    assert "boston" in prompt
-    assert "10.0.0.2" in prompt
-    assert "seattle" in prompt
-    assert "10.0.0.187" in prompt
+    assert "10.0.0.2" not in prompt
+    assert "10.0.0.187" not in prompt
+    assert "private network addresses" in prompt
 
 
-def test_build_system_prompt_drops_old_security_section() -> None:
+def test_build_system_prompt_includes_security_section() -> None:
     channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
     client = cast(
         discord.Client,
@@ -112,8 +112,8 @@ def test_build_system_prompt_drops_old_security_section() -> None:
         autonomous_terminal_enabled=True,
     )
 
-    assert "Security Rules" not in prompt
-    assert "UNDER NO CIRCUMSTANCES" not in prompt
+    assert "Security boundaries" in prompt
+    assert "UNTRUSTED_DATA" in prompt
 
 
 def test_build_system_prompt_enforces_brevity_default() -> None:

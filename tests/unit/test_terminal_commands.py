@@ -19,7 +19,7 @@ def _build_terminal_service(tmp_path: Path) -> TerminalService:
 def test_terminal_command_requires_admin_or_owner(tmp_path: Path) -> None:
     response = asyncio.run(
         handle_terminal_command(
-            content="eva shell pwd",
+            content="eva shell python --version",
             user_id=999,
             is_owner=False,
             trigger_prefix="eva ",
@@ -34,7 +34,7 @@ def test_terminal_command_requires_admin_or_owner(tmp_path: Path) -> None:
 def test_terminal_command_runs_for_admin(tmp_path: Path) -> None:
     response = asyncio.run(
         handle_terminal_command(
-            content="eva shell pwd",
+            content="eva shell python --version",
             user_id=218675193592283137,
             is_owner=False,
             trigger_prefix="eva ",
@@ -50,7 +50,7 @@ def test_terminal_command_runs_for_admin(tmp_path: Path) -> None:
 def test_terminal_command_supports_exec_alias(tmp_path: Path) -> None:
     response = asyncio.run(
         handle_terminal_command(
-            content="eva exec printf 'hi'",
+            content="eva exec python --version",
             user_id=218675193592283137,
             is_owner=False,
             trigger_prefix="eva ",
@@ -59,7 +59,7 @@ def test_terminal_command_supports_exec_alias(tmp_path: Path) -> None:
     )
 
     assert response.handled is True
-    assert "hi" in response.content
+    assert "Python" in response.content
 
 
 def test_terminal_command_returns_usage_for_empty_command(tmp_path: Path) -> None:

@@ -55,15 +55,15 @@ class FriendRequestReviewService:
 
         payload = _parse_json_object(response)
         if payload is None:
-            logger.warning("Friend request review returned invalid JSON: %r", response)
+            logger.warning("Friend request review returned invalid JSON length=%s", len(response))
             return None
 
         message = _clean_text(payload.get("message"))
         recommendation = _clean_text(payload.get("recommendation")).lower()
         if not message or recommendation not in RECOMMENDATIONS:
             logger.warning(
-                "Friend request review missing message/recommendation: %r",
-                payload,
+                "Friend request review missing message/recommendation keys=%s",
+                ",".join(sorted(str(key) for key in payload.keys())),
             )
             return None
         return FriendRequestReview(message=message, recommendation=recommendation)

@@ -24,7 +24,7 @@ class ResponseChunkLayout:
 
 
 def build_loading_text(original_content: str) -> str:
-    loading = random.choice(LOADING_MESSAGES)
+    loading = random.choice(LOADING_MESSAGES)  # nosec B311 - cosmetic loading text.
     # Truncate like the response layout does so long prompts stay under the limit.
     safe_original = build_response_chunk_layout(original_content).safe_original
     return f"-# > {safe_original}\n {loading}"

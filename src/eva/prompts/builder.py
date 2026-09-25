@@ -10,6 +10,7 @@ from eva.prompts.environment import build_environment_section
 from eva.prompts.formatting import build_formatting_section
 from eva.prompts.friend_request import FRIEND_REQUEST_REVIEW_INSTRUCTIONS
 from eva.prompts.persona import build_persona_section
+from eva.prompts.security import build_security_section
 
 
 def build_friend_request_review_prompt(*, account_mode: str) -> str:
@@ -44,5 +45,6 @@ def build_system_prompt(
         build_environment_section(),
         build_formatting_section(),
         build_context_section(channel, client, account_mode),
+        build_security_section(),
     ]
     return "\n\n---\n\n".join(sections)

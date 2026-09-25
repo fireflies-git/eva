@@ -72,9 +72,20 @@ class DownloadService:
                     f"({filesize / 1024 / 1024:.1f}MB > {max_size_mb:.1f}MB)"
                 )
 
+            # Bound the final in-memory copy as well. A file can grow after
+            # the metadata check, especially when a downloader postprocessor
+            # is still finishing its output.
+            with downloaded_file.path.open("rb") as media_file:
+                data = media_file.read(max_size + 1)
+            if len(data) > max_size:
+                raise DownloadClientError(
+                    "Video file is too large to upload "
+                    f"({len(data) / 1024 / 1024:.1f}MB > {max_size_mb:.1f}MB)"
+                )
+
             return DownloadedMediaAsset(
                 filename=_build_attachment_filename(downloaded_file.path),
-                data=downloaded_file.path.read_bytes(),
+                data=data,
             )
 def _build_attachment_filename(path: Path) -> str:
     filename = path.name.strip()

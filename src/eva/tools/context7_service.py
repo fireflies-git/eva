@@ -12,7 +12,7 @@ from typing import Any
 
 import aiohttp
 
-from eva.security.urls import PolicyResolver
+from eva.security.urls import PolicyResolver, URLPolicyError, validate_url_for_request
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +34,14 @@ class Context7Service:
         api_key: str,
         timeout_seconds: float = 15.0,
         max_results: int = 3,
+        allow_private_outbound: bool = False,
+        allowed_hosts: frozenset[str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
         self._max_results = max_results
+        self._allow_private_outbound = allow_private_outbound
+        self._allowed_hosts = allowed_hosts
         self._session: aiohttp.ClientSession | None = None
 
     # ------------------------------------------------------------------
@@ -102,8 +106,11 @@ class Context7Service:
         try:
             data = await self._api_request(query.strip(), library.strip())
         except Exception as exc:
-            logger.warning("Context7 API request failed: %s", exc)
-            return f"Error: Documentation lookup failed: {exc}"
+            logger.warning(
+                "Context7 API request failed error_type=%s",
+                type(exc).__name__,
+            )
+            return "Error: Documentation lookup failed."
 
         formatted = self._format_results(data)
         if not formatted:
@@ -123,7 +130,7 @@ class Context7Service:
         self._session = aiohttp.ClientSession(
             timeout=timeout,
             connector=aiohttp.TCPConnector(
-                resolver=PolicyResolver(),
+                resolver=PolicyResolver(allow_private=self._allow_private_outbound),
                 use_dns_cache=False,
             ),
         )
@@ -149,6 +156,11 @@ class Context7Service:
         }
 
         try:
+            await validate_url_for_request(
+                _API_BASE_URL,
+                allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
+            )
             async with self._session.post(
                 _API_BASE_URL,
                 headers=headers,
@@ -158,22 +170,20 @@ class Context7Service:
                 body = await _read_response_body(response, max_bytes=_MAX_RESPONSE_BYTES)
                 text = body.decode(getattr(response, "charset", None) or "utf-8", errors="replace")
                 if response.status != 200:
-                    raise RuntimeError(
-                        f"Context7 API error HTTP {response.status}: {text[:300]}"
-                    )
+                    raise RuntimeError(f"Context7 API error HTTP {response.status}")
                 try:
                     data = json.loads(text)
                 except Exception as exc:
-                    raise RuntimeError(
-                        f"Invalid Context7 JSON response: {text[:300]}"
-                    ) from exc
+                    raise RuntimeError("Invalid Context7 JSON response") from exc
                 if not isinstance(data, dict):
                     raise RuntimeError("Invalid Context7 API response type")
                 return data
         except TimeoutError as exc:
             raise RuntimeError("Context7 API request timed out") from exc
         except aiohttp.ClientError as exc:
-            raise RuntimeError(f"Context7 API network error: {exc}") from exc
+            raise RuntimeError("Context7 API network error") from exc
+        except URLPolicyError as exc:
+            raise RuntimeError(f"Context7 API URL blocked by outbound policy: {exc}") from exc
 
     def _format_results(self, data: dict[str, Any]) -> str:
         """Turn the API response dict into a numbered list of results."""
@@ -213,17 +223,18 @@ class Context7Service:
 async def _read_response_body(response: Any, *, max_bytes: int) -> bytes:
     """Read an aiohttp response with a hard cap before decoding or parsing."""
     content = getattr(response, "content", None)
-    if content is None or not hasattr(content, "iter_chunked"):
-        raw = await response.read()
+    if content is not None and hasattr(content, "iter_chunked"):
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in content.iter_chunked(_RESPONSE_CHUNK_BYTES):
+            total += len(chunk)
+            if total > max_bytes:
+                raise RuntimeError("Context7 response exceeded the configured size limit")
+            chunks.append(chunk)
+        return b"".join(chunks)
+    if content is not None and hasattr(content, "read"):
+        raw = await content.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise RuntimeError("Context7 response exceeded the configured size limit")
         return raw
-
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in content.iter_chunked(_RESPONSE_CHUNK_BYTES):
-        total += len(chunk)
-        if total > max_bytes:
-            raise RuntimeError("Context7 response exceeded the configured size limit")
-        chunks.append(chunk)
-    return b"".join(chunks)
+    raise RuntimeError("Context7 response body cannot be read safely")

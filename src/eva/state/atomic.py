@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import stat
+import tempfile
 from pathlib import Path
 
 
@@ -12,6 +14,20 @@ def write_text_atomic(path: Path, text: str) -> None:
     A crash mid-write then damages only the temp file, never the live state
     file. ``os.replace`` is atomic for same-volume renames on Windows/POSIX.
     """
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(text, encoding="utf-8")
-    os.replace(tmp_path, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.tmp-",
+        dir=path.parent,
+        text=True,
+    )
+    tmp_path = Path(temp_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as temp_file:
+            temp_file.write(text)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        if os.name != "nt":
+            tmp_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(tmp_path, path)
+    finally:
+        tmp_path.unlink(missing_ok=True)

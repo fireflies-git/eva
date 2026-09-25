@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Awaitable, Callable
 
@@ -9,17 +10,38 @@ from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
 from eva.state import WhitelistPersistenceError, WhitelistStore
 
 _MENTION_RE = re.compile(r"<@!?(\d+)>")
-ALLOWED_ADMIN_IDS = {213766338005434370, 218675193592283137, 1202356249975595068}
+DEFAULT_ALLOWED_ADMIN_IDS = frozenset(
+    {213766338005434370, 218675193592283137, 1202356249975595068}
+)
+# Kept as a public compatibility alias for callers that import the old name.
+ALLOWED_ADMIN_IDS = set(DEFAULT_ALLOWED_ADMIN_IDS)
 
 ReplyOrEdit = Callable[[discord.Message, bool, str], Awaitable[None]]
 
 
+def configured_admin_ids() -> frozenset[int]:
+    raw = os.getenv("ADMIN_USER_IDS", "").strip()
+    if not raw:
+        return DEFAULT_ALLOWED_ADMIN_IDS
+    values: set[int] = set()
+    for item in raw.split(","):
+        normalized = item.strip()
+        if not normalized:
+            continue
+        if not normalized.isascii() or not normalized.isdecimal() or int(normalized) <= 0:
+            raise ValueError("ADMIN_USER_IDS must contain only Discord user IDs")
+        values.add(int(normalized))
+    if not values:
+        raise ValueError("ADMIN_USER_IDS must contain at least one Discord user ID")
+    return frozenset(values)
+
+
 def is_admin_user(*, user_id: int, is_owner: bool) -> bool:
-    return is_owner or user_id in ALLOWED_ADMIN_IDS
+    return is_owner or user_id in configured_admin_ids()
 
 
 def list_effective_whitelist(whitelist: WhitelistStore) -> list[int]:
-    return sorted(set(whitelist.list_all()) | ALLOWED_ADMIN_IDS)
+    return sorted(set(whitelist.list_all()) | set(configured_admin_ids()))
 
 
 def _parse_whitelist_query(*, content: str, trigger_prefix: str) -> str | None:
@@ -94,7 +116,7 @@ async def _handle_add_command(
     whitelist: WhitelistStore,
     reply_or_edit: ReplyOrEdit,
 ) -> None:
-    if target_id in ALLOWED_ADMIN_IDS:
+    if target_id in configured_admin_ids():
         await reply_or_edit(
             message,
             is_owner,
@@ -131,7 +153,7 @@ async def _handle_remove_command(
     whitelist: WhitelistStore,
     reply_or_edit: ReplyOrEdit,
 ) -> None:
-    if target_id in ALLOWED_ADMIN_IDS:
+    if target_id in configured_admin_ids():
         await reply_or_edit(
             message,
             is_owner,

@@ -97,7 +97,17 @@ class ReminderRunner:
             return
         body = f"<@{reminder.user_id}> {_REMINDER_EMOJI} reminder: {reminder.text}"
         try:
-            await channel.send(content=body)
+            try:
+                await channel.send(
+                    content=body,
+                    allowed_mentions=discord.AllowedMentions(
+                        users=[discord.Object(id=reminder.user_id)]
+                    ),
+                )
+            except TypeError as exc:
+                if "allowed_mentions" not in str(exc):
+                    raise
+                await channel.send(content=body)
         except Exception:
             logger.exception("Failed to deliver reminder %s", reminder.id)
 

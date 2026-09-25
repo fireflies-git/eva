@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import random
 import time
@@ -82,6 +83,10 @@ interaction_logger = logging.getLogger("eva.interaction")
 __all__ = ["SelfbotMessageHandler", "TriggerDecision", "parse_trigger"]
 
 
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
 class AccountUpdatePlanner(Protocol):
     async def plan_update(self, user_message: str) -> AccountUpdatePlan | None: ...
 
@@ -140,6 +145,8 @@ class SelfbotMessageHandler:
 
         is_owner = message.author.id == user.id
         is_standalone = self._is_standalone_mode()
+        is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
+        is_whitelisted = self._whitelist.contains(message.author.id)
 
         original_content = message.content
         channel_id = getattr(message.channel, "id", None)
@@ -147,7 +154,6 @@ class SelfbotMessageHandler:
             return
 
         if not is_standalone:
-            is_admin = is_admin_user(user_id=message.author.id, is_owner=is_owner)
             if is_admin and getattr(message.channel, "guild", object()) is None:
                 if await self._handle_friend_request_confirmation(
                     client=client,
@@ -237,19 +243,15 @@ class SelfbotMessageHandler:
         interaction_logger.info(
             (
                 "incoming channel_id=%s message_id=%s author_id=%s "
-                "reply_trigger=%s query=%r requester=%r"
+                "reply_trigger=%s query_length=%s requester_context_length=%s content_hash=%s"
             ),
             channel_id,
             message.id,
             message.author.id,
             decision.is_reply_trigger,
-            decision.user_query,
-            requester_context,
-        )
-        interaction_logger.info(
-            "AI | %s: %s",
-            getattr(message.author, "display_name", "unknown"),
-            original_content,
+            len(decision.user_query),
+            len(requester_context),
+            _content_hash(original_content),
         )
 
         await self._process_reply_flow(
@@ -263,6 +265,8 @@ class SelfbotMessageHandler:
             requester_context=requester_context,
             is_owner=is_owner,
             is_standalone=is_standalone,
+            is_whitelisted=is_whitelisted,
+            trigger_type=("reply" if decision.is_reply_trigger else "direct"),
         )
 
     async def on_relationship_add(
@@ -726,6 +730,8 @@ class SelfbotMessageHandler:
         requester_context: str,
         is_owner: bool,
         is_standalone: bool,
+        is_whitelisted: bool,
+        trigger_type: str,
     ) -> None:
         bot_user_id = client.user.id if client.user else None
         response_context = await fetch_channel_context(
@@ -760,6 +766,9 @@ class SelfbotMessageHandler:
                         user_id=message.author.id,
                         is_owner=is_owner,
                     ),
+                    requester_is_owner=is_owner,
+                    requester_is_whitelisted=is_whitelisted,
+                    trigger_type=trigger_type,
                 )
         except AIClientError as exc:
             logger.exception("AI response generation failed")
@@ -796,12 +805,12 @@ class SelfbotMessageHandler:
             )
 
         interaction_logger.info(
-            "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response=%r",
+            "outgoing channel_id=%s message_id=%s delivered=%s tracked=%s response_length=%s",
             channel_id,
             message.id,
             delivery_result.primary_delivered,
             len(delivery_result.tracked_message_ids),
-            ai_reply.content,
+            len(ai_reply.content),
         )
 
     async def _deliver_ai_reply(
@@ -939,7 +948,7 @@ class SelfbotMessageHandler:
         if character_count == 0:
             return 0.0
 
-        words_per_minute = random.uniform(
+        words_per_minute = random.uniform(  # nosec B311 - cosmetic typing delay.
             FOLLOWUP_TYPING_WPM_MIN,
             FOLLOWUP_TYPING_WPM_MAX,
         )
@@ -953,9 +962,9 @@ def _build_stored_user_message(
     reply_context: str | None,
     requester_context: str,
 ) -> str:
-    sections = [f"[Current requester]\n{requester_context}"]
+    sections = [f"[UNTRUSTED_REQUESTER_CONTEXT]\n{requester_context}"]
     if reply_context:
-        sections.append(f'[Replying to message: "{reply_context}"]')
+        sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{reply_context}"]')
     sections.append(user_query)
     return "\n\n".join(sections)
 

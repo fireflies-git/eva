@@ -53,23 +53,37 @@ class YuriImageService:
                 if image_count == 0:
                     raise YuriDatabaseError(_no_images_message(max_bytes, allow_nsfw))
 
-                filters = "typeof(image) = 'blob' AND length(image) > 0"
-                query_parameters: tuple[int, ...] = (self._random_index(image_count),)
-                if max_bytes is not None:
-                    filters += " AND length(image) <= ?"
-                    query_parameters = (max_bytes, *query_parameters)
-                if not allow_nsfw:
-                    filters += " AND COALESCE(nsfw, 0) = 0"
-                row = database.execute(
-                    f"""
-                    SELECT id, permalink, image, nsfw
-                    FROM posts
-                    WHERE {filters}
-                    ORDER BY id
-                    LIMIT 1 OFFSET ?
-                    """,
-                    query_parameters,
-                ).fetchone()
+                offset = self._random_index(image_count)
+                if max_bytes is not None and not allow_nsfw:
+                    query = (
+                        "SELECT id, permalink, image, nsfw FROM posts "
+                        "WHERE typeof(image) = 'blob' AND length(image) > 0 "
+                        "AND length(image) <= ? AND COALESCE(nsfw, 0) = 0 "
+                        "ORDER BY id LIMIT 1 OFFSET ?"
+                    )
+                    query_parameters: tuple[int, ...] = (max_bytes, offset)
+                elif max_bytes is not None:
+                    query = (
+                        "SELECT id, permalink, image, nsfw FROM posts "
+                        "WHERE typeof(image) = 'blob' AND length(image) > 0 "
+                        "AND length(image) <= ? ORDER BY id LIMIT 1 OFFSET ?"
+                    )
+                    query_parameters = (max_bytes, offset)
+                elif not allow_nsfw:
+                    query = (
+                        "SELECT id, permalink, image, nsfw FROM posts "
+                        "WHERE typeof(image) = 'blob' AND length(image) > 0 "
+                        "AND COALESCE(nsfw, 0) = 0 ORDER BY id LIMIT 1 OFFSET ?"
+                    )
+                    query_parameters = (offset,)
+                else:
+                    query = (
+                        "SELECT id, permalink, image, nsfw FROM posts "
+                        "WHERE typeof(image) = 'blob' AND length(image) > 0 "
+                        "ORDER BY id LIMIT 1 OFFSET ?"
+                    )
+                    query_parameters = (offset,)
+                row = database.execute(query, query_parameters).fetchone()
         except YuriDatabaseError:
             raise
         except sqlite3.Error as exc:

@@ -89,8 +89,12 @@ class PlaywrightService:
         except URLPolicyError as exc:
             return f"Error: Page URL blocked by outbound URL policy: {exc}"
         except Exception as exc:
-            logger.warning("Page fetch failed for host %s: %s", _safe_host(url), exc)
-            return f"Error: Failed to fetch page: {exc}"
+            logger.warning(
+                "Page fetch failed for host %s error_type=%s",
+                _safe_host(url),
+                type(exc).__name__,
+            )
+            return "Error: Failed to fetch page"
 
         if len(content) > self._max_content_chars:
             content = content[: self._max_content_chars]
@@ -159,6 +163,7 @@ class PlaywrightService:
         else:  # pragma: no cover - compatibility with lightweight test doubles
             page = await self._browser.new_page()
         route_handler = self._route_handler
+        websocket_handler = self._websocket_handler
         try:
             # Route every browser request, not only the initial navigation.
             # Public pages can embed images, scripts, or redirects targeting
@@ -166,8 +171,16 @@ class PlaywrightService:
             route = getattr(page, "route", None)
             if route is not None:
                 await route("**/*", route_handler)
+            route_web_socket = getattr(page, "route_web_socket", None)
+            if route_web_socket is not None:
+                await route_web_socket("**/*", websocket_handler)
             await page.goto(validated.value, timeout=int(self._timeout_seconds * 1000))
-            raw = await page.evaluate("document.body.innerText")
+            # Slice in the browser before transferring text back to Python so a
+            # page with a massive DOM cannot allocate an unbounded response.
+            raw = await page.evaluate(
+                "maxChars => document.body ? document.body.innerText.slice(0, maxChars) : ''",
+                self._max_content_chars + 1,
+            )
             return str(raw) if raw is not None else ""
         finally:
             unroute = getattr(page, "unroute", None)
@@ -176,6 +189,12 @@ class PlaywrightService:
                     await unroute("**/*", route_handler)
                 except Exception:
                     logger.debug("Failed to remove Playwright route", exc_info=True)
+            unroute_web_socket = getattr(page, "unroute_web_socket", None)
+            if unroute_web_socket is not None:
+                try:
+                    await unroute_web_socket("**/*", websocket_handler)
+                except Exception:
+                    logger.debug("Failed to remove Playwright WebSocket route", exc_info=True)
             await page.close()
             if context is not None:
                 await context.close()
@@ -194,6 +213,24 @@ class PlaywrightService:
             await route.abort(error_code="blockedbyclient")
             return
         await route.continue_()
+
+    async def _websocket_handler(self, websocket: Any) -> None:
+        """Block WebSocket connections so they cannot bypass request routing."""
+
+        websocket_url = getattr(websocket, "url", "")
+        try:
+            await validate_url_for_request(
+                websocket_url,
+                allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
+            )
+        except URLPolicyError:
+            await websocket.close(code=1008, reason="blocked by outbound URL policy")
+            return
+
+        # Public WebSockets are still unnecessary for extracting page text. A
+        # fail-closed route avoids relying on a browser-specific connect API.
+        await websocket.close(code=1008, reason="WebSockets are disabled")
 
 
 def _safe_host(url: str) -> str:
