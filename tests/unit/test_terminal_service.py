@@ -151,6 +151,6 @@ def test_run_read_only_does_not_inherit_process_secrets(tmp_path: Path, monkeypa
         max_output_chars=200,
     )
 
-    result = asyncio.run(service.run_read_only("env"))
+    result = asyncio.run(service.run_read_only("printenv"))
 
     assert "EVA_TEST_SECRET" not in result.stdout

@@ -28,12 +28,11 @@ _DEFAULT_ALLOWED_COMMANDS: Final[frozenset[str]] = frozenset(
         "dirname",
         "dir",
         "echo",
-        "env",
         "false",
         "file",
         "find",
-        "git",
         "grep",
+        "git",
         "head",
         "id",
         "ls",
@@ -69,6 +68,7 @@ _PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
         "dir",
         "file",
         "find",
+        "grep",
         "head",
         "ls",
         "realpath",
@@ -81,6 +81,13 @@ _PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
 _FORBIDDEN_FIND_ARGUMENTS: Final[frozenset[str]] = frozenset(
     {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
 )
+_GIT_READ_ONLY_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
+    {"status", "log", "show", "diff", "rev-parse", "ls-files", "describe", "version"}
+)
+_FORBIDDEN_GIT_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"-c", "--config", "--config-env", "--exec-path", "--paginate", "-p"}
+)
+_FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset({"-o", "--output"})
 _GIT_MUTATING_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
     {
         "add",
@@ -152,6 +159,12 @@ class TerminalService:
         max_memory_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         self._workdir = Path(workdir).expanduser()
+        try:
+            self._workdir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # The command boundary reports a clear error if the configured
+            # directory cannot be created or accessed.
+            pass
         # Kept in the constructor for compatibility with explicit terminal
         # settings. Commands are no longer passed through this shell.
         self._shell = shell
@@ -168,7 +181,7 @@ class TerminalService:
         self._max_processes = max(1, max_processes)
         self._max_file_size_bytes = max(1, max_file_size_bytes)
         self._max_memory_bytes = max(1, max_memory_bytes)
-        self._safe_environment = _build_safe_environment()
+        self._safe_environment = _build_safe_environment(self._workdir)
 
     async def run(self, command: str) -> TerminalCommandResult:
         return await self._run_command(command)
@@ -368,12 +381,35 @@ class TerminalService:
         ):
             raise TerminalCommandRejectedError("Interpreter scripts are not allowed.")
         if executable_name == "git":
+            if any(
+                argument.lower().split("=", 1)[0] in _FORBIDDEN_GIT_OPTIONS
+                for argument in argv[1:]
+            ):
+                raise TerminalCommandRejectedError(
+                    "Git configuration, pager, and executable path options are not allowed."
+                )
             subcommand = next(
                 (argument.lower() for argument in argv[1:] if not argument.startswith("-")),
                 "",
             )
-            if subcommand in _GIT_MUTATING_SUBCOMMANDS:
-                raise TerminalCommandRejectedError(f"Git subcommand is not read-only: {subcommand}")
+            if (
+                subcommand in _GIT_MUTATING_SUBCOMMANDS
+                or subcommand not in _GIT_READ_ONLY_SUBCOMMANDS
+            ):
+                raise TerminalCommandRejectedError(
+                    f"Git subcommand is not read-only: {subcommand}"
+                )
+        if executable_name == "printenv" and argv[1:]:
+            safe_names = {"PATH", "LANG", "LC_ALL", "PYTHONIOENCODING", "SystemRoot"}
+            if any(argument not in safe_names for argument in argv[1:]):
+                raise TerminalCommandRejectedError(
+                    "Only safe environment names may be inspected."
+                )
+        if executable_name == "sort" and any(
+            argument.lower().split("=", 1)[0] in _FORBIDDEN_SORT_OPTIONS
+            for argument in argv[1:]
+        ):
+            raise TerminalCommandRejectedError("Sort output files are not allowed.")
         if executable_name == "find" and any(
             argument.lower() in _FORBIDDEN_FIND_ARGUMENTS for argument in argv[1:]
         ):
@@ -474,7 +510,7 @@ def format_terminal_result(result: TerminalCommandResult) -> str:
     return "\n".join(lines).strip()
 
 
-def _build_safe_environment() -> dict[str, str]:
+def _build_safe_environment(workdir: Path) -> dict[str, str]:
     raw_path = os.environ.get("PATH", os.defpath)
     path_entries = [entry for entry in raw_path.split(os.pathsep) if entry]
     environment = {
@@ -482,9 +518,9 @@ def _build_safe_environment() -> dict[str, str]:
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "PYTHONIOENCODING": "utf-8",
-        "TEMP": os.environ.get("TEMP", ""),
-        "TMP": os.environ.get("TMP", ""),
-        "TMPDIR": os.environ.get("TMPDIR", ""),
+        "TEMP": str(workdir),
+        "TMP": str(workdir),
+        "TMPDIR": str(workdir),
     }
     if os.name == "nt":
         system_root = os.environ.get("SystemRoot")
