@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from eva.downloads.schemas import DownloadedMediaFile
-from eva.security.urls import URLPolicyError, validate_url
+from eva.security.urls import URLPolicyError, validate_url, validate_url_for_request
 
 
 class DownloadClientError(RuntimeError):
@@ -39,11 +39,22 @@ class YtDLPDownloadClient:
         max_filesize_mb: float,
         temp_dir: Path,
     ) -> DownloadedMediaFile:
+        try:
+            validated_url = await validate_url_for_request(
+                url,
+                allow_private=self._allow_private_outbound,
+                allowed_hosts=self._allowed_hosts,
+            )
+        except URLPolicyError as exc:
+            raise DownloadClientError(
+                f"Download URL blocked by outbound URL policy: {exc}"
+            ) from exc
+
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             self._download_sync,
-            url,
+            validated_url.value,
             max_filesize_mb,
             temp_dir,
         )

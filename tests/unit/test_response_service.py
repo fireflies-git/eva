@@ -8,7 +8,7 @@ from typing import Any, cast
 from eva.ai.client import AIClientError, ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
 from eva.terminal import TerminalService
-from eva.tools import ToolService
+from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
 
 
 class FakeToolClient:
@@ -50,6 +50,7 @@ def test_response_service_uses_terminal_tool_loop(tmp_path: Path) -> None:
         client=client,
         model_name="model",
         tool_services=[terminal_service],
+        tool_authorizer=ToolAuthorizer(),
     )
 
     reply = asyncio.run(
@@ -60,6 +61,7 @@ def test_response_service_uses_terminal_tool_loop(tmp_path: Path) -> None:
             user_message="where am i running",
             reply_context=None,
             requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_owner=True),
         )
     )
 
@@ -143,6 +145,7 @@ def test_tool_loop_caps_unanswered_tool_calls_on_assistant_message() -> None:
         client=client,
         model_name="model",
         tool_services=tool_services,
+        tool_authorizer=ToolAuthorizer(protected_tool_names={"fake_tool"}),
     )
 
     reply = asyncio.run(
@@ -153,6 +156,7 @@ def test_tool_loop_caps_unanswered_tool_calls_on_assistant_message() -> None:
             user_message="use the tool a lot",
             reply_context=None,
             requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_admin=True),
         )
     )
 

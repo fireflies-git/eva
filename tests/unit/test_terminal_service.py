@@ -47,13 +47,13 @@ def test_terminal_service_marks_timeout(tmp_path: Path) -> None:
         max_output_chars=200,
     )
 
-    result = asyncio.run(service.run('python -c "import time; time.sleep(0.2)"'))
+    result = asyncio.run(service.run("sleep 0.2"))
 
     assert result.timed_out is True
     assert result.exit_code is None
 
 
-def test_run_read_only_allows_pipes(tmp_path: Path) -> None:
+def test_run_read_only_rejects_pipes(tmp_path: Path) -> None:
     service = TerminalService(
         workdir=tmp_path,
         shell="/bin/sh",
@@ -61,13 +61,11 @@ def test_run_read_only_allows_pipes(tmp_path: Path) -> None:
         max_output_chars=200,
     )
 
-    result = asyncio.run(service.run_read_only("printf 'a\\nb\\nc\\n' | head -n 1"))
-
-    assert result.exit_code == 0
-    assert result.stdout.strip() == "a"
+    with pytest.raises(TerminalCommandRejectedError, match="operators"):
+        asyncio.run(service.run_read_only("printf 'a\\nb\\nc\\n' | head -n 1"))
 
 
-def test_run_read_only_allows_command_chains(tmp_path: Path) -> None:
+def test_run_read_only_rejects_command_chains(tmp_path: Path) -> None:
     service = TerminalService(
         workdir=tmp_path,
         shell="/bin/sh",
@@ -75,10 +73,8 @@ def test_run_read_only_allows_command_chains(tmp_path: Path) -> None:
         max_output_chars=200,
     )
 
-    result = asyncio.run(service.run_read_only("true && printf 'ok'"))
-
-    assert result.exit_code == 0
-    assert result.stdout == "ok"
+    with pytest.raises(TerminalCommandRejectedError, match="operators"):
+        asyncio.run(service.run_read_only("true && printf 'ok'"))
 
 
 def test_run_read_only_rejects_empty_command(tmp_path: Path) -> None:
@@ -93,7 +89,7 @@ def test_run_read_only_rejects_empty_command(tmp_path: Path) -> None:
         asyncio.run(service.run_read_only("   "))
 
 
-def test_autonomous_tool_definition_advertises_arbitrary_shell(tmp_path: Path) -> None:
+def test_autonomous_tool_definition_describes_read_only_policy(tmp_path: Path) -> None:
     service = TerminalService(
         workdir=tmp_path,
         shell="/bin/sh",
@@ -104,6 +100,45 @@ def test_autonomous_tool_definition_advertises_arbitrary_shell(tmp_path: Path) -
     definition = service.build_autonomous_tool_definition()
     description = definition["function"]["description"]  # type: ignore[index]
 
-    assert "curl" in description
-    assert "ping" in description
+    assert "read-only" in description
+    assert "without a shell" in description
     assert "pipes" in description
+    assert "package managers" in description
+
+
+def test_run_read_only_rejects_interpreter_scripts(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    with pytest.raises(TerminalCommandRejectedError, match="scripts"):
+        asyncio.run(service.run_read_only("python -c 'print(1)'"))
+
+
+def test_run_read_only_rejects_paths_outside_workdir(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    with pytest.raises(TerminalCommandRejectedError, match="inside"):
+        asyncio.run(service.run_read_only("cat ../secret.txt"))
+
+
+def test_run_read_only_does_not_inherit_process_secrets(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("EVA_TEST_SECRET", "must-not-be-visible")
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    result = asyncio.run(service.run_read_only("env"))
+
+    assert "EVA_TEST_SECRET" not in result.stdout
