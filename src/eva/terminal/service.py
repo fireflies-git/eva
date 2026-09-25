@@ -61,6 +61,26 @@ _DEFAULT_ALLOWED_COMMANDS: Final[frozenset[str]] = frozenset(
     }
 )
 _INTERPRETERS: Final[frozenset[str]] = frozenset({"python", "python3"})
+_PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
+    {
+        "basename",
+        "cat",
+        "dirname",
+        "dir",
+        "file",
+        "find",
+        "head",
+        "ls",
+        "realpath",
+        "rg",
+        "stat",
+        "tail",
+        "wc",
+    }
+)
+_FORBIDDEN_FIND_ARGUMENTS: Final[frozenset[str]] = frozenset(
+    {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
+)
 _GIT_MUTATING_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
     {
         "add",
@@ -354,7 +374,14 @@ class TerminalService:
             )
             if subcommand in _GIT_MUTATING_SUBCOMMANDS:
                 raise TerminalCommandRejectedError(f"Git subcommand is not read-only: {subcommand}")
-        self._validate_path_arguments(argv[1:])
+        if executable_name == "find" and any(
+            argument.lower() in _FORBIDDEN_FIND_ARGUMENTS for argument in argv[1:]
+        ):
+            raise TerminalCommandRejectedError(
+                "Find execution and deletion actions are not allowed."
+            )
+        if executable_name in _PATH_ARGUMENT_COMMANDS:
+            self._validate_path_arguments(argv[1:])
         return trimmed, argv
 
     def _validate_path_arguments(self, arguments: Sequence[str]) -> None:
@@ -366,7 +393,7 @@ class TerminalService:
             # Flags are generally not paths. Handle ``--flag=/path`` too,
             # since otherwise it is an easy way around the workdir boundary.
             candidate = argument.split("=", 1)[1] if "=" in argument else argument
-            if candidate.startswith("-") or not _looks_like_path(candidate):
+            if candidate.startswith("-"):
                 continue
             path = Path(candidate).expanduser()
             if path.is_absolute():
@@ -575,10 +602,6 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
         await process.wait()
     except ProcessLookupError:
         pass
-
-
-def _looks_like_path(value: str) -> bool:
-    return value in {".", ".."} or "/" in value or "\\" in value
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:

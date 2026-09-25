@@ -130,6 +130,18 @@ def test_run_read_only_rejects_paths_outside_workdir(tmp_path: Path) -> None:
         asyncio.run(service.run_read_only("cat ../secret.txt"))
 
 
+def test_run_read_only_rejects_find_execution(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    with pytest.raises(TerminalCommandRejectedError, match="execution"):
+        asyncio.run(service.run_read_only("find . -exec echo leaked"))
+
+
 def test_run_read_only_does_not_inherit_process_secrets(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("EVA_TEST_SECRET", "must-not-be-visible")
     service = TerminalService(
