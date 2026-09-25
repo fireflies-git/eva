@@ -36,7 +36,6 @@ USER eva
 ENV TERMINAL_WORKDIR=/tmp/eva-terminal \
     TERMINAL_COMMAND_MODE=allowlist \
     TERMINAL_NETWORK_ENABLED=false \
-    NOPECHA_ENABLED=false \
     INTERACTION_LOG_ENABLED=false \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 

@@ -68,6 +68,13 @@ OUTBOUND_ALLOWED_HOSTS=
 download, browser, and documentation request must use one of the exact
 hostnames listed there.
 
+## CAPTCHA Solving
+
+NopeCHA is enabled by default for Discord CAPTCHA challenges. The API key is
+optional; leave `NOPECHA_API_KEY` empty for keyless solving or set it for a
+keyed account. Set `NOPECHA_ENABLED=false` to disable the integration. CAPTCHA
+challenge data is sent to NopeCHA when a challenge occurs.
+
 ## Download Command
 
 - `eva dl <url>`

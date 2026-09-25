@@ -1,4 +1,4 @@
-"""Opt-in NopeCHA captcha solving for Discord challenges."""
+"""NopeCHA captcha solving for Discord challenges."""
 
 from __future__ import annotations
 
@@ -30,8 +30,8 @@ class NopeCHAError(RuntimeError):
 class NopeCHAClient:
     """Solves ``discord.CaptchaRequired`` challenges via the NopeCHA token API.
 
-    The application only constructs this client when an operator explicitly
-    enables it and supplies an API key. Datacenter IPs may still be rejected.
+    The application constructs this client when CAPTCHA solving is enabled.
+    An API key is optional. Datacenter IPs may still be rejected.
     """
 
     def __init__(

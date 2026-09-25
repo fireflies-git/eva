@@ -49,7 +49,7 @@ SETTINGS_DEFAULTS = {
     "playwright_enabled": False,
     "playwright_timeout_seconds": 30.0,
     "playwright_max_content_chars": 10000,
-    "nopecha_enabled": False,
+    "nopecha_enabled": True,
     "autonomous_tool_scope": "owner_admin",
     "terminal_command_mode": "allowlist",
     "terminal_network_enabled": False,
@@ -335,8 +335,6 @@ def load_settings() -> Settings:
             default=SETTINGS_DEFAULTS["nopecha_enabled"],
         )
         nopecha_api_key = _optional_secret("NOPECHA_API_KEY")
-        if nopecha_enabled and not nopecha_api_key:
-            raise ConfigError("NOPECHA_API_KEY is required when NOPECHA_ENABLED is true")
         terminal_network_enabled = _optional_bool(
             "TERMINAL_NETWORK_ENABLED",
             default=SETTINGS_DEFAULTS["terminal_network_enabled"],

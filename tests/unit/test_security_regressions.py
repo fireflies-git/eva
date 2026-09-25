@@ -56,7 +56,7 @@ def test_security_defaults_are_owner_scoped_and_fail_closed(
     assert settings.terminal_command_mode == "allowlist"
     assert settings.terminal_network_enabled is False
     assert settings.playwright_enabled is False
-    assert settings.nopecha_enabled is False
+    assert settings.nopecha_enabled is True
     assert settings.interaction_log_enabled is False
     assert settings.tos_failure_mode == "fail_closed"
     assert settings.allow_private_outbound is False
@@ -87,18 +87,20 @@ def test_config_allows_http_only_with_explicit_private_outbound_override(
     assert settings.image_api_base_url.startswith("http://")
 
 
-def test_nopecha_requires_an_explicit_api_key_when_enabled(
+def test_nopecha_supports_keyless_solving_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_required_environment(monkeypatch)
     monkeypatch.setenv("NOPECHA_ENABLED", "true")
     monkeypatch.delenv("NOPECHA_API_KEY", raising=False)
 
-    with pytest.raises(ConfigError, match="NOPECHA_API_KEY"):
-        load_settings()
+    settings = load_settings()
+
+    assert settings.nopecha_enabled is True
+    assert settings.nopecha_api_key is None
 
 
-def test_nopecha_opt_in_keeps_key_out_of_normal_settings_metadata(
+def test_nopecha_keyed_solving_keeps_key_out_of_normal_settings_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_required_environment(monkeypatch)

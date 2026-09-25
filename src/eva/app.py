@@ -162,7 +162,7 @@ class EvaApp:
         self._pending_account_updates = PendingAccountUpdateStore()
         self._captcha_client: NopeCHAClient | None = None
         captcha_handler: CaptchaHandler | None = None
-        if settings.nopecha_enabled and settings.nopecha_api_key:
+        if settings.nopecha_enabled:
             self._captcha_client = NopeCHAClient(
                 api_key=settings.nopecha_api_key,
                 allow_private_outbound=settings.allow_private_outbound,

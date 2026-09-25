@@ -137,7 +137,7 @@ def test_load_settings_defaults_nopecha_configuration(monkeypatch) -> None:
 
     settings = load_settings()
 
-    assert settings.nopecha_enabled is False
+    assert settings.nopecha_enabled is True
     assert settings.nopecha_api_key is None
 
 
