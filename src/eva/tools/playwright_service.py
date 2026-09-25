@@ -96,7 +96,7 @@ class PlaywrightService:
             content = content[: self._max_content_chars]
             content += "\n\n[content truncated]"
 
-        return content
+        return "[UNTRUSTED_WEB_DATA]\n" + content
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -149,7 +149,15 @@ class PlaywrightService:
             allow_private=self._allow_private_outbound,
             allowed_hosts=self._allowed_hosts,
         )
-        page = await self._browser.new_page()
+        # Service workers can issue requests that page routing does not expose.
+        # Block them so every browser request remains covered by the URL policy.
+        context = None
+        new_context = getattr(self._browser, "new_context", None)
+        if new_context is not None:
+            context = await new_context(service_workers="block")
+            page = await context.new_page()
+        else:  # pragma: no cover - compatibility with lightweight test doubles
+            page = await self._browser.new_page()
         route_handler = self._route_handler
         try:
             # Route every browser request, not only the initial navigation.
@@ -169,6 +177,8 @@ class PlaywrightService:
                 except Exception:
                     logger.debug("Failed to remove Playwright route", exc_info=True)
             await page.close()
+            if context is not None:
+                await context.close()
 
     async def _route_handler(self, route: Any) -> None:
         """Allow only validated public requests made by the browser."""
