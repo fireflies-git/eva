@@ -43,20 +43,30 @@ uv run eva --tray  # Windows only
 - Explicit commands:
   - `eva shell <command>`
   - `eva exec <command>`
-- These run inside Eva's Docker container working directory, which defaults to `/app`.
+- These run inside Eva's dedicated terminal working directory, which defaults to `/tmp/eva-terminal`.
 - Explicit terminal commands are limited to the owner/admin command path.
-- Normal AI replies can also call a `run_terminal_command` tool — unrestricted arbitrary shell (curl, ping, pipes, redirects) so Eva can check files, hit endpoints, or poke at the home network herself.
+- Normal AI replies can also call a policy-controlled `run_terminal_command` tool.
+- Autonomous calls run without an interactive approval prompt for the owner and configured admins.
+- The default runner is read-only, uses a dedicated temporary work directory, strips secrets, blocks network access, and rejects shell chaining, redirects, installers, and writes.
 
 Relevant env vars:
 
 ```bash
 TERMINAL_ENABLED=true
 TERMINAL_AUTONOMOUS_ENABLED=true
-TERMINAL_WORKDIR=/app
+TERMINAL_WORKDIR=/tmp/eva-terminal
 TERMINAL_SHELL=/bin/sh
 TERMINAL_TIMEOUT_SECONDS=15
 TERMINAL_MAX_OUTPUT_CHARS=6000
+AUTONOMOUS_TOOL_SCOPE=owner_admin
+TERMINAL_COMMAND_MODE=allowlist
+TERMINAL_NETWORK_ENABLED=false
+OUTBOUND_ALLOWED_HOSTS=
 ```
+
+`OUTBOUND_ALLOWED_HOSTS` is optional. When set, every configured API, image,
+download, browser, and documentation request must use one of the exact
+hostnames listed there.
 
 ## Download Command
 

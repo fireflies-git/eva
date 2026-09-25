@@ -3,12 +3,23 @@ services:
     build: .
     restart: unless-stopped
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      - STATE_DIR=/app/state
+      STATE_DIR: /app/state
+      TERMINAL_NETWORK_ENABLED: "false"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777,noexec,nosuid,nodev
+      - /run:size=16m,mode=755,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2.0
     volumes:
-      - ./.env:/app/.env:ro
-      - ./yuri.db:/app/state/yuri.db:ro
       - eva-state:/app/state
 
 volumes:

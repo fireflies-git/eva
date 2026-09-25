@@ -213,6 +213,9 @@ marimo/_lsp/
 __marimo__/
 
 # Bot Thingys
+.env.*
+!.env.example
+*.log
 whitelist.json
 whitelist.json.bak
 whitelist.db
