@@ -79,6 +79,7 @@ class YtDLPDownloadClient:
             "retries": 1,
             "fragment_retries": 1,
             "socket_timeout": 30,
+            "match_filter": _reject_long_media,
             "merge_output_format": "mp4",
             "postprocessors": [
                 {
@@ -114,3 +115,11 @@ def _resolve_download_path(*, ydl: Any, info: dict[str, Any], temp_dir: Path) ->
         return files[0]
 
     return candidates[-1]
+
+
+def _reject_long_media(info: dict[str, Any], *, max_seconds: int = 900) -> str | None:
+    """Keep media parsing bounded even when a provider omits file sizes."""
+    duration = info.get("duration")
+    if isinstance(duration, (int, float)) and duration > max_seconds:
+        return f"media duration exceeds {max_seconds} seconds"
+    return None

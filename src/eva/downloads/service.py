@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -16,10 +17,12 @@ class DownloadService:
         client: MediaDownloader,
         dm_filesize_limit_bytes: int = DEFAULT_DM_DOWNLOAD_LIMIT_BYTES,
         allow_private_outbound: bool = False,
+        download_timeout_seconds: float = 300.0,
     ) -> None:
         self._client = client
         self._dm_filesize_limit_bytes = dm_filesize_limit_bytes
         self._allow_private_outbound = allow_private_outbound
+        self._download_timeout_seconds = max(1.0, download_timeout_seconds)
 
     async def download_media(
         self,
@@ -42,11 +45,17 @@ class DownloadService:
 
         with TemporaryDirectory() as temp_dir_name:
             temp_dir = Path(temp_dir_name)
-            downloaded_file = await self._client.download(
-                url=validated_url.value,
-                max_filesize_mb=max_size_mb,
-                temp_dir=temp_dir,
-            )
+            try:
+                downloaded_file = await asyncio.wait_for(
+                    self._client.download(
+                        url=validated_url.value,
+                        max_filesize_mb=max_size_mb,
+                        temp_dir=temp_dir,
+                    ),
+                    timeout=self._download_timeout_seconds,
+                )
+            except TimeoutError as exc:
+                raise DownloadClientError("Media download timed out") from exc
 
             if not downloaded_file.path.exists():
                 raise DownloadClientError(
