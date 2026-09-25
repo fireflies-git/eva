@@ -142,6 +142,28 @@ def test_run_read_only_rejects_find_execution(tmp_path: Path) -> None:
         asyncio.run(service.run_read_only("find . -exec echo leaked"))
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git -c alias.show=!echo show",
+        "git diff --output=outside.txt",
+        "git diff --no-index file-a file-b",
+        "date --file=../secret.txt",
+        "sort -o ../outside.txt input.txt",
+    ],
+)
+def test_run_read_only_rejects_escape_options(tmp_path: Path, command: str) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    with pytest.raises(TerminalCommandRejectedError):
+        asyncio.run(service.run_read_only(command))
+
+
 def test_run_read_only_does_not_inherit_process_secrets(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("EVA_TEST_SECRET", "must-not-be-visible")
     service = TerminalService(

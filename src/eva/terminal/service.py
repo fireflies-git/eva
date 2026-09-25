@@ -85,9 +85,22 @@ _GIT_READ_ONLY_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
     {"status", "log", "show", "diff", "rev-parse", "ls-files", "describe", "version"}
 )
 _FORBIDDEN_GIT_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-c", "--config", "--config-env", "--exec-path", "--paginate", "-p"}
+    {
+        "-c",
+        "--config",
+        "--config-env",
+        "--exec-path",
+        "--paginate",
+        "-p",
+        "--output",
+        "-o",
+        "--no-index",
+        "--ext-diff",
+        "--textconv",
+    }
 )
 _FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset({"-o", "--output"})
+_FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset({"-f", "--file"})
 _GIT_MUTATING_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
     {
         "add",
@@ -410,6 +423,11 @@ class TerminalService:
             for argument in argv[1:]
         ):
             raise TerminalCommandRejectedError("Sort output files are not allowed.")
+        if executable_name == "date" and any(
+            argument.lower().split("=", 1)[0] in _FORBIDDEN_DATE_OPTIONS
+            for argument in argv[1:]
+        ):
+            raise TerminalCommandRejectedError("Date input files are not allowed.")
         if executable_name == "find" and any(
             argument.lower() in _FORBIDDEN_FIND_ARGUMENTS for argument in argv[1:]
         ):
@@ -448,10 +466,18 @@ class TerminalService:
         executable: str,
         workdir: Path,
     ) -> list[str]:
+        command_argv = [argv[0], *argv[1:]]
+        if argv[0].lower() == "git":
+            command_argv = [
+                argv[0],
+                "--no-pager",
+                "--no-optional-locks",
+                *argv[1:],
+            ]
         if not self._require_sandbox:
             # Use the resolved executable rather than letting PATH change
             # between validation and process creation.
-            return [executable, *argv[1:]]
+            return [executable, *command_argv[1:]]
 
         sandbox = self._sandbox_executable or shutil.which("bwrap")
         if sandbox is None:
@@ -480,7 +506,7 @@ class TerminalService:
         for directory in ("/usr", "/bin", "/lib", "/lib64", "/etc"):
             if Path(directory).exists():
                 sandbox_args.extend(["--ro-bind", directory, directory])
-        sandbox_args.extend(["--", argv[0], *argv[1:]])
+        sandbox_args.extend(["--", *command_argv])
         return sandbox_args
 
 
