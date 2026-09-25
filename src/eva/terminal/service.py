@@ -657,9 +657,33 @@ async def _terminate_process_tree(process: asyncio.subprocess.Process) -> None:
                 pass
     else:
         try:
-            process.kill()
-        except ProcessLookupError:
-            return
+            # ``kill`` only terminates the direct child on Windows.  Use the
+            # native taskkill tree mode first so descendants cannot survive a
+            # timeout or output-limit termination.
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(process.pid),
+                "/T",
+                "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(killer.wait(), timeout=0.5)
+            except TimeoutError:
+                killer.kill()
+                await killer.wait()
+        except (FileNotFoundError, ProcessLookupError, OSError):
+            try:
+                process.kill()
+            except ProcessLookupError:
+                return
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                return
     try:
         await process.wait()
     except ProcessLookupError:
