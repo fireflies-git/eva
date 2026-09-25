@@ -30,6 +30,9 @@ from eva.constants import (
     FOLLOWUP_TYPING_MIN_SECONDS,
     FOLLOWUP_TYPING_WPM_MAX,
     FOLLOWUP_TYPING_WPM_MIN,
+    MAX_CONTEXT_MESSAGE_CHARS,
+    MAX_CONTEXT_TOTAL_CHARS,
+    MAX_RESPONSE_CONTEXT_MESSAGES,
     WARNING_MARK,
     X_MARK,
 )
@@ -759,11 +762,16 @@ class SelfbotMessageHandler:
         bot_user_id = client.user.id if client.user else None
         response_context = await fetch_channel_context(
             message.channel,
-            limit=self._settings.response_context_messages,
+            limit=min(
+                self._settings.response_context_messages,
+                MAX_RESPONSE_CONTEXT_MESSAGES,
+            ),
             exclude_message_id=message.id,
             bot_user_id=bot_user_id,
             account_mode="standalone" if is_standalone else "assistant",
             is_tracked_message=self._tracked_messages.contains,
+            max_message_chars=MAX_CONTEXT_MESSAGE_CHARS,
+            max_total_chars=MAX_CONTEXT_TOTAL_CHARS,
         )
         history_messages = self._history_store.get(channel_id)
         vision_selection = resolve_vision_selection(

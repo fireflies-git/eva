@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from eva.ai.client import AIClientError, ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
+from eva.ai.schemas import ChatMessage
 from eva.terminal import TerminalService
 from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
 
@@ -309,7 +310,10 @@ def test_response_service_prefers_canonical_discord_context() -> None:
     messages = cast(list[dict[str, str]], payload["messages"])
     assert messages == [
         {"role": "system", "content": "prompt"},
-        {"role": "user", "content": "ambient context"},
+        {
+            "role": "user",
+            "content": "[UNTRUSTED_DISCORD_CONTEXT]\n[USER] ambient context",
+        },
         {"role": "user", "content": "new question"},
     ]
 
@@ -333,11 +337,42 @@ def test_response_service_uses_local_history_when_discord_context_is_empty() -> 
     assert messages == [
         {"role": "system", "content": "prompt"},
         {
-            "role": "assistant",
-            "content": "[UNTRUSTED_HISTORY_DATA]\nold reply",
+            "role": "user",
+            "content": (
+                "[UNTRUSTED_HISTORY_DATA]\n"
+                "[UNTRUSTED_HISTORY_CONTEXT]\n[ASSISTANT] old reply"
+            ),
         },
         {"role": "user", "content": "new question"},
     ]
+
+
+def test_response_service_bounds_and_quotes_ambient_context() -> None:
+    client = FakeChatClient()
+    service = ResponseService(client=client, model_name="model")
+    context: list[ChatMessage] = [
+        {"role": "user", "content": f"message-{index} " + ("x" * 2_000)}
+        for index in range(30)
+    ]
+
+    asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=context,
+            history_messages=[],
+            user_message="latest question",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    messages = cast(list[dict[str, str]], client.chat_calls[0]["messages"])
+    context_block = messages[1]["content"]
+    assert context_block.startswith("[UNTRUSTED_DISCORD_CONTEXT]\n")
+    assert "message-29" in context_block
+    assert "message-0" not in context_block
+    assert len(context_block) <= 10_000
+    assert messages[-1]["content"] == "latest question"
 
 
 def test_response_service_recovers_when_model_returns_hidden_reasoning_only() -> None:
@@ -364,6 +399,33 @@ def test_response_service_recovers_when_model_returns_hidden_reasoning_only() ->
     assert len(client.chat_calls) == 2
     recovery_messages = cast(list[dict[str, str]], client.chat_calls[1]["messages"])
     assert "did not contain a visible user-facing answer" in recovery_messages[0]["content"]
+
+
+def test_response_service_recovers_when_model_echoes_current_discord_context() -> None:
+    leaked_context = (
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:1553133974357378002] "
+        "@eva (pseudophilanthropic) [user_id:1008043568616718408] "
+        "reply to @leah (stupidorphan) [user_id:213766338005434370] "
+        "[message_id:1553133967115296849]: leah what the fuck"
+    )
+    client = RecoveringChatClient(
+        [leaked_context, "a concise answer to the latest request"]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="latest request",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "a concise answer to the latest request"
+    assert len(client.chat_calls) == 2
 
 
 def test_response_service_uses_visible_fallback_when_recovery_fails() -> None:

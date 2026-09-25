@@ -26,6 +26,8 @@ async def fetch_channel_context(
     bot_user_id: int | None = None,
     account_mode: str = "standalone",
     is_tracked_message: Callable[[int], bool] | None = None,
+    max_message_chars: int | None = None,
+    max_total_chars: int | None = None,
 ) -> list[ChatMessage]:
     if not hasattr(channel, "history"):
         return []
@@ -62,9 +64,12 @@ async def fetch_channel_context(
             msg,
             id_to_author,
             strip_watermark=role == "assistant",
+            max_content_chars=max_message_chars,
         )
         output.append({"role": role, "content": serialized})
 
+    if max_total_chars is not None:
+        return _trim_context_messages(output, max_total_chars)
     return output
 
 
@@ -105,6 +110,7 @@ def _serialize_context_message(
     id_to_author: Mapping[int, UserMetadata],
     *,
     strip_watermark: bool = False,
+    max_content_chars: int | None = None,
 ) -> str:
     timestamp = msg.created_at.strftime("%H:%M")
     author = format_user_metadata(build_user_metadata(msg.author))
@@ -118,6 +124,7 @@ def _serialize_context_message(
         content = strip_response_watermark(content)
     if not content:
         content = "[no text]"
+    content = _truncate_context_text(content, max_content_chars)
 
     message_id = getattr(msg, "id", "unknown")
     parts = [f"[UNTRUSTED_DISCORD_DATA {timestamp} message_id:{message_id}] {author}"]
@@ -128,6 +135,39 @@ def _serialize_context_message(
         parts.append(f" ({mentions})")
 
     return "".join(parts)
+
+
+def _trim_context_messages(messages: list[ChatMessage], max_total_chars: int) -> list[ChatMessage]:
+    """Keep the newest serialized messages within the prompt character budget."""
+    if max_total_chars <= 0:
+        return []
+
+    kept: list[ChatMessage] = []
+    remaining = max_total_chars
+    for message in reversed(messages):
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            continue
+        if len(content) <= remaining:
+            kept.append(message)
+            remaining -= len(content)
+            continue
+        if not kept and remaining > 0:
+            kept.append({
+                "role": message["role"],
+                "content": _truncate_context_text(content, remaining),
+            })
+        break
+    return list(reversed(kept))
+
+
+def _truncate_context_text(content: str, max_chars: int | None) -> str:
+    if max_chars is None or max_chars <= 0 or len(content) <= max_chars:
+        return content
+    marker = "\n[context truncated]"
+    if max_chars <= len(marker):
+        return content[:max_chars]
+    return f"{content[: max_chars - len(marker)]}{marker}"
 
 
 def _format_message_extras(
@@ -194,7 +234,11 @@ def _format_reactions(msg: discord.Message) -> str | None:
     return ", ".join(parts)
 
 
-async def fetch_reply_context(message: discord.Message) -> str | None:
+async def fetch_reply_context(
+    message: discord.Message,
+    *,
+    max_chars: int | None = None,
+) -> str | None:
     if not (message.reference and message.reference.message_id):
         return None
 
@@ -221,7 +265,7 @@ async def fetch_reply_context(message: discord.Message) -> str | None:
     if mentions:
         parts.append(f" ({mentions})")
 
-    return "".join(parts)
+    return _truncate_context_text("".join(parts), max_chars)
 
 
 def _format_reply_context_extras(msg: discord.Message) -> str | None:

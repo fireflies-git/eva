@@ -101,6 +101,18 @@ def test_strip_context_echo_removes_identity_aware_reply_metadata() -> None:
     assert strip_context_echo(echoed) == ""
 
 
+def test_strip_context_echo_removes_current_discord_transcript_format() -> None:
+    echoed = (
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:1553133974357378002] "
+        "@eva (pseudophilanthropic) [user_id:1008043568616718408] "
+        "reply to @leah (stupidorphan) [user_id:213766338005434370] "
+        "[message_id:1553133967115296849]: leah what the fuck"
+    )
+
+    assert strip_context_echo(echoed) == ""
+    assert strip_context_echo(f"I can answer that.\n{echoed}") == "I can answer that."
+
+
 def test_strip_context_echo_drops_full_identity_aware_leak() -> None:
     echoed = (
         "[11:16 message_id:1541043513542934598] @eva cutie patootie "

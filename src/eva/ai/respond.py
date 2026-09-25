@@ -17,7 +17,14 @@ from eva.ai.client import (
 from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
 from eva.ai.schemas import ChatMessage, ToolCall, VisionImage
-from eva.constants import REPLY_MAX_TOKENS, SPLIT_TRIGGER
+from eva.constants import (
+    MAX_CONTEXT_MESSAGE_CHARS,
+    MAX_CONTEXT_TOTAL_CHARS,
+    MAX_REPLY_CONTEXT_CHARS,
+    MAX_RESPONSE_CONTEXT_MESSAGES,
+    REPLY_MAX_TOKENS,
+    SPLIT_TRIGGER,
+)
 from eva.logging import redact_secrets
 from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService, VisionInspectionTool
 
@@ -67,7 +74,13 @@ def _build_user_message(
     if requester_context:
         sections.append(f"[UNTRUSTED_REQUESTER_CONTEXT]\n{requester_context}")
     if reply_context:
-        sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{reply_context}"]')
+        bounded_reply_context = _truncate_prompt_text(
+            reply_context,
+            MAX_REPLY_CONTEXT_CHARS,
+        )
+        sections.append(
+            f'[UNTRUSTED_REPLY_CONTEXT: "{bounded_reply_context}"]'
+        )
     sections.append(user_message)
     return "\n\n".join(sections)
 
@@ -503,23 +516,73 @@ def _build_conversation_messages(
     reply_context: str | None,
     requester_context: str | None,
 ) -> list[ChatMessage]:
-    # Discord context is the canonical chronological transcript. Local history is
-    # only a fallback for channels where Discord history could not be fetched.
     messages: list[ChatMessage] = []
     if context_messages:
-        messages.extend(context_messages)
+        messages.append(
+            {
+                "role": "user",
+                "content": _build_context_block(
+                    context_messages,
+                    label="DISCORD",
+                ),
+            }
+        )
     else:
-        for message in history_messages:
+        if history_messages:
             messages.append(
                 {
-                    "role": message["role"],
-                    "content": f"[UNTRUSTED_HISTORY_DATA]\n{message['content']}",
+                    "role": "user",
+                    "content": _build_context_block(
+                        history_messages,
+                        label="HISTORY",
+                    ),
                 }
             )
 
     user_content = _build_user_message(user_message, reply_context, requester_context)
     messages.append({"role": "user", "content": user_content})
     return messages
+
+
+def _build_context_block(
+    context_messages: Sequence[ChatMessage],
+    *,
+    label: str,
+) -> str:
+    """Quote ambient context as data instead of presenting it as a live dialogue."""
+    header = f"[UNTRUSTED_{label}_CONTEXT]\n"
+    if label == "HISTORY":
+        header = "[UNTRUSTED_HISTORY_DATA]\n" + header
+    remaining = MAX_CONTEXT_TOTAL_CHARS - len(header)
+    if remaining <= 0:
+        return header.rstrip()
+
+    entries: list[str] = []
+    for message in reversed(list(context_messages)[-MAX_RESPONSE_CONTEXT_MESSAGES:]):
+        role = str(message.get("role", "user")).upper()
+        raw_content = message.get("content", "")
+        content = raw_content if isinstance(raw_content, str) else "[multimodal context omitted]"
+        content = _truncate_prompt_text(content, MAX_CONTEXT_MESSAGE_CHARS)
+        entry = f"[{role}] {content}"
+        if len(entry) <= remaining:
+            entries.append(entry)
+            remaining -= len(entry)
+            continue
+        if not entries:
+            entries.append(_truncate_prompt_text(entry, remaining))
+        break
+
+    entries.reverse()
+    return header + "\n".join(entries)
+
+
+def _truncate_prompt_text(content: str, max_chars: int) -> str:
+    if len(content) <= max_chars:
+        return content
+    marker = "\n[context truncated]"
+    if max_chars <= len(marker):
+        return content[:max_chars]
+    return f"{content[: max_chars - len(marker)]}{marker}"
 
 
 def _build_vision_request(user_message: str, reply_context: str | None) -> str:

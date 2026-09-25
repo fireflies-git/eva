@@ -468,6 +468,31 @@ def test_fetch_reply_context_keeps_attachment_only_message() -> None:
     assert "attached: diagram.webp" in reply_context
 
 
+def test_fetch_reply_context_can_bound_referenced_message() -> None:
+    reply_author = _make_author(id=7, name="neo", display_name="Neo")
+    referenced_message = _make_message(
+        msg_id=123,
+        content="previous message " + ("x" * 200),
+        author=reply_author,
+    )
+    channel = _FakeReplyChannel(referenced_message)
+    message = _make_message(
+        msg_id=10,
+        content="describe this",
+        author=_make_author(id=1, name="eva", display_name="Eva"),
+        reference=SimpleNamespace(message_id=123),
+        channel=channel,
+    )
+
+    reply_context = asyncio.run(
+        fetch_reply_context(cast(discord.Message, message), max_chars=80)
+    )
+
+    assert reply_context is not None
+    assert len(reply_context) <= 80
+    assert "[context truncated]" in reply_context
+
+
 def test_fetch_channel_context_excludes_message_by_id() -> None:
     author = _make_author(id=1, name="neo", display_name="Neo")
     msg1 = _make_message(msg_id=10, content="keep me", author=author)
@@ -512,6 +537,27 @@ def test_channel_context_orders_oldest_first() -> None:
     assert len(context) == 2
     assert "first" in context[0]["content"]
     assert "second" in context[1]["content"]
+
+
+def test_channel_context_can_bound_message_and_total_sizes() -> None:
+    author = _make_author(id=1, name="neo", display_name="Neo")
+    older = _make_message(msg_id=5, content="older " + ("x" * 200), author=author)
+    newer = _make_message(msg_id=10, content="newer " + ("y" * 200), author=author)
+    channel = _FakeHistoryChannel([newer, older])
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=5,
+            max_message_chars=40,
+            max_total_chars=180,
+        )
+    )
+
+    joined = "\n".join(str(message["content"]) for message in context)
+    assert len(joined) <= 180
+    assert "newer" in joined
+    assert "[context truncated]" in joined
 
 
 def test_channel_context_strips_watermark_from_bot_messages() -> None:

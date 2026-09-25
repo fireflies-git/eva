@@ -66,6 +66,13 @@ _IDENTITY_TRANSCRIPT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Current Discord context lines carry an explicit untrusted-data marker. Drop
+# the whole line instead of revealing a copied or model-invented message body.
+_UNTRUSTED_DISCORD_LINE_RE = re.compile(
+    r"^\s*(?:eva\s*:\s*)?\[UNTRUSTED_DISCORD_DATA(?:\s+[^\]\n]*)?\]",
+    re.IGNORECASE,
+)
+
 # Trailing "(mentions: @A (a); @B (b))" annotation copied from context lines.
 _TRANSCRIPT_MENTIONS_TRAILER_RE = re.compile(
     r"\s*\(mentions?:\s+(?:[^()]|\([^()]*\))*\)\s*$",
@@ -182,6 +189,7 @@ def strip_context_echo(content: str) -> str:
         line
         for line in content.split("\n")
         if not _IDENTITY_TRANSCRIPT_LINE_RE.match(line)
+        and not _UNTRUSTED_DISCORD_LINE_RE.match(line)
     ]
     cleaned = "\n".join(_TRANSCRIPT_LINE_RE.sub("", line) for line in kept_lines)
     cleaned = _TRANSCRIPT_MENTIONS_TRAILER_RE.sub("", cleaned)
