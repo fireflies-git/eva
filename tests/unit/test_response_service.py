@@ -141,6 +141,16 @@ class AuthorizeThenDenyToolAuthorizer(ToolAuthorizer):
         return self.checks == 1
 
 
+def test_response_service_uses_bounded_per_requester_tool_buckets() -> None:
+    service = ResponseService(client=FakeChatClient(), model_name="model")
+
+    requester_bucket = service._get_requester_tool_semaphore(7)
+
+    assert service._get_requester_tool_semaphore(7) is requester_bucket
+    assert service._get_requester_tool_semaphore(8) is not requester_bucket
+    assert service._get_requester_tool_semaphore(None) is service._overflow_requester_tool_semaphore
+
+
 def test_unprivileged_requester_never_receives_autonomous_tool_definitions() -> None:
     client = FakeToolClient()
     tool_services: list[ToolService] = [

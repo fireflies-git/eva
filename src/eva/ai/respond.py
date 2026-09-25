@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -31,6 +32,7 @@ MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
 MAX_AUTONOMOUS_TOOL_CALLS_PER_RESPONSE = 6
 MAX_AUTONOMOUS_TOOL_ARGUMENT_CHARS = 16_384
 MAX_AUTONOMOUS_TOOL_RESULT_CHARS = 20_000
+MAX_REQUESTER_TOOL_BUCKETS = 1024
 VISIBLE_REPLY_RECOVERY_INSTRUCTION = (
     "The previous model output did not contain a visible user-facing answer. "
     "Reply now with exactly one concise plain-text answer to the user's latest request. "
@@ -123,7 +125,40 @@ class ResponseService:
         self._max_tool_calls = min(
             max(1, max_tool_calls), MAX_AUTONOMOUS_TOOL_CALLS_PER_RESPONSE
         )
-        self._tool_semaphore = asyncio.Semaphore(min(max(1, max_tool_concurrency), 2))
+        self._max_tool_concurrency = min(max(1, max_tool_concurrency), 2)
+        self._tool_semaphore = asyncio.Semaphore(self._max_tool_concurrency)
+        self._requester_tool_semaphores: OrderedDict[int, asyncio.Semaphore] = OrderedDict()
+        self._overflow_requester_tool_semaphore = asyncio.Semaphore(self._max_tool_concurrency)
+
+    def _get_requester_tool_semaphore(self, requester_id: int | None) -> asyncio.Semaphore:
+        """Return a bounded per-requester concurrency bucket.
+
+        The global semaphore protects the process, while this bucket prevents
+        one owner or admin from consuming every concurrent tool slot through
+        many overlapping responses.  Idle buckets are evicted to keep the map
+        bounded when a long-lived bot sees many requesters.
+        """
+
+        if requester_id is None:
+            return self._overflow_requester_tool_semaphore
+
+        existing = self._requester_tool_semaphores.get(requester_id)
+        if existing is not None:
+            self._requester_tool_semaphores.move_to_end(requester_id)
+            return existing
+
+        if len(self._requester_tool_semaphores) >= MAX_REQUESTER_TOOL_BUCKETS:
+            for candidate_id, candidate in self._requester_tool_semaphores.items():
+                if candidate._value == self._max_tool_concurrency:  # noqa: SLF001
+                    del self._requester_tool_semaphores[candidate_id]
+                    break
+
+        if len(self._requester_tool_semaphores) >= MAX_REQUESTER_TOOL_BUCKETS:
+            return self._overflow_requester_tool_semaphore
+
+        created = asyncio.Semaphore(self._max_tool_concurrency)
+        self._requester_tool_semaphores[requester_id] = created
+        return created
 
     async def generate_reply(
         self,
@@ -156,6 +191,9 @@ class ResponseService:
             max_tool_rounds=self._max_tool_rounds,
             max_tool_calls=self._max_tool_calls,
             tool_semaphore=self._tool_semaphore,
+            requester_tool_semaphore=self._get_requester_tool_semaphore(
+                tool_context.requester_id if tool_context is not None else None
+            ),
             temperature=0.7,
             max_tokens=REPLY_MAX_TOKENS,
         )
@@ -299,6 +337,7 @@ async def _generate_reply_with_tools(
     max_tool_rounds: int,
     max_tool_calls: int,
     tool_semaphore: asyncio.Semaphore,
+    requester_tool_semaphore: asyncio.Semaphore,
     temperature: float,
     max_tokens: int,
 ) -> str | None:
@@ -385,7 +424,8 @@ async def _generate_reply_with_tools(
                 else:
                     try:
                         async with tool_semaphore:
-                            result = await service.run_autonomous_tool(tool_call.arguments)
+                            async with requester_tool_semaphore:
+                                result = await service.run_autonomous_tool(tool_call.arguments)
                     except Exception as exc:
                         logger.warning(
                             "autonomous_tool_failed tool=%s requester_id=%s error_type=%s",
