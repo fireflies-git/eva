@@ -40,7 +40,6 @@ _DEFAULT_ALLOWED_COMMANDS: Final[frozenset[str]] = frozenset(
         "printf",
         "printenv",
         "realpath",
-        "rg",
         "sort",
         "stat",
         "tail",
@@ -72,7 +71,6 @@ _PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
         "head",
         "ls",
         "realpath",
-        "rg",
         "stat",
         "tail",
         "wc",
@@ -81,51 +79,12 @@ _PATH_ARGUMENT_COMMANDS: Final[frozenset[str]] = frozenset(
 _FORBIDDEN_FIND_ARGUMENTS: Final[frozenset[str]] = frozenset(
     {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
 )
-_GIT_READ_ONLY_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
-    {"status", "log", "show", "diff", "rev-parse", "ls-files", "describe", "version"}
-)
-_FORBIDDEN_GIT_OPTIONS: Final[frozenset[str]] = frozenset(
-    {
-        "-c",
-        "--config",
-        "--config-env",
-        "--exec-path",
-        "--paginate",
-        "-p",
-        "--output",
-        "-o",
-        "--no-index",
-        "--ext-diff",
-        "--textconv",
-    }
+_GIT_READ_ONLY_SUBCOMMANDS: Final[frozenset[str]] = frozenset({"status", "version"})
+_GIT_STATUS_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"--short", "--porcelain", "--branch", "--untracked-files=no"}
 )
 _FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset({"-o", "--output"})
 _FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset({"-f", "--file"})
-_GIT_MUTATING_SUBCOMMANDS: Final[frozenset[str]] = frozenset(
-    {
-        "add",
-        "apply",
-        "branch",
-        "checkout",
-        "clean",
-        "clone",
-        "commit",
-        "config",
-        "fetch",
-        "init",
-        "merge",
-        "mv",
-        "pull",
-        "push",
-        "rebase",
-        "reset",
-        "restore",
-        "rm",
-        "stash",
-        "switch",
-        "tag",
-    }
-)
 _SHELL_OPERATOR_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:&&|\|\||[;&|><`]|\$\(|\$\{|\n|\r)"
 )
@@ -389,29 +348,25 @@ class TerminalService:
             raise TerminalCommandRejectedError(
                 "Executable paths are not allowed; use an allowlisted name."
             )
-        if executable_name in _INTERPRETERS and any(
-            argument in {"-c", "--command", "-m", "--module"} for argument in argv[1:]
+        if executable_name in _INTERPRETERS and argv[1:] not in (
+            ["--version"],
+            ["-V"],
         ):
-            raise TerminalCommandRejectedError("Interpreter scripts are not allowed.")
-        if executable_name == "git":
-            if any(
-                argument.lower().split("=", 1)[0] in _FORBIDDEN_GIT_OPTIONS
-                for argument in argv[1:]
-            ):
-                raise TerminalCommandRejectedError(
-                    "Git configuration, pager, and executable path options are not allowed."
-                )
-            subcommand = next(
-                (argument.lower() for argument in argv[1:] if not argument.startswith("-")),
-                "",
+            raise TerminalCommandRejectedError(
+                "Interpreter scripts are not allowed; only the version flag is supported."
             )
-            if (
-                subcommand in _GIT_MUTATING_SUBCOMMANDS
-                or subcommand not in _GIT_READ_ONLY_SUBCOMMANDS
-            ):
+        if executable_name == "git":
+            subcommand = argv[1].lower() if len(argv) > 1 else ""
+            if subcommand not in _GIT_READ_ONLY_SUBCOMMANDS:
                 raise TerminalCommandRejectedError(
                     f"Git subcommand is not read-only: {subcommand}"
                 )
+            if subcommand == "status" and any(
+                option not in _GIT_STATUS_OPTIONS for option in argv[2:]
+            ):
+                raise TerminalCommandRejectedError("Git status option is not allowed.")
+            if subcommand == "version" and len(argv) != 2:
+                raise TerminalCommandRejectedError("Git version accepts no arguments.")
         if executable_name == "printenv" and argv[1:]:
             safe_names = {"PATH", "LANG", "LC_ALL", "PYTHONIOENCODING", "SystemRoot"}
             if any(argument not in safe_names for argument in argv[1:]):

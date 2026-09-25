@@ -117,6 +117,21 @@ def test_run_read_only_rejects_interpreter_scripts(tmp_path: Path) -> None:
     with pytest.raises(TerminalCommandRejectedError, match="scripts"):
         asyncio.run(service.run_read_only("python -c 'print(1)'"))
 
+    with pytest.raises(TerminalCommandRejectedError, match="scripts"):
+        asyncio.run(service.run_read_only("python script.py"))
+
+
+def test_run_read_only_rejects_ripgrep_preprocessor(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    with pytest.raises(TerminalCommandRejectedError, match="allowlist"):
+        asyncio.run(service.run_read_only("rg --pre python pattern"))
+
 
 def test_run_read_only_rejects_paths_outside_workdir(tmp_path: Path) -> None:
     service = TerminalService(
@@ -148,6 +163,7 @@ def test_run_read_only_rejects_find_execution(tmp_path: Path) -> None:
         "git -c alias.show=!echo show",
         "git diff --output=outside.txt",
         "git diff --no-index file-a file-b",
+        "git -C / status",
         "date --file=../secret.txt",
         "sort -o ../outside.txt input.txt",
     ],
