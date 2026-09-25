@@ -58,7 +58,7 @@ def validate_url(
         raise URLPolicyError("URL must not be empty")
     if len(value) > _MAX_URL_LENGTH:
         raise URLPolicyError("URL is too long")
-    if any(char in value for char in "\x00\r\n"):
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise URLPolicyError("URL contains control characters")
 
     try:
