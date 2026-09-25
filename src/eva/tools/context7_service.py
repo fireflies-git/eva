@@ -12,6 +12,8 @@ from typing import Any
 
 import aiohttp
 
+from eva.security.urls import PolicyResolver
+
 logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_TOOL_NAME = "lookup_documentation"
@@ -107,7 +109,7 @@ class Context7Service:
         if not formatted:
             return "No documentation results found."
 
-        return formatted
+        return "[UNTRUSTED_DOCUMENTATION_DATA]\n" + formatted
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -118,7 +120,13 @@ class Context7Service:
         if self._session is not None:
             return
         timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
-        self._session = aiohttp.ClientSession(timeout=timeout)
+        self._session = aiohttp.ClientSession(
+            timeout=timeout,
+            connector=aiohttp.TCPConnector(
+                resolver=PolicyResolver(),
+                use_dns_cache=False,
+            ),
+        )
 
     async def close(self) -> None:
         """Close the ``aiohttp.ClientSession``."""

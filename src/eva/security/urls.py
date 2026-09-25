@@ -19,6 +19,8 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import SplitResult, urlsplit
 
+from aiohttp.abc import AbstractResolver, ResolveResult
+
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 _DEFAULT_DNS_TIMEOUT_SECONDS = 3.0
 _MAX_URL_LENGTH = 8192
@@ -36,6 +38,59 @@ class ValidatedURL:
     value: str
     parsed: SplitResult
     hostname: str
+
+
+class PolicyResolver(AbstractResolver):
+    """Resolve and validate the exact DNS answers used by aiohttp to connect.
+
+    A separate URL preflight is insufficient for SSRF protection: a rebinding
+    hostname can answer with a public address for validation and a private one
+    when the HTTP connector resolves it again.  This resolver checks the
+    connector's answers immediately before handing them to the socket layer.
+    Use it with ``TCPConnector(use_dns_cache=False)`` and validate URL syntax
+    before each request, including redirects.
+    """
+
+    def __init__(self, *, allow_private: bool = False) -> None:
+        self._allow_private = allow_private
+
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: socket.AddressFamily = socket.AF_INET,
+    ) -> list[ResolveResult]:
+        try:
+            answers = await asyncio.wait_for(
+                asyncio.to_thread(_resolve_records, host, port, family),
+                timeout=_DEFAULT_DNS_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise URLPolicyError("URL hostname resolution timed out") from exc
+        except OSError as exc:
+            raise URLPolicyError("URL hostname could not be resolved") from exc
+
+        if not answers:
+            raise URLPolicyError("URL hostname has no addresses")
+
+        records: list[ResolveResult] = []
+        for address, answer_family, proto in answers:
+            if not self._allow_private and _is_blocked_ip(address):
+                raise URLPolicyError("URL resolves to a private or local network address")
+            records.append(
+                ResolveResult(
+                    hostname=host,
+                    host=str(address),
+                    port=port,
+                    family=answer_family,
+                    proto=proto,
+                    flags=socket.AI_NUMERICHOST,
+                )
+            )
+        return records
+
+    async def close(self) -> None:
+        return None
 
 
 def validate_url(
@@ -144,19 +199,28 @@ def _resolve_addresses(hostname: str, port: int | None) -> set[_IPAddress]:
     """
 
     service = port or 443
+    return {address for address, _, _ in _resolve_records(hostname, service, socket.AF_UNSPEC)}
+
+
+def _resolve_records(
+    hostname: str,
+    port: int,
+    family: socket.AddressFamily,
+) -> list[tuple[_IPAddress, socket.AddressFamily, int]]:
     results = socket.getaddrinfo(
         hostname,
-        service,
-        family=socket.AF_UNSPEC,
+        port,
+        family=family,
         type=socket.SOCK_STREAM,
     )
-    addresses: set[_IPAddress] = set()
+    addresses: list[tuple[_IPAddress, socket.AddressFamily, int]] = []
     for result in results:
+        answer_family, _, proto, _, _ = result
         sockaddr = result[4]
         if not sockaddr:
             continue
         try:
-            addresses.add(ipaddress.ip_address(sockaddr[0]))
+            addresses.append((ipaddress.ip_address(sockaddr[0]), answer_family, proto))
         except ValueError:
             continue
     return addresses
@@ -194,6 +258,7 @@ def _is_blocked_ip(address: _IPAddress) -> bool:
 __all__ = [
     "URLPolicyError",
     "ValidatedURL",
+    "PolicyResolver",
     "validate_url",
     "validate_url_for_request",
 ]

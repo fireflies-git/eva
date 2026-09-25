@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 import aiohttp
 
 from eva.images.schemas import GeneratedImage, ImageResultBundle
-from eva.security.urls import URLPolicyError, validate_url_for_request
+from eva.security.urls import PolicyResolver, URLPolicyError, validate_url_for_request
 
 
 class ImageClientError(RuntimeError):
@@ -17,6 +17,7 @@ class ImageClientError(RuntimeError):
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({502, 503, 504})
 _DOWNLOAD_CHUNK_BYTES = 65_536
 _ERROR_BODY_MAX_BYTES = 8_192
+_MAX_RESPONSE_BYTES = 1_048_576
 _MAX_REDIRECTS = 3
 _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
@@ -54,18 +55,25 @@ class ImageClient:
         timeout_seconds: float,
         allow_private_outbound: bool = False,
         allowed_hosts: frozenset[str] | None = None,
+        max_response_bytes: int = _MAX_RESPONSE_BYTES,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._allow_private_outbound = allow_private_outbound
         self._allowed_hosts = allowed_hosts
+        self._max_response_bytes = max(64 * 1024, max_response_bytes)
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            resolver = PolicyResolver(allow_private=self._allow_private_outbound)
+            connector = aiohttp.TCPConnector(
+                resolver=resolver,
+                use_dns_cache=False,
+            )
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
     async def close(self) -> None:
         if self._session is not None:
@@ -83,13 +91,15 @@ class ImageClient:
         data = await self._request(
             prompt=prompt, model=model, language=language, incognito=incognito
         )
+        images = self._build_images(data)
+        await self._validate_image_urls(images)
         return ImageResultBundle(
             id=self._string_or_empty(data.get("id")),
             model=self._string_or_empty(data.get("model")),
             prompt=self._string_or_empty(data.get("prompt")),
             image_generation=self._bool_or_false(data.get("image_generation")),
             answer=self._string_or_empty(data.get("answer")),
-            images=self._build_images(data),
+            images=images,
         )
 
     async def download_asset(
@@ -198,7 +208,7 @@ class ImageClient:
                 json=payload,
                 allow_redirects=False,
             ) as response:
-                body = await _read_capped(response, max_bytes=_ERROR_BODY_MAX_BYTES)
+                body = await _read_capped(response, max_bytes=self._max_response_bytes)
                 text = body.decode(response.charset or "utf-8", errors="replace")
                 if response.status != 200:
                     raise ImageClientError(
@@ -252,6 +262,22 @@ class ImageClient:
         if raw and not images:
             raise ImageClientError("Image API returned non-generated image results")
         return images
+
+    async def _validate_image_urls(self, images: list[GeneratedImage]) -> None:
+        for image in images:
+            for candidate in (image.url, image.download_url):
+                if not candidate:
+                    continue
+                try:
+                    await validate_url_for_request(
+                        candidate,
+                        allow_private=self._allow_private_outbound,
+                        allowed_hosts=self._allowed_hosts,
+                    )
+                except URLPolicyError as exc:
+                    raise ImageClientError(
+                        f"Generated image URL blocked by outbound URL policy: {exc}"
+                    ) from exc
 
     def _string_or_none(self, value: Any) -> str | None:
         if not isinstance(value, str):
