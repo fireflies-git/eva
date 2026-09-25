@@ -13,6 +13,13 @@ from eva.runtime import validate_secure_path
 def validate_state_path(path: Path) -> Path:
     """Validate a persistent state file before reading or writing it."""
 
+    # Keep the stores' existing failure semantics for a directory supplied as
+    # a file path: construction succeeds and the first persistence attempt
+    # reports the write error.  The directory itself is still checked for
+    # symlinks and unsafe permissions.
+    candidate = Path(path).expanduser()
+    if candidate.exists() and candidate.is_dir():
+        return validate_secure_path(candidate, expect_directory=True)
     return validate_secure_path(path)
 
 
