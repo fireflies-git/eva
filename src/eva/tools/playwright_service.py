@@ -9,6 +9,8 @@ import json
 import logging
 from typing import Any
 
+from eva.security.urls import URLPolicyError, validate_url_for_request
+
 logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_TOOL_NAME = "fetch_web_page"
@@ -25,9 +27,11 @@ class PlaywrightService:
         *,
         timeout_seconds: float = 30.0,
         max_content_chars: int = 10000,
+        allow_private_outbound: bool = False,
     ) -> None:
         self._timeout_seconds = timeout_seconds
         self._max_content_chars = max_content_chars
+        self._allow_private_outbound = allow_private_outbound
         self._browser: Any = None
         self._playwright: Any = None
 
@@ -80,8 +84,10 @@ class PlaywrightService:
 
         try:
             content = await self._fetch_page(url.strip())
+        except URLPolicyError as exc:
+            return f"Error: Page URL blocked by outbound URL policy: {exc}"
         except Exception as exc:
-            logger.warning("Page fetch failed for %s: %s", url, exc)
+            logger.warning("Page fetch failed for host %s: %s", _safe_host(url), exc)
             return f"Error: Failed to fetch page: {exc}"
 
         if len(content) > self._max_content_chars:
@@ -136,10 +142,51 @@ class PlaywrightService:
 
     async def _fetch_page(self, url: str) -> str:
         """Navigate to *url* and return ``document.body.innerText``."""
+        validated = await validate_url_for_request(
+            url,
+            allow_private=self._allow_private_outbound,
+        )
         page = await self._browser.new_page()
+        route_handler = self._route_handler
         try:
-            await page.goto(url, timeout=int(self._timeout_seconds * 1000))
+            # Route every browser request, not only the initial navigation.
+            # Public pages can embed images, scripts, or redirects targeting
+            # loopback and private network addresses.
+            route = getattr(page, "route", None)
+            if route is not None:
+                await route("**/*", route_handler)
+            await page.goto(validated.value, timeout=int(self._timeout_seconds * 1000))
             raw = await page.evaluate("document.body.innerText")
             return str(raw) if raw is not None else ""
         finally:
+            unroute = getattr(page, "unroute", None)
+            if unroute is not None:
+                try:
+                    await unroute("**/*", route_handler)
+                except Exception:
+                    logger.debug("Failed to remove Playwright route", exc_info=True)
             await page.close()
+
+    async def _route_handler(self, route: Any) -> None:
+        """Allow only validated public requests made by the browser."""
+        request = getattr(route, "request", None)
+        request_url = getattr(request, "url", "")
+        try:
+            await validate_url_for_request(
+                request_url,
+                allow_private=self._allow_private_outbound,
+            )
+        except URLPolicyError:
+            await route.abort(error_code="blockedbyclient")
+            return
+        await route.continue_()
+
+
+def _safe_host(url: str) -> str:
+    """Return a host for logs without retaining a full potentially sensitive URL."""
+    try:
+        from urllib.parse import urlsplit
+
+        return urlsplit(url).hostname or "unknown"
+    except ValueError:
+        return "unknown"

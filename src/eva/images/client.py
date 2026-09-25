@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 
 from eva.images.schemas import GeneratedImage, ImageResultBundle
+from eva.security.urls import URLPolicyError, validate_url_for_request
 
 
 class ImageClientError(RuntimeError):
@@ -15,6 +16,9 @@ class ImageClientError(RuntimeError):
 
 _TRANSIENT_HTTP_STATUS_CODES = frozenset({502, 503, 504})
 _DOWNLOAD_CHUNK_BYTES = 65_536
+_ERROR_BODY_MAX_BYTES = 8_192
+_MAX_REDIRECTS = 3
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 
 def _parse_content_length(raw: str | None) -> int | None:
@@ -48,10 +52,12 @@ class ImageClient:
         api_key: str,
         base_url: str,
         timeout_seconds: float,
+        allow_private_outbound: bool = False,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._allow_private_outbound = allow_private_outbound
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
@@ -94,30 +100,56 @@ class ImageClient:
         if self._session is None:
             raise ImageClientError("Image client is not started")
 
+        current_url = url
         try:
-            async with self._session.get(url) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    raise ImageClientError(
-                        self._format_http_error(
-                            prefix="Image download error",
-                            status=response.status,
-                            body=text,
-                        )
-                    )
-
-                content_type = response.headers.get("Content-Type")
-                content_length = _parse_content_length(
-                    response.headers.get("Content-Length")
+            for redirect_count in range(_MAX_REDIRECTS + 1):
+                validated = await validate_url_for_request(
+                    current_url,
+                    allow_private=self._allow_private_outbound,
                 )
-                if content_length is not None and content_length > max_bytes:
-                    raise ImageClientError(
-                        "Image download exceeds max size "
-                        f"({content_length} bytes > {max_bytes} bytes)"
+                response_context = _session_get_no_redirects(
+                    self._session,
+                    validated.value,
+                )
+                async with response_context as response:
+                    if response.status in _REDIRECT_STATUS_CODES:
+                        location = response.headers.get("Location")
+                        if not location:
+                            raise ImageClientError("Image download redirect has no Location header")
+                        if redirect_count >= _MAX_REDIRECTS:
+                            raise ImageClientError("Image download followed too many redirects")
+                        current_url = urljoin(validated.value, location)
+                        continue
+
+                    if response.status != 200:
+                        text = await _read_error_body(response)
+                        raise ImageClientError(
+                            self._format_http_error(
+                                prefix="Image download error",
+                                status=response.status,
+                                body=text,
+                            )
+                        )
+
+                    content_type = response.headers.get("Content-Type")
+                    content_length = _parse_content_length(
+                        response.headers.get("Content-Length")
                     )
-                raw = await _read_capped(response, max_bytes=max_bytes)
+                    if content_length is not None and content_length > max_bytes:
+                        raise ImageClientError(
+                            "Image download exceeds max size "
+                            f"({content_length} bytes > {max_bytes} bytes)"
+                        )
+                    raw = await _read_capped(response, max_bytes=max_bytes)
+                    break
+            else:  # pragma: no cover - loop always returns or raises
+                raise ImageClientError("Image download failed")
         except TimeoutError as exc:
             raise ImageClientError("Image download request timed out") from exc
+        except URLPolicyError as exc:
+            raise ImageClientError(
+                f"Image download URL blocked by outbound URL policy: {exc}"
+            ) from exc
         except aiohttp.ClientError as exc:
             raise ImageClientError(f"Image download network error: {exc}") from exc
 
@@ -152,8 +184,18 @@ class ImageClient:
         }
 
         try:
-            async with self._session.post(url, headers=headers, json=payload) as response:
-                text = await response.text()
+            await validate_url_for_request(
+                self._base_url,
+                allow_private=self._allow_private_outbound,
+            )
+            async with self._session.post(
+                url,
+                headers=headers,
+                json=payload,
+                allow_redirects=False,
+            ) as response:
+                body = await _read_capped(response, max_bytes=_ERROR_BODY_MAX_BYTES)
+                text = body.decode(response.charset or "utf-8", errors="replace")
                 if response.status != 200:
                     raise ImageClientError(
                         self._format_http_error(
@@ -163,7 +205,9 @@ class ImageClient:
                         )
                     )
                 try:
-                    data = await response.json()
+                    import json
+
+                    data = json.loads(text)
                 except Exception as exc:
                     excerpt = self._compact_error_body(text)
                     raise ImageClientError(f"Invalid image JSON response: {excerpt}") from exc
@@ -172,6 +216,8 @@ class ImageClient:
                 return data
         except TimeoutError as exc:
             raise ImageClientError("Image API request timed out") from exc
+        except URLPolicyError as exc:
+            raise ImageClientError(f"Image API URL blocked by outbound URL policy: {exc}") from exc
         except aiohttp.ClientError as exc:
             raise ImageClientError(f"Image API network error: {exc}") from exc
 
@@ -282,3 +328,37 @@ class ImageClient:
         if not compact:
             return "empty response body"
         return compact[:300]
+
+
+def _session_get_no_redirects(session: Any, url: str) -> Any:
+    """Call ``session.get`` with redirects disabled.
+
+    The fallback keeps lightweight test doubles and older aiohttp-compatible
+    adapters working; the real aiohttp client always accepts the keyword.
+    """
+    try:
+        return session.get(url, allow_redirects=False)
+    except TypeError as exc:
+        if "allow_redirects" not in str(exc):
+            raise
+        return session.get(url)
+
+
+async def _read_error_body(response: Any) -> str:
+    """Read a bounded response excerpt for an HTTP error."""
+    content = getattr(response, "content", None)
+    if content is not None and hasattr(content, "iter_chunked"):
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
+            remaining = _ERROR_BODY_MAX_BYTES - total
+            if remaining <= 0:
+                break
+            chunks.append(chunk[:remaining])
+            total += min(len(chunk), remaining)
+            if total >= _ERROR_BODY_MAX_BYTES:
+                break
+        charset = getattr(response, "charset", None) or "utf-8"
+        return b"".join(chunks).decode(charset, errors="replace")
+    text = await response.text()
+    return text[:_ERROR_BODY_MAX_BYTES]

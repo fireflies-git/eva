@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 _AUTONOMOUS_TOOL_NAME = "lookup_documentation"
 _API_BASE_URL = "https://api.context7.com/v1/search"
+_MAX_RESPONSE_BYTES = 1_048_576
+_RESPONSE_CHUNK_BYTES = 65_536
 
 
 class Context7Service:
@@ -143,14 +145,16 @@ class Context7Service:
                 _API_BASE_URL,
                 headers=headers,
                 json={"query": query, "library": library},
+                allow_redirects=False,
             ) as response:
-                text = await response.text()
+                body = await _read_response_body(response, max_bytes=_MAX_RESPONSE_BYTES)
+                text = body.decode(getattr(response, "charset", None) or "utf-8", errors="replace")
                 if response.status != 200:
                     raise RuntimeError(
                         f"Context7 API error HTTP {response.status}: {text[:300]}"
                     )
                 try:
-                    data = await response.json()
+                    data = json.loads(text)
                 except Exception as exc:
                     raise RuntimeError(
                         f"Invalid Context7 JSON response: {text[:300]}"
@@ -196,3 +200,22 @@ class Context7Service:
     @staticmethod
     def _string_or_none(value: Any) -> str | None:
         return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+async def _read_response_body(response: Any, *, max_bytes: int) -> bytes:
+    """Read an aiohttp response with a hard cap before decoding or parsing."""
+    content = getattr(response, "content", None)
+    if content is None or not hasattr(content, "iter_chunked"):
+        raw = await response.read()
+        if len(raw) > max_bytes:
+            raise RuntimeError("Context7 response exceeded the configured size limit")
+        return raw
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in content.iter_chunked(_RESPONSE_CHUNK_BYTES):
+        total += len(chunk)
+        if total > max_bytes:
+            raise RuntimeError("Context7 response exceeded the configured size limit")
+        chunks.append(chunk)
+    return b"".join(chunks)

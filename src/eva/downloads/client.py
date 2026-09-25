@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from eva.downloads.schemas import DownloadedMediaFile
+from eva.security.urls import URLPolicyError, validate_url
 
 
 class DownloadClientError(RuntimeError):
@@ -22,6 +23,9 @@ class MediaDownloader(Protocol):
 
 
 class YtDLPDownloadClient:
+    def __init__(self, *, allow_private_outbound: bool = False) -> None:
+        self._allow_private_outbound = allow_private_outbound
+
     async def download(
         self,
         *,
@@ -45,6 +49,16 @@ class YtDLPDownloadClient:
         temp_dir: Path,
     ) -> DownloadedMediaFile:
         try:
+            # DownloadService performs the asynchronous DNS check.  Keep a
+            # synchronous defense here for callers that use this client
+            # directly, such as maintenance scripts.
+            validated_url = validate_url(url, allow_private=self._allow_private_outbound)
+        except URLPolicyError as exc:
+            raise DownloadClientError(
+                f"Download URL blocked by outbound URL policy: {exc}"
+            ) from exc
+
+        try:
             import yt_dlp
         except ImportError as exc:
             raise DownloadClientError("yt-dlp is not installed.") from exc
@@ -58,6 +72,13 @@ class YtDLPDownloadClient:
             "outtmpl": str(temp_dir / "%(title)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
+            "noplaylist": True,
+            "playlistend": 1,
+            "max_filesize": int(max_filesize_mb * 1024 * 1024),
+            "restrictfilenames": True,
+            "retries": 1,
+            "fragment_retries": 1,
+            "socket_timeout": 30,
             "merge_output_format": "mp4",
             "postprocessors": [
                 {
@@ -69,7 +90,7 @@ class YtDLPDownloadClient:
 
         try:
             with yt_dlp.YoutubeDL(cast(Any, ydl_opts)) as ydl:
-                info = cast(dict[str, Any], ydl.extract_info(url, download=True))
+                info = cast(dict[str, Any], ydl.extract_info(validated_url.value, download=True))
                 path = _resolve_download_path(ydl=ydl, info=info, temp_dir=temp_dir)
         except Exception as exc:
             raise DownloadClientError(f"An error occurred while downloading: {exc}") from exc
