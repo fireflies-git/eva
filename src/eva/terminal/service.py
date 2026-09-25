@@ -114,7 +114,14 @@ _FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset(
     {"-f", "--file", "-r", "--reference"}
 )
 _FORBIDDEN_GREP_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-r", "-R", "--recursive", "-d", "--directories"}
+    {
+        "-r",
+        "-R",
+        "--recursive",
+        "--dereference-recursive",
+        "-d",
+        "--directories",
+    }
 )
 _SENSITIVE_PATH_NAMES: Final[frozenset[str]] = frozenset(
     {

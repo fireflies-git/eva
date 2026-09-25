@@ -171,6 +171,7 @@ def test_run_read_only_rejects_paths_outside_workdir(tmp_path: Path) -> None:
         "cat whitelist.db",
         "cat state/user_memory.json",
         "grep -r secret .",
+        "grep --dereference-recursive secret .",
         "grep -d recurse secret .",
         "grep --directories=recurse secret .",
         "grep -drecurse secret .",
