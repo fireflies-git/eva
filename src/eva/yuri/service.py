@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from eva.runtime import validate_secure_path
 from eva.yuri.schemas import YuriImageAsset
 
 _RandomIndex = Callable[[int], int]
@@ -22,7 +23,7 @@ class YuriImageService:
         db_path: Path,
         random_index: _RandomIndex = random.randrange,
     ) -> None:
-        self._db_path = db_path
+        self._db_path = validate_secure_path(db_path)
         self._random_index = random_index
 
     async def get_random_image(

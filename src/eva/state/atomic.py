@@ -7,6 +7,14 @@ import stat
 import tempfile
 from pathlib import Path
 
+from eva.runtime import validate_secure_path
+
+
+def validate_state_path(path: Path) -> Path:
+    """Validate a persistent state file before reading or writing it."""
+
+    return validate_secure_path(path)
+
 
 def write_text_atomic(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` atomically (temp file + same-volume replace).
@@ -14,6 +22,7 @@ def write_text_atomic(path: Path, text: str) -> None:
     A crash mid-write then damages only the temp file, never the live state
     file. ``os.replace`` is atomic for same-volume renames on Windows/POSIX.
     """
+    path = validate_state_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     file_descriptor, temp_name = tempfile.mkstemp(
         prefix=f".{path.name}.tmp-",

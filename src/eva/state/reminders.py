@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from eva.state.atomic import write_text_atomic
+from eva.state.atomic import validate_state_path, write_text_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class ReminderStore:
             raise ValueError("max_per_user must be positive")
         if max_text_chars <= 0:
             raise ValueError("max_text_chars must be positive")
-        self._path = path
+        self._path = validate_state_path(path)
         self._max_per_user = max_per_user
         self._max_text_chars = max_text_chars
         self._reminders: dict[int, Reminder] = {}
