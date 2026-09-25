@@ -7,6 +7,7 @@ from typing import Any, Protocol, runtime_checkable
 import aiohttp
 
 from eva.ai.schemas import ChatMessage
+from eva.security.urls import PolicyResolver, URLPolicyError, validate_url_for_request
 
 
 class AIClientError(RuntimeError):
@@ -60,18 +61,28 @@ class OpenAICompatibleClient:
         default_model: str,
         timeout_seconds: float,
         thinking_enabled: bool | None = None,
+        allow_private_outbound: bool = False,
+        max_response_bytes: int = 1_048_576,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._default_model = default_model
         self._timeout_seconds = timeout_seconds
         self._thinking_enabled = thinking_enabled
+        self._allow_private_outbound = allow_private_outbound
+        self._max_response_bytes = max(64 * 1024, max_response_bytes)
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=aiohttp.TCPConnector(
+                    resolver=PolicyResolver(allow_private=self._allow_private_outbound),
+                    use_dns_cache=False,
+                ),
+            )
 
     async def close(self) -> None:
         if self._session is not None:
@@ -198,8 +209,18 @@ class OpenAICompatibleClient:
         url = f"{self._base_url}{path}"
 
         try:
-            async with self._session.request(method, url, headers=headers, json=json) as response:
-                text = await response.text()
+            await validate_url_for_request(
+                url,
+                allow_private=self._allow_private_outbound,
+            )
+            async with self._session.request(
+                method,
+                url,
+                headers=headers,
+                json=json,
+                allow_redirects=False,
+            ) as response:
+                text = await _read_response_text(response, max_bytes=self._max_response_bytes)
                 if response.status != 200:
                     snippet = text[:300]
                     raise AIClientError(f"Model API error HTTP {response.status}: {snippet}")
@@ -214,6 +235,29 @@ class OpenAICompatibleClient:
             raise AIClientError("Model API request timed out") from exc
         except aiohttp.ClientError as exc:
             raise AIClientError(f"Model API network error: {exc}") from exc
+        except URLPolicyError as exc:
+            raise AIClientError(f"Model API URL blocked by outbound policy: {exc}") from exc
+
+
+async def _read_response_text(response: aiohttp.ClientResponse, *, max_bytes: int) -> str:
+    content = getattr(response, "content", None)
+    if content is None or not hasattr(content, "iter_chunked"):
+        if hasattr(response, "read"):
+            raw = await response.read()
+        else:
+            raw = (await response.text()).encode("utf-8")
+    else:
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in content.iter_chunked(65_536):
+            total += len(chunk)
+            if total > max_bytes:
+                raise AIClientError("Model API response exceeds configured size limit")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    if len(raw) > max_bytes:
+        raise AIClientError("Model API response exceeds configured size limit")
+    return raw.decode(getattr(response, "charset", None) or "utf-8", errors="replace")
 
 
 def _extract_response_message(data: dict[str, Any]) -> dict[str, Any]:

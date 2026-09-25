@@ -15,8 +15,10 @@ from eva.constants import (
     NOPECHA_POLL_INTERVAL_SECONDS,
     NOPECHA_TIMEOUT_SECONDS,
 )
+from eva.security.urls import PolicyResolver, URLPolicyError, validate_url
 
 logger = logging.getLogger(__name__)
+_MAX_RESPONSE_BYTES = 256 * 1024
 
 CAPTCHA_TARGET_URL = "https://discord.com"
 
@@ -49,7 +51,13 @@ class NopeCHAClient:
     async def start(self) -> None:
         if self._session is None:
             timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout,
+                connector=aiohttp.TCPConnector(
+                    resolver=PolicyResolver(),
+                    use_dns_cache=False,
+                ),
+            )
 
     async def close(self) -> None:
         if self._session is not None:
@@ -73,17 +81,20 @@ class NopeCHAClient:
         if self._session is None:
             raise NopeCHAError("NopeCHA client is not started")
         try:
+            validate_url(self._api_url)
             async with self._session.post(self._api_url, json=payload) as response:
-                text = await response.text()
+                text = await _read_response_text(response, max_bytes=_MAX_RESPONSE_BYTES)
                 if response.status != 200:
                     raise _error_for_status(response.status, text)
-                data = await response.json()
+                data = _parse_json(text)
         except NopeCHAError:
             raise
         except TimeoutError as exc:
             raise NopeCHAError("NopeCHA job creation timed out") from exc
         except aiohttp.ClientError as exc:
             raise NopeCHAError(f"NopeCHA network error: {exc}") from exc
+        except URLPolicyError as exc:
+            raise NopeCHAError(f"NopeCHA URL blocked by outbound policy: {exc}") from exc
         except Exception as exc:
             raise NopeCHAError(f"Invalid NopeCHA job response: {exc}") from exc
 
@@ -107,17 +118,20 @@ class NopeCHAClient:
             if self._api_key:
                 params["key"] = self._api_key
             try:
+                validate_url(self._api_url)
                 async with self._session.get(self._api_url, params=params) as response:
-                    text = await response.text()
+                    text = await _read_response_text(response, max_bytes=_MAX_RESPONSE_BYTES)
                     if response.status != 200:
                         raise _error_for_status(response.status, text)
-                    data = await response.json()
+                    data = _parse_json(text)
             except NopeCHAError:
                 raise
             except TimeoutError as exc:
                 raise NopeCHAError("NopeCHA poll timed out") from exc
             except aiohttp.ClientError as exc:
                 raise NopeCHAError(f"NopeCHA network error: {exc}") from exc
+            except URLPolicyError as exc:
+                raise NopeCHAError(f"NopeCHA URL blocked by outbound policy: {exc}") from exc
             except Exception as exc:
                 raise NopeCHAError(f"Invalid NopeCHA poll response: {exc}") from exc
 
@@ -173,3 +187,30 @@ def _error_for_status(status: int, text: str) -> NopeCHAError:
     if status == 402 or "no credit" in lowered:
         return NopeCHAError(f"NopeCHA has no credit for this request: {snippet}")
     return NopeCHAError(f"NopeCHA HTTP {status}: {snippet}")
+
+
+async def _read_response_text(response: aiohttp.ClientResponse, *, max_bytes: int) -> str:
+    content = getattr(response, "content", None)
+    if content is None or not hasattr(content, "iter_chunked"):
+        if hasattr(response, "read"):
+            raw = await response.read()
+        else:
+            raw = (await response.text()).encode("utf-8")
+    else:
+        chunks: list[bytes] = []
+        total = 0
+        async for chunk in content.iter_chunked(65_536):
+            total += len(chunk)
+            if total > max_bytes:
+                raise NopeCHAError("NopeCHA response exceeds configured size limit")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+    if len(raw) > max_bytes:
+        raise NopeCHAError("NopeCHA response exceeds configured size limit")
+    return raw.decode(getattr(response, "charset", None) or "utf-8", errors="replace")
+
+
+def _parse_json(text: str) -> object:
+    import json
+
+    return json.loads(text)
