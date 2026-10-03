@@ -37,6 +37,7 @@ from eva.state import (
     ReminderStore,
     TrackedMessageStore,
     UserMemoryStore,
+    VisionImageStore,
     WhitelistStore,
 )
 from eva.state.pending_friend_requests import DEFAULT_PENDING_FRIEND_REQUESTS_PATH
@@ -189,6 +190,7 @@ class EvaApp:
         )
         self._safeguard_notifier = DiscordSafeguardNotifier(admin_ids=admin_ids)
         self._history_store = ChannelHistoryStore(settings.max_history_messages)
+        self._vision_store = VisionImageStore()
         self._tracked_messages = TrackedMessageStore(
             path=state_dir / DEFAULT_TRACKED_MESSAGES_PATH.name
         )
@@ -237,6 +239,7 @@ class EvaApp:
             account_update_planner=self._account_update_planner,
             pending_account_updates=self._pending_account_updates,
             friend_request_handler=self._friend_request_handler,
+            vision_store=self._vision_store,
         )
         self._discord_client = create_discord_client(
             self._message_handler,

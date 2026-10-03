@@ -14,7 +14,7 @@ from eva.ai.sanitize import (
     strip_context_echo,
     strip_response_watermark,
 )
-from eva.ai.schemas import ChatMessage, ContentPart
+from eva.ai.schemas import ChatMessage, ContentPart, VisionImage
 from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_system_prompt
@@ -47,6 +47,8 @@ class ResponseGenerator(Protocol):
         requester_context: str | None,
         user_content: Sequence[ContentPart] | None = None,
         reply_context_message: ChatMessage | None = None,
+        vision_images: Sequence[VisionImage] = (),
+        vision_context_available: bool = False,
         tool_context: ToolExecutionContext | None = None,
     ) -> ResponseGenerationResult: ...
 
@@ -141,6 +143,8 @@ class ReplyGenerationService:
         user_id: int | None = None,
         channel_id: int | None = None,
         requester_is_admin: bool = False,
+        vision_images: Sequence[VisionImage] = (),
+        vision_context_available: bool = False,
         requester_is_owner: bool = False,
         requester_is_whitelisted: bool = False,
         trigger_type: str = "unknown",
@@ -188,6 +192,8 @@ class ReplyGenerationService:
                 playwright_enabled=self._playwright_enabled and autonomous_tools_available,
                 context7_enabled=self._context7_enabled and autonomous_tools_available,
                 requester_is_admin=requester_is_admin,
+                vision_enabled=autonomous_tools_available
+                and (vision_context_available or bool(vision_images)),
             )
             content = await self._response_service.generate_reply(
                 system_prompt=system_prompt,
@@ -198,6 +204,8 @@ class ReplyGenerationService:
                 requester_context=requester_context,
                 user_content=user_content,
                 reply_context_message=reply_context_message,
+                vision_images=vision_images,
+                vision_context_available=vision_context_available,
                 tool_context=ToolExecutionContext(
                     requester_id=user_id,
                     is_owner=requester_is_owner,
@@ -383,6 +391,7 @@ class ReplyGenerationService:
                 )
 
         return ReplyOutput(content=IMAGE_FAILURE_MESSAGE, attachments=[])
+
 
 def _format_image_reply_text(answer: str) -> str:
     if not answer:

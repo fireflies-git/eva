@@ -10,8 +10,10 @@ __pycache__
 *.db
 *.json
 *.log
+# Exclude runtime state without dropping the tracked eva.state Python package.
 state/
-**/state/
+!src/eva/state/
+!src/eva/state/**
 .pytest_cache
 .ruff_cache
 .mypy_cache

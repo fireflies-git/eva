@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import NotRequired, TypedDict, cast
+from dataclasses import dataclass, field
+from typing import Literal, NotRequired, TypedDict, cast
 
 
 class ToolFunctionCall(TypedDict):
@@ -15,7 +16,7 @@ class ToolCall(TypedDict):
 
 
 class TextPart(TypedDict):
-    type: str
+    type: Literal["text"]
     text: str
 
 
@@ -24,12 +25,12 @@ class URLValue(TypedDict):
 
 
 class ImagePart(TypedDict):
-    type: str
+    type: Literal["image_url"]
     image_url: URLValue
 
 
 class VideoPart(TypedDict):
-    type: str
+    type: Literal["video_url"]
     video_url: URLValue
 
 
@@ -39,16 +40,28 @@ class FileValue(TypedDict):
 
 
 class FilePart(TypedDict):
-    type: str
+    type: Literal["file"]
     file: FileValue
 
 
 ContentPart = TextPart | ImagePart | VideoPart | FilePart
+TextContentPart = TextPart
+ImageURLContentPart = ImagePart
+ImageURL = URLValue
+MessageContent = str | list[ContentPart]
+
+
+@dataclass(frozen=True, slots=True)
+class VisionImage:
+    message_id: int
+    filename: str
+    mime_type: str
+    data: bytes = field(repr=False)
 
 
 class ChatMessage(TypedDict):
     role: str
-    content: str | list[ContentPart]
+    content: MessageContent
     reasoning_content: NotRequired[str | None]
     tool_call_id: NotRequired[str]
     name: NotRequired[str]

@@ -15,11 +15,24 @@ from eva.ai.client import (
     ToolChatCompletionClient,
 )
 from eva.ai.parsing import parse_strict_yes_no
-from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
-from eva.ai.schemas import ChatMessage, ContentPart, ToolCall, visible_text
-from eva.constants import REPLY_MAX_TOKENS, SPLIT_TRIGGER
+from eva.ai.sanitize import (
+    contains_all_caps_flood,
+    contains_context_echo,
+    sanitize_response,
+    strip_context_echo,
+    strip_response_watermark,
+)
+from eva.ai.schemas import ChatMessage, ContentPart, ToolCall, VisionImage, visible_text
+from eva.constants import (
+    MAX_CONTEXT_MESSAGE_CHARS,
+    MAX_CONTEXT_TOTAL_CHARS,
+    MAX_REPLY_CONTEXT_CHARS,
+    MAX_RESPONSE_CONTEXT_MESSAGES,
+    REPLY_MAX_TOKENS,
+    SPLIT_TRIGGER,
+)
 from eva.logging import redact_secrets
-from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
+from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService, VisionInspectionTool
 
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
@@ -41,6 +54,13 @@ VISIBLE_REPLY_RECOVERY_INSTRUCTION = (
     "give a brief plain-text boundary and, when possible, a safe alternative."
 )
 VISIBLE_REPLY_FALLBACK = "i couldn't get a visible answer out of that. please try again."
+STYLE_GUARD_INSTRUCTION = (
+    "The previous answer had a formatting or context-leak problem. Answer only the user's "
+    "latest request. Do not repeat Discord transcript metadata or copied context lines. "
+    "Use uppercase only for up to three important words; never write an all-caps sentence "
+    "or paragraph. Keep code, URLs, names, acronyms, and quoted text unchanged. Reply with "
+    "exactly one concise plain-text answer and do not mention this correction."
+)
 
 _UNDERAGE_STATUS_RE = re.compile(
     r"\b(?:i['’]?m|i\s+am)\s+(?:a\s+)?(?:minor|underage|under\s*13)\b",
@@ -70,10 +90,35 @@ def _build_user_message(
     if requester_context:
         sections.append(f"[UNTRUSTED_REQUESTER_CONTEXT]\n{requester_context}")
     if reply_context:
-        sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{reply_context}"]')
+        bounded_reply_context = _truncate_prompt_text(
+            reply_context,
+            MAX_REPLY_CONTEXT_CHARS,
+        )
+        sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{bounded_reply_context}"]')
     if user_content is None and reply_context_message is None:
         sections.append(user_message)
         return "\n\n".join(sections)
+
+    reply_parts = (
+        reply_context_message.get("content")
+        if reply_context_message is not None
+        else None
+    )
+    all_parts = [
+        *(reply_parts if isinstance(reply_parts, list) else []),
+        *(user_content or ()),
+    ]
+    if not any(part["type"] != "text" for part in all_parts):
+        text_sections = [*sections, user_message]
+        for part in all_parts:
+            text = part.get("text") if part.get("type") == "text" else None
+            if not isinstance(text, str) or text == user_message:
+                continue
+            if reply_context is not None and text == reply_context:
+                continue
+            text_sections.append(text)
+        return "\n\n".join(text_sections)
+
     parts: list[ContentPart] = []
     context_text = "\n\n".join(sections)
     if context_text:
@@ -81,12 +126,21 @@ def _build_user_message(
     if reply_context_message is not None:
         reply_content = reply_context_message["content"]
         if isinstance(reply_content, str):
-            parts.append({"type": "text", "text": reply_content})
+            if reply_context != reply_content:
+                parts.append({"type": "text", "text": reply_content})
         else:
-            parts.extend(reply_content)
+            parts.extend(
+                part
+                for part in reply_content
+                if part.get("type") != "text" or part.get("text") != reply_context
+            )
     parts.append({"type": "text", "text": user_message})
     if user_content:
-        parts.extend(user_content)
+        parts.extend(
+            part
+            for part in user_content
+            if part.get("type") != "text" or part.get("text") != user_message
+        )
     return parts
 
 
@@ -117,6 +171,34 @@ def _build_recovery_messages(messages: Sequence[ChatMessage]) -> list[ChatMessag
         },
     )
     return recovery_messages
+
+
+def _build_style_guard_messages(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """Reuse the original prompt while asking for one clean text response."""
+
+    guarded_messages = list(messages)
+    if guarded_messages and guarded_messages[0].get("role") == "system":
+        system_content = guarded_messages[0]["content"]
+        guarded_messages[0] = {
+            "role": "system",
+            "content": f"{system_content}\n\n{STYLE_GUARD_INSTRUCTION}",
+        }
+        return guarded_messages
+
+    guarded_messages.insert(
+        0,
+        {
+            "role": "system",
+            "content": STYLE_GUARD_INSTRUCTION,
+        },
+    )
+    return guarded_messages
+
+
+def _needs_style_guard(content: str) -> bool:
+    """Identify clear context leaks or all-caps flooding in model output."""
+
+    return contains_context_echo(content) or contains_all_caps_flood(content)
 
 
 class ResponseService:
@@ -189,6 +271,8 @@ class ResponseService:
         requester_context: str | None,
         user_content: Sequence[ContentPart] | None = None,
         reply_context_message: ChatMessage | None = None,
+        vision_images: Sequence[VisionImage] = (),
+        vision_context_available: bool = False,
         tool_context: ToolExecutionContext | None = None,
     ) -> ResponseGenerationResult:
         conversation_messages = _build_conversation_messages(
@@ -200,6 +284,17 @@ class ResponseService:
             user_content=user_content,
             reply_context_message=reply_context_message,
         )
+        tool_services = list(self._tool_services)
+        if vision_images or vision_context_available:
+            tool_services.append(
+                VisionInspectionTool(
+                    client=self._client,
+                    model_name=self._model_name,
+                    user_request=_build_vision_request(user_message, reply_context),
+                    images=vision_images,
+                    image_context_available=vision_context_available,
+                )
+            )
         tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         tool_messages.extend(conversation_messages)
 
@@ -207,7 +302,7 @@ class ResponseService:
             client=self._client,
             model_name=self._model_name,
             messages=tool_messages,
-            tool_services=self._tool_services,
+            tool_services=tool_services,
             tool_authorizer=self._tool_authorizer,
             tool_context=tool_context,
             max_tool_rounds=self._max_tool_rounds,
@@ -240,8 +335,43 @@ class ResponseService:
             return await self._recover_visible_reply(messages=messages)
 
         if _has_visible_reply_content(content):
+            if not vision_images and not vision_context_available:
+                return await self._recover_style_guard(
+                    content=content,
+                    messages=messages,
+                )
             return ResponseGenerationResult(content=content)
         return await self._recover_visible_reply(messages=messages)
+
+    async def _recover_style_guard(
+        self,
+        *,
+        content: str,
+        messages: Sequence[ChatMessage],
+    ) -> ResponseGenerationResult:
+        """Retry once when ordinary text clearly leaks context or shouts."""
+
+        if not _needs_style_guard(content):
+            return ResponseGenerationResult(content=content)
+
+        logger.warning("Model output triggered text style guard; requesting correction")
+        guarded_messages = _build_style_guard_messages(messages)
+        try:
+            corrected = await self._client.chat_completion(
+                messages=guarded_messages,
+                model=self._model_name,
+                temperature=0.2,
+                max_tokens=REPLY_MAX_TOKENS,
+            )
+        except AIClientError:
+            logger.exception("Text style guard recovery failed")
+            return ResponseGenerationResult(content=content)
+
+        if _has_visible_reply_content(corrected) and not _needs_style_guard(corrected):
+            return ResponseGenerationResult(content=corrected)
+
+        logger.warning("Text style guard recovery returned no clean visible content")
+        return ResponseGenerationResult(content=content)
 
     async def _recover_visible_reply(
         self,
@@ -369,10 +499,17 @@ async def _generate_reply_with_tools(
         return None
 
     tool_client = cast(ToolChatCompletionClient, client)
+    # Image inspection is scoped to the attachment context assembled by the
+    # Discord boundary, so it remains available even when the requester is not
+    # eligible for privileged autonomous tools such as terminal or web access.
     authorized_services = [
         service
         for service in tool_services
-        if tool_authorizer.is_allowed(service.autonomous_tool_name, tool_context)
+        if _is_tool_allowed(
+            service.autonomous_tool_name,
+            tool_authorizer=tool_authorizer,
+            tool_context=tool_context,
+        )
     ]
     for service in tool_services:
         if service not in authorized_services:
@@ -432,7 +569,11 @@ async def _generate_reply_with_tools(
                 service = name_to_service.get(tool_call.name)
                 if service is None:
                     result = "Tool error: unknown tool."
-                elif not tool_authorizer.is_allowed(tool_call.name, tool_context):
+                elif not _is_tool_allowed(
+                    tool_call.name,
+                    tool_authorizer=tool_authorizer,
+                    tool_context=tool_context,
+                ):
                     # Re-check immediately before execution.  This is kept
                     # outside the prompt so untrusted model text cannot grant
                     # itself a capability.
@@ -474,6 +615,17 @@ async def _generate_reply_with_tools(
         return None
 
 
+def _is_tool_allowed(
+    tool_name: str,
+    *,
+    tool_authorizer: ToolAuthorizer,
+    tool_context: ToolExecutionContext | None,
+) -> bool:
+    if tool_name == "inspect_attached_images":
+        return True
+    return tool_authorizer.is_allowed(tool_name, tool_context)
+
+
 def _sanitize_tool_result(result: str) -> str:
     """Keep tool output bounded and remove common secret formats before prompting."""
 
@@ -493,17 +645,26 @@ def _build_conversation_messages(
     user_content: Sequence[ContentPart] | None = None,
     reply_context_message: ChatMessage | None = None,
 ) -> list[ChatMessage]:
-    # Discord context is the canonical chronological transcript. Local history is
-    # only a fallback for channels where Discord history could not be fetched.
     messages: list[ChatMessage] = []
     if context_messages:
-        messages.extend(context_messages)
+        messages.append(
+            {
+                "role": "user",
+                "content": _build_context_content(
+                    context_messages,
+                    label="DISCORD",
+                ),
+            }
+        )
     else:
-        for message in history_messages:
+        if history_messages:
             messages.append(
                 {
-                    "role": message["role"],
-                    "content": f"[UNTRUSTED_HISTORY_DATA]\n{visible_text(message)}",
+                    "role": "user",
+                    "content": _build_context_content(
+                        history_messages,
+                        label="HISTORY",
+                    ),
                 }
             )
 
@@ -520,6 +681,71 @@ def _build_conversation_messages(
         }
     )
     return messages
+
+
+def _build_context_block(
+    context_messages: Sequence[ChatMessage],
+    *,
+    label: str,
+) -> str:
+    """Quote ambient context as data instead of presenting it as a live dialogue."""
+    header = f"[UNTRUSTED_{label}_CONTEXT]\n"
+    if label == "HISTORY":
+        header = "[UNTRUSTED_HISTORY_DATA]\n" + header
+    remaining = MAX_CONTEXT_TOTAL_CHARS - len(header)
+    if remaining <= 0:
+        return header.rstrip()
+
+    entries: list[str] = []
+    for message in reversed(list(context_messages)[-MAX_RESPONSE_CONTEXT_MESSAGES:]):
+        role = str(message.get("role", "user")).upper()
+        content = visible_text(message)
+        content = _truncate_prompt_text(content, MAX_CONTEXT_MESSAGE_CHARS)
+        entry = f"[{role}] {content}"
+        if len(entry) <= remaining:
+            entries.append(entry)
+            remaining -= len(entry)
+            continue
+        if not entries:
+            entries.append(_truncate_prompt_text(entry, remaining))
+        break
+
+    entries.reverse()
+    return header + "\n".join(entries)
+
+
+def _build_context_content(
+    context_messages: Sequence[ChatMessage],
+    *,
+    label: str,
+) -> str | list[ContentPart]:
+    """Keep bounded context text and pass supported media alongside it."""
+
+    text = _build_context_block(context_messages, label=label)
+    media_parts: list[ContentPart] = []
+    for message in context_messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        media_parts.extend(part for part in content if part.get("type") != "text")
+    if not media_parts:
+        return text
+    return [{"type": "text", "text": text}, *media_parts]
+
+
+def _truncate_prompt_text(content: str, max_chars: int) -> str:
+    if len(content) <= max_chars:
+        return content
+    marker = "\n[context truncated]"
+    if max_chars <= len(marker):
+        return content[:max_chars]
+    return f"{content[: max_chars - len(marker)]}{marker}"
+
+
+def _build_vision_request(user_message: str, reply_context: str | None) -> str:
+    if not reply_context:
+        return user_message
+    return f'{user_message}\n\nReply context: "{reply_context}"'
 
 
 def _build_assistant_tool_message(
@@ -547,5 +773,3 @@ def _build_assistant_tool_message(
     if reasoning_content is not None:
         message["reasoning_content"] = reasoning_content
     return message
-
-

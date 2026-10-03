@@ -29,6 +29,7 @@ COPY src/ src/
 
 # Install the project itself without development dependencies.
 RUN uv sync --frozen --no-dev \
+    && .venv/bin/python -c "import eva.state; import eva.app" \
     && chown -R eva:eva /app
 
 USER eva

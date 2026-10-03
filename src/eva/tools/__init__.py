@@ -11,6 +11,7 @@ __all__ = [
     "ToolAuthorizer",
     "ToolExecutionContext",
     "ToolService",
+    "VisionInspectionTool",
 ]
 
 
@@ -37,3 +38,4 @@ from eva.tools.authorization import (  # noqa: E402
 )
 from eva.tools.context7_service import Context7Service  # noqa: E402
 from eva.tools.playwright_service import PlaywrightService  # noqa: E402
+from eva.tools.vision_service import VisionInspectionTool  # noqa: E402

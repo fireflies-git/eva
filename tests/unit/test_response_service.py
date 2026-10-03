@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from eva.ai.client import AIClientError, ChatCompletionOutput, ModelToolCall
 from eva.ai.respond import ResponseService
+from eva.ai.schemas import ChatMessage
 from eva.terminal import TerminalService
 from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
 
@@ -309,7 +310,10 @@ def test_response_service_prefers_canonical_discord_context() -> None:
     messages = cast(list[dict[str, str]], payload["messages"])
     assert messages == [
         {"role": "system", "content": "prompt"},
-        {"role": "user", "content": "ambient context"},
+        {
+            "role": "user",
+            "content": "[UNTRUSTED_DISCORD_CONTEXT]\n[USER] ambient context",
+        },
         {"role": "user", "content": "new question"},
     ]
 
@@ -333,11 +337,42 @@ def test_response_service_uses_local_history_when_discord_context_is_empty() -> 
     assert messages == [
         {"role": "system", "content": "prompt"},
         {
-            "role": "assistant",
-            "content": "[UNTRUSTED_HISTORY_DATA]\nold reply",
+            "role": "user",
+            "content": (
+                "[UNTRUSTED_HISTORY_DATA]\n"
+                "[UNTRUSTED_HISTORY_CONTEXT]\n[ASSISTANT] old reply"
+            ),
         },
         {"role": "user", "content": "new question"},
     ]
+
+
+def test_response_service_bounds_and_quotes_ambient_context() -> None:
+    client = FakeChatClient()
+    service = ResponseService(client=client, model_name="model")
+    context: list[ChatMessage] = [
+        {"role": "user", "content": f"message-{index} " + ("x" * 2_000)}
+        for index in range(30)
+    ]
+
+    asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=context,
+            history_messages=[],
+            user_message="latest question",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    messages = cast(list[dict[str, str]], client.chat_calls[0]["messages"])
+    context_block = messages[1]["content"]
+    assert context_block.startswith("[UNTRUSTED_DISCORD_CONTEXT]\n")
+    assert "message-29" in context_block
+    assert "message-0" not in context_block
+    assert len(context_block) <= 10_000
+    assert messages[-1]["content"] == "latest question"
 
 
 def test_response_service_recovers_when_model_returns_hidden_reasoning_only() -> None:
@@ -366,6 +401,33 @@ def test_response_service_recovers_when_model_returns_hidden_reasoning_only() ->
     assert "did not contain a visible user-facing answer" in recovery_messages[0]["content"]
 
 
+def test_response_service_recovers_when_model_echoes_current_discord_context() -> None:
+    leaked_context = (
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:1553133974357378002] "
+        "@eva (pseudophilanthropic) [user_id:1008043568616718408] "
+        "reply to @leah (stupidorphan) [user_id:213766338005434370] "
+        "[message_id:1553133967115296849]: leah what the fuck"
+    )
+    client = RecoveringChatClient(
+        [leaked_context, "a concise answer to the latest request"]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="latest request",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "a concise answer to the latest request"
+    assert len(client.chat_calls) == 2
+
+
 def test_response_service_uses_visible_fallback_when_recovery_fails() -> None:
     client = RecoveringChatClient(
         [
@@ -388,3 +450,128 @@ def test_response_service_uses_visible_fallback_when_recovery_fails() -> None:
 
     assert reply.content == "i couldn't get a visible answer out of that. please try again."
     assert len(client.chat_calls) == 2
+
+
+def test_response_service_retries_all_caps_flood_once() -> None:
+    client = RecoveringChatClient(
+        [
+            "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING",
+            "actually YOU are wrong",
+        ]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="correct me",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "actually YOU are wrong"
+    assert len(client.chat_calls) == 2
+    retry_messages = cast(list[dict[str, str]], client.chat_calls[1]["messages"])
+    assert "formatting or context-leak problem" in retry_messages[0]["content"]
+
+
+def test_response_service_retries_context_echo_with_visible_answer() -> None:
+    leaked_context = (
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:12] @alice (alice) "
+        "[user_id:2]: copied line"
+    )
+    client = RecoveringChatClient(
+        [f"answer first\n{leaked_context}", "answer only"]
+    )
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == "answer only"
+    assert len(client.chat_calls) == 2
+
+
+def test_response_service_keeps_first_visible_reply_when_style_retry_fails() -> None:
+    first = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+    client = RecoveringChatClient([first, AIClientError("provider unavailable")])
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+        )
+    )
+
+    assert reply.content == first
+    assert len(client.chat_calls) == 2
+
+
+def test_response_service_skips_style_retry_for_vision_context() -> None:
+    first = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+    client = RecoveringChatClient([first])
+    service = ResponseService(client=client, model_name="model")
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+            vision_context_available=True,
+        )
+    )
+
+    assert reply.content == first
+    assert len(client.chat_calls) == 1
+
+
+def test_response_service_skips_style_retry_for_tool_output() -> None:
+    first = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+
+    class CapsToolClient(FakeToolClient):
+        async def chat_completion_with_tools(self, **kwargs: object) -> ChatCompletionOutput:
+            self.tool_calls.append(kwargs)
+            return ChatCompletionOutput(content=first, tool_calls=[])
+
+    client = CapsToolClient()
+    service = ResponseService(
+        client=client,
+        model_name="model",
+        tool_services=[FakeToolService()],
+        tool_authorizer=ToolAuthorizer(protected_tool_names={"fake_tool"}),
+    )
+
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="answer me",
+            reply_context=None,
+            requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_owner=True),
+        )
+    )
+
+    assert reply.content == first
+    assert len(client.tool_calls) == 1
+    assert client.chat_calls == []

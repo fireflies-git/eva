@@ -48,6 +48,27 @@ uv run eva settings set account-mode standalone
 - `assistant`: owner/selfbot-style behavior, no planned follow-up splitting
 - `standalone`: bot-account behavior, replies to all non-empty messages in 1:1 DMs, but requires `eva`, the bot username, a Discord mention, or a tracked reply in servers and group chats, with delayed follow-up splitting
 
+### DeepSeek Vision
+
+To let Eva read Discord image attachments, configure a vision-capable DeepSeek model:
+
+```env
+API_BASE_URL=https://api.deepseek.com
+MODEL_NAME=deepseek-v4-flash-vision-exp
+```
+
+Eva exposes an `inspect_attached_images` tool to its normal agent/tool loop whenever a current,
+replied-to, or recent cached image is available. The initial model request stays text-only; Eva
+decides independently whether visual evidence is needed and only then runs a separate DeepSeek
+vision pass. Explicit wording such as `eva what does this say?` can help, but no special
+`describe`/`read` command is required, and ordinary text requests with attachments do not send
+image bytes to DeepSeek.
+
+Eva keeps recent image bytes only in bounded, channel-scoped memory. The cache is cleared by
+`eva clear` and is lost when Eva restarts; image bytes are never written to `STATE_DIR` or local
+chat history. Supported inline images are JPEG, PNG, GIF, and WebP; Eva keeps no more than four
+images per message and enforces bounded per-image, request, and process-memory limits.
+
 Friend request application commands (admin-only):
 
 - `eva review [@user]` accepts a pending request and opens a named application group with the reviewing admin; without a mention, it uses the most recent request
@@ -110,6 +131,7 @@ challenge data is sent to NopeCHA when a challenge occurs.
 - `eva dl <url>`
 - `eva download <url>`
 - Supports any site `yt-dlp` can handle.
+- Available to any user who can send Eva a message.
 - Uses the current guild upload limit when available.
 - In DMs, Eva falls back to a default 10 MiB upload limit.
 - If the downloaded file is too large for Discord, the command fails with an error.

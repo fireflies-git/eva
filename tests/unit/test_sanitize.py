@@ -1,4 +1,10 @@
-from eva.ai.sanitize import contains_tool_call_markup, sanitize_response, strip_context_echo
+from eva.ai.sanitize import (
+    contains_all_caps_flood,
+    contains_context_echo,
+    contains_tool_call_markup,
+    sanitize_response,
+    strip_context_echo,
+)
 
 _DSML_TOOL_CALL = (
     "<｜｜DSML｜｜tool_calls>\n"
@@ -7,6 +13,10 @@ _DSML_TOOL_CALL = (
     "</｜｜DSML｜｜parameter>\n"
     "</｜｜DSML｜｜invoke>\n"
     "</｜｜DSML｜｜tool_calls>"
+)
+_MALFORMED_DSML_TOOL_CALLS = (
+    "\\</｜｜DSML｜｜ invoke>\n\\</｜｜DSML｜｜ calls>\n-# -eva",
+    '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="inspect_attached_images">',
 )
 
 
@@ -36,6 +46,12 @@ def test_sanitize_response_does_not_change_code_question() -> None:
 
 def test_sanitize_response_removes_dsml_tool_call_markup() -> None:
     assert sanitize_response(_DSML_TOOL_CALL) == ""
+
+
+def test_sanitize_response_removes_malformed_dsml_tool_call_variants() -> None:
+    for leaked_content in _MALFORMED_DSML_TOOL_CALLS:
+        assert contains_tool_call_markup(leaked_content) is True
+        assert sanitize_response(leaked_content) == ""
 
 
 def test_sanitize_response_keeps_text_around_dsml_tool_call() -> None:
@@ -91,6 +107,18 @@ def test_strip_context_echo_removes_identity_aware_reply_metadata() -> None:
     assert strip_context_echo(echoed) == ""
 
 
+def test_strip_context_echo_removes_current_discord_transcript_format() -> None:
+    echoed = (
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:1553133974357378002] "
+        "@eva (pseudophilanthropic) [user_id:1008043568616718408] "
+        "reply to @leah (stupidorphan) [user_id:213766338005434370] "
+        "[message_id:1553133967115296849]: leah what the fuck"
+    )
+
+    assert strip_context_echo(echoed) == ""
+    assert strip_context_echo(f"I can answer that.\n{echoed}") == "I can answer that."
+
+
 def test_strip_context_echo_drops_full_identity_aware_leak() -> None:
     echoed = (
         "[11:16 message_id:1541043513542934598] @eva cutie patootie "
@@ -142,3 +170,38 @@ def test_strip_context_echo_keeps_normal_content() -> None:
 
 def test_strip_context_echo_handles_empty_input() -> None:
     assert strip_context_echo("") == ""
+
+
+def test_contains_context_echo_detects_serialized_discord_metadata() -> None:
+    echoed = (
+        "answer first\n"
+        "[UNTRUSTED_DISCORD_DATA 19:59 message_id:12] @alice (alice) "
+        "[user_id:2]: copied line"
+    )
+
+    assert contains_context_echo(echoed) is True
+    assert contains_context_echo("answer first") is False
+
+
+def test_contains_all_caps_flood_allows_sparse_emphasis() -> None:
+    assert contains_all_caps_flood("actually YOU are wrong") is False
+    assert contains_all_caps_flood("you should NOT do that") is False
+
+
+def test_contains_all_caps_flood_detects_repeated_prose_caps() -> None:
+    content = "THIS RESPONSE HAS WAY TOO MANY CAPITALIZED WORDS AND KEEPS SHOUTING"
+
+    assert contains_all_caps_flood(content) is True
+
+
+def test_contains_all_caps_flood_ignores_code_urls_and_quotes() -> None:
+    content = (
+        'Use `THIS IS CODE` and https://example.test/THIS_PATH, then quote "THIS IS QUOTED".\n'
+        "> THIS IS A BLOCKQUOTE"
+    )
+
+    assert contains_all_caps_flood(content) is False
+
+
+def test_contains_all_caps_flood_ignores_short_acronyms() -> None:
+    assert contains_all_caps_flood("HTTP JSON XML API SQL TCP UDP DNS") is False
