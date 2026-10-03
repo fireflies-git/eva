@@ -8,6 +8,36 @@ AI Assistant selfbot for Discord.
 uv run eva
 ```
 
+## Z.AI and GLM-5.3-Flash
+
+Eva defaults to the official Z.AI standard API:
+
+```bash
+API_KEY=your-standard-zai-key
+API_BASE_URL=https://api.z.ai/api/paas/v4
+MODEL_NAME=glm-5.3-flash
+MODEL_REASONING_EFFORT=low
+MODEL_CLEAR_THINKING=true
+```
+
+Standard API keys and Coding Plan keys use different Z.AI endpoints. Use the
+endpoint that matches the key type. `SPLIT_MODEL_NAME` and `TOS_MODEL_NAME`
+remain optional and default to `MODEL_NAME`; changing the generic model or base
+URL is the supported rollback path.
+
+Run the provider smoke check without connecting to Discord:
+
+```bash
+uv run eva model-check
+uv run eva model-check --video-url https://example.invalid/video.mp4
+```
+
+The check validates text, tools, reasoning parsing, image data, and file data.
+Video input is checked only when `--video-url` is supplied. Discord media is
+ephemeral and bounded to 8 attachments and 50 MiB total; images are under 5 MiB
+and 6000×6000 pixels, while files and videos are capped at 20 MiB each. Images
+and files use data URLs. Videos use validated provider-fetched URLs.
+
 ## Settings
 
 ```bash
