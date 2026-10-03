@@ -35,6 +35,19 @@ def test_image_size_limit_is_enforced_before_download() -> None:
     assert "size limit" in result.text()
 
 
+def test_image_at_five_mib_is_rejected_because_limit_is_strict() -> None:
+    attachment = SimpleNamespace(
+        filename="exact.png",
+        content_type="image/png",
+        size=MAX_IMAGE_BYTES,
+        url="https://cdn.example/exact.png",
+    )
+
+    result = asyncio.run(attachment_to_part(attachment, budget=AttachmentBudget()))
+
+    assert isinstance(result, AttachmentMarker)
+
+
 def test_attachment_budget_caps_count() -> None:
     budget = AttachmentBudget()
     for _ in range(MAX_ATTACHMENTS):

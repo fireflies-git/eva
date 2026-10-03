@@ -82,10 +82,12 @@ async def attachment_to_part(
         return AttachmentMarker(filename, "unsupported type")
 
     limit = MAX_IMAGE_BYTES if content_type in IMAGE_TYPES else MAX_FILE_BYTES
-    if size is not None and size > limit:
+    if size is not None and (
+        size > limit or (content_type in IMAGE_TYPES and size >= MAX_IMAGE_BYTES)
+    ):
         return AttachmentMarker(filename, "size limit")
     if size is None:
-        size = limit
+        size = limit if content_type not in IMAGE_TYPES else MAX_IMAGE_BYTES - 1
     reason = budget.reserve(size)
     if reason is not None:
         return AttachmentMarker(filename, reason)
@@ -105,10 +107,11 @@ async def attachment_to_part(
     if content_type in VIDEO_TYPES:
         return VideoPart(type="video_url", video_url={"url": url})
 
+    download_limit = MAX_IMAGE_BYTES - 1 if content_type in IMAGE_TYPES else limit
     try:
         data = await _download_bytes(
             url,
-            max_bytes=limit,
+            max_bytes=download_limit,
             allow_private_outbound=allow_private_outbound,
             allowed_hosts=allowed_hosts,
             timeout_seconds=timeout_seconds,

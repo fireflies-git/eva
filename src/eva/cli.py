@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import subprocess  # nosec B404 - fixed internal CLI commands only.
 import sys
@@ -213,6 +214,14 @@ async def _model_check_async(settings: object, *, video_url: str | None) -> int:
         )
         if not tool_output.tool_calls:
             raise AIClientError("tool probe returned no tool call")
+        try:
+            json.loads(tool_output.tool_calls[0].arguments)
+        except (TypeError, ValueError) as exc:
+            raise AIClientError("tool probe returned non-JSON arguments") from exc
+        if tool_output.reasoning_content is not None and not isinstance(
+            tool_output.reasoning_content, str
+        ):
+            raise AIClientError("tool probe returned malformed reasoning_content")
         if tool_output.finish_reason not in {"tool_calls", None}:
             raise AIClientError(f"unexpected tool finish reason: {tool_output.finish_reason}")
 
