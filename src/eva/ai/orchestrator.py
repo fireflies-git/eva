@@ -14,7 +14,7 @@ from eva.ai.sanitize import (
     strip_context_echo,
     strip_response_watermark,
 )
-from eva.ai.schemas import ChatMessage
+from eva.ai.schemas import ChatMessage, ContentPart
 from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_system_prompt
@@ -45,6 +45,8 @@ class ResponseGenerator(Protocol):
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
+        user_content: Sequence[ContentPart] | None = None,
+        reply_context_message: ChatMessage | None = None,
         tool_context: ToolExecutionContext | None = None,
     ) -> ResponseGenerationResult: ...
 
@@ -134,6 +136,8 @@ class ReplyGenerationService:
         reply_context: str | None,
         allow_image_generation: bool = True,
         requester_context: str | None = None,
+        user_content: Sequence[ContentPart] | None = None,
+        reply_context_message: ChatMessage | None = None,
         user_id: int | None = None,
         channel_id: int | None = None,
         requester_is_admin: bool = False,
@@ -192,6 +196,8 @@ class ReplyGenerationService:
                 user_message=user_message,
                 reply_context=reply_context,
                 requester_context=requester_context,
+                user_content=user_content,
+                reply_context_message=reply_context_message,
                 tool_context=ToolExecutionContext(
                     requester_id=user_id,
                     is_owner=requester_is_owner,
@@ -335,6 +341,8 @@ class ReplyGenerationService:
         allow_image_generation: bool,
     ) -> ImageResultBundle | None:
         if self._image_service is None or not allow_image_generation:
+            return None
+        if not user_message.strip():
             return None
         try:
             return await self._image_service.generate_if_needed(

@@ -7,7 +7,8 @@ from collections.abc import Callable, Mapping
 import discord
 
 from eva.ai.sanitize import strip_response_watermark
-from eva.ai.schemas import ChatMessage
+from eva.ai.schemas import ChatMessage, ContentPart, visible_text
+from eva.discord.media import AttachmentBudget, AttachmentMarker, attachment_to_part
 from eva.discord.user_metadata import (
     UserMetadata,
     build_user_metadata,
@@ -23,9 +24,13 @@ async def fetch_channel_context(
     *,
     limit: int,
     exclude_message_id: int | None = None,
+    exclude_message_ids: set[int] | None = None,
     bot_user_id: int | None = None,
     account_mode: str = "standalone",
     is_tracked_message: Callable[[int], bool] | None = None,
+    media_budget: AttachmentBudget | None = None,
+    allow_private_outbound: bool = False,
+    allowed_hosts: frozenset[str] | None = None,
 ) -> list[ChatMessage]:
     if not hasattr(channel, "history"):
         return []
@@ -33,9 +38,11 @@ async def fetch_channel_context(
     raw_messages: list[discord.Message] = []
     try:
         async for msg in channel.history(limit=limit, oldest_first=False):
-            if not getattr(msg, "content", ""):
+            if not getattr(msg, "content", "") and not getattr(msg, "attachments", None):
                 continue
-            if exclude_message_id is not None and getattr(msg, "id", None) == exclude_message_id:
+            if (
+                exclude_message_id is not None and getattr(msg, "id", None) == exclude_message_id
+            ) or (exclude_message_ids and getattr(msg, "id", None) in exclude_message_ids):
                 continue
             raw_messages.append(msg)
     except Exception:
@@ -59,7 +66,14 @@ async def fetch_channel_context(
             id_to_author,
             strip_watermark=role == "assistant",
         )
-        output.append({"role": role, "content": serialized})
+        content = await _build_message_content(
+            msg,
+            serialized,
+            budget=media_budget or AttachmentBudget(),
+            allow_private_outbound=allow_private_outbound,
+            allowed_hosts=allowed_hosts,
+        )
+        output.append({"role": role, "content": content})
 
     return output
 
@@ -189,6 +203,19 @@ def _format_reactions(msg: discord.Message) -> str | None:
 
 
 async def fetch_reply_context(message: discord.Message) -> str | None:
+    context_message = await fetch_reply_context_message(message)
+    if context_message is None:
+        return None
+    return _content_text(context_message)
+
+
+async def fetch_reply_context_message(
+    message: discord.Message,
+    *,
+    media_budget: AttachmentBudget | None = None,
+    allow_private_outbound: bool = False,
+    allowed_hosts: frozenset[str] | None = None,
+) -> ChatMessage | None:
     if not (message.reference and message.reference.message_id):
         return None
 
@@ -202,19 +229,85 @@ async def fetch_reply_context(message: discord.Message) -> str | None:
         logger.exception("Failed to fetch reply context message")
         return None
 
-    if not ref_msg or not ref_msg.content:
+    if not ref_msg or (not ref_msg.content and not getattr(ref_msg, "attachments", None)):
         return None
     author = format_user_metadata(build_user_metadata(ref_msg.author))
     extras = _format_reply_context_extras(ref_msg)
     mentions = format_mentions_metadata(list(getattr(ref_msg, "mentions", [])))
 
-    parts = [f"[UNTRUSTED_DISCORD_DATA message_id:{ref_msg.id}] {author}: {ref_msg.content}"]
+    serialized = f"[UNTRUSTED_DISCORD_DATA message_id:{ref_msg.id}] {author}: {ref_msg.content}"
     if extras:
-        parts.append(f" | {extras}")
+        serialized += f" | {extras}"
     if mentions:
-        parts.append(f" ({mentions})")
+        serialized += f" ({mentions})"
 
-    return "".join(parts)
+    return {
+        "role": "user",
+        "content": await _build_message_content(
+            ref_msg,
+            serialized,
+            budget=media_budget or AttachmentBudget(),
+            allow_private_outbound=allow_private_outbound,
+            allowed_hosts=allowed_hosts,
+        ),
+    }
+
+
+async def build_current_message_content(
+    message: discord.Message,
+    *,
+    text: str,
+    media_budget: AttachmentBudget | None = None,
+    allow_private_outbound: bool = False,
+    allowed_hosts: frozenset[str] | None = None,
+) -> str | list[ContentPart]:
+    return await _build_message_content(
+        message,
+        text,
+        budget=media_budget or AttachmentBudget(),
+        allow_private_outbound=allow_private_outbound,
+        allowed_hosts=allowed_hosts,
+        always_parts=True,
+    )
+
+
+async def _build_message_content(
+    msg: discord.Message,
+    display_text: str,
+    *,
+    budget: AttachmentBudget,
+    allow_private_outbound: bool,
+    allowed_hosts: frozenset[str] | None,
+    always_parts: bool = False,
+) -> str | list[ContentPart]:
+    attachments = getattr(msg, "attachments", None) or []
+    if not attachments:
+        return display_text
+    parts: list[ContentPart] = [{"type": "text", "text": display_text}]
+    markers: list[str] = []
+    for attachment in attachments:
+        result = await attachment_to_part(
+            attachment,
+            budget=budget,
+            allow_private_outbound=allow_private_outbound,
+            allowed_hosts=allowed_hosts,
+        )
+        if isinstance(result, AttachmentMarker):
+            markers.append(result.text())
+        else:
+            parts.append(result)
+    if len(parts) == 1 and not always_parts:
+        return " ".join([display_text, *markers])
+    if markers:
+        parts.extend({"type": "text", "text": marker} for marker in markers)
+    return parts
+
+
+def _content_text(message: ChatMessage) -> str:
+    content = message["content"]
+    if isinstance(content, str):
+        return content
+    return visible_text(message)
 
 
 def _format_reply_context_extras(msg: discord.Message) -> str | None:

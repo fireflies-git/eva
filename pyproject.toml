@@ -8,7 +8,7 @@ dependencies = [
     "aiohttp>=3.14.3",
     "colorama>=0.4.6",
     "discord-py-self>=2.1.0",
-    "Pillow>=12.3.0; platform_system == 'Windows'",
+    "Pillow>=12.3.0",
     "playwright>=1.40.0",
     "pystray>=0.19.5; platform_system == 'Windows'",
     "python-dotenv>=1.2.2",

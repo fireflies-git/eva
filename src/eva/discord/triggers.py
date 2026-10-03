@@ -22,9 +22,10 @@ def decide_standalone_trigger(
     is_reply_trigger: bool,
     mention_user_id: int,
     bot_username: str | None = None,
+    has_attachments: bool = False,
 ) -> TriggerDecision:
     text = content.strip()
-    if not text:
+    if not text and not has_attachments:
         return TriggerDecision(should_process=False)
 
     if _is_dm_channel(message.channel):
@@ -42,6 +43,7 @@ def decide_standalone_trigger(
         trigger_prefix=trigger_prefix,
         is_reply_trigger=False,
         mention_user_id=None,
+        has_attachments=has_attachments,
     )
     if prefixed.should_process:
         return prefixed
@@ -52,13 +54,14 @@ def decide_standalone_trigger(
             trigger_prefix=f"{bot_username.strip()} ",
             is_reply_trigger=False,
             mention_user_id=None,
+            has_attachments=has_attachments,
         )
         if username_prefixed.should_process:
             return username_prefixed
 
     if _message_mentions_user(message, mention_user_id):
         query = _strip_user_mentions(content, mention_user_id).strip()
-        if query:
+        if query or has_attachments:
             return TriggerDecision(should_process=True, user_query=query)
 
     return TriggerDecision(should_process=False)
@@ -92,12 +95,13 @@ def parse_trigger(
     trigger_prefix: str,
     is_reply_trigger: bool,
     mention_user_id: int | None = None,
+    has_attachments: bool = False,
 ) -> TriggerDecision:
     text = content.strip()
     lowered = text.lower()
 
     if is_reply_trigger:
-        if not text:
+        if not text and not has_attachments:
             return TriggerDecision(should_process=False)
         return TriggerDecision(
             should_process=True,
@@ -106,9 +110,11 @@ def parse_trigger(
         )
 
     prefix = trigger_prefix.lower()
+    if has_attachments and prefix and lowered == prefix.rstrip():
+        return TriggerDecision(should_process=True, user_query="")
     if lowered.startswith(prefix):
         query = text[len(trigger_prefix) :].strip()
-        if not query:
+        if not query and not has_attachments:
             return TriggerDecision(should_process=False)
         return TriggerDecision(
             should_process=True,
@@ -123,7 +129,7 @@ def parse_trigger(
     for mention_prefix in mention_prefixes:
         if text.startswith(mention_prefix):
             query = text[len(mention_prefix) :].strip()
-            if not query:
+            if not query and not has_attachments:
                 return TriggerDecision(should_process=False)
             return TriggerDecision(
                 should_process=True,

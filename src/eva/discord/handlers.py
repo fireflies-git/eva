@@ -24,6 +24,7 @@ from eva.ai import (
 )
 from eva.ai.orchestrator import ReplyOutput
 from eva.ai.sanitize import strip_response_watermark
+from eva.ai.schemas import ChatMessage, ContentPart, visible_text
 from eva.config import Settings
 from eva.constants import (
     FOLLOWUP_TYPING_AVERAGE_WORD_LENGTH,
@@ -37,7 +38,12 @@ from eva.discord.account_updates import AccountUpdateApplyError, apply_account_u
 from eva.discord.clear_commands import handle_clear_command
 from eva.discord.command_outcome import CommandOutcome
 from eva.discord.commands import handle_whitelist_command, is_admin_user
-from eva.discord.context import fetch_channel_context, fetch_reply_context
+from eva.discord.context import (
+    build_current_message_content,
+    fetch_channel_context,
+    fetch_reply_context,
+    fetch_reply_context_message,
+)
 from eva.discord.delivery import (
     DeliveryResult,
     close_application_group,
@@ -52,6 +58,7 @@ from eva.discord.delivery import (
 from eva.discord.download_commands import handle_download_command
 from eva.discord.formatting import build_loading_text, build_plain_response_chunks
 from eva.discord.friend_requests import FriendRequestHandler
+from eva.discord.media import AttachmentBudget
 from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
 from eva.discord.reminder_commands import handle_reminder_command
 from eva.discord.social_commands import handle_social_command
@@ -214,6 +221,7 @@ class SelfbotMessageHandler:
             is_reply_trigger=is_reply_trigger,
             mention_user_id=user.id,
             bot_username=getattr(user, "name", None),
+            has_attachments=bool(getattr(message, "attachments", None)),
         )
 
         if not decision.should_process:
@@ -238,7 +246,29 @@ class SelfbotMessageHandler:
         ):
             return
 
-        reply_context = await fetch_reply_context(message)
+        media_budget = AttachmentBudget()
+        current_content = await build_current_message_content(
+            message,
+            text=decision.user_query,
+            media_budget=media_budget,
+            allow_private_outbound=getattr(self._settings, "allow_private_outbound", False),
+            allowed_hosts=getattr(self._settings, "outbound_allowed_hosts", frozenset()) or None,
+        )
+        reply_context_message = await fetch_reply_context_message(
+            message,
+            media_budget=media_budget,
+            allow_private_outbound=getattr(self._settings, "allow_private_outbound", False),
+            allowed_hosts=getattr(self._settings, "outbound_allowed_hosts", frozenset()) or None,
+        )
+        reply_context = _message_visible_text(reply_context_message)
+        if reply_context is None:
+            reply_context = await fetch_reply_context(message)
+        multimodal_reply_context = (
+            reply_context_message
+            if reply_context_message is not None
+            and isinstance(reply_context_message["content"], list)
+            else None
+        )
         requester_context = self._build_requester_context_with_memory(message)
         interaction_logger.info(
             (
@@ -261,6 +291,9 @@ class SelfbotMessageHandler:
             channel_id=channel_id,
             user_query=decision.user_query,
             reply_context=reply_context,
+            reply_context_message=multimodal_reply_context,
+            user_content=current_content[1:] if isinstance(current_content, list) else None,
+            media_budget=media_budget,
             allow_image_generation=not decision.is_reply_trigger,
             requester_context=requester_context,
             is_owner=is_owner,
@@ -543,6 +576,7 @@ class SelfbotMessageHandler:
         is_reply_trigger: bool,
         mention_user_id: int,
         bot_username: str | None = None,
+        has_attachments: bool = False,
     ) -> TriggerDecision:
         if self._is_standalone_mode():
             return decide_standalone_trigger(
@@ -552,12 +586,14 @@ class SelfbotMessageHandler:
                 is_reply_trigger=is_reply_trigger,
                 mention_user_id=mention_user_id,
                 bot_username=bot_username,
+                has_attachments=has_attachments,
             )
         return parse_trigger(
             content=content,
             trigger_prefix=self._settings.trigger_prefix,
             is_reply_trigger=is_reply_trigger,
             mention_user_id=mention_user_id,
+            has_attachments=has_attachments,
         )
 
     def _is_standalone_mode(self) -> bool:
@@ -726,6 +762,9 @@ class SelfbotMessageHandler:
         channel_id: int,
         user_query: str,
         reply_context: str | None,
+        reply_context_message: ChatMessage | None = None,
+        user_content: list[ContentPart] | None = None,
+        media_budget: AttachmentBudget | None = None,
         allow_image_generation: bool,
         requester_context: str,
         is_owner: bool,
@@ -738,9 +777,13 @@ class SelfbotMessageHandler:
             message.channel,
             limit=self._settings.response_context_messages,
             exclude_message_id=message.id,
+            exclude_message_ids=_reply_message_ids(message),
             bot_user_id=bot_user_id,
             account_mode="standalone" if is_standalone else "assistant",
             is_tracked_message=self._tracked_messages.contains,
+            media_budget=media_budget,
+            allow_private_outbound=getattr(self._settings, "allow_private_outbound", False),
+            allowed_hosts=getattr(self._settings, "outbound_allowed_hosts", frozenset()) or None,
         )
         history_messages = self._history_store.get(channel_id)
 
@@ -758,6 +801,8 @@ class SelfbotMessageHandler:
                     history_messages=history_messages,
                     user_message=user_query,
                     reply_context=reply_context,
+                    reply_context_message=reply_context_message,
+                    user_content=user_content,
                     allow_image_generation=allow_image_generation,
                     requester_context=requester_context,
                     user_id=message.author.id,
@@ -795,6 +840,7 @@ class SelfbotMessageHandler:
                 user_query,
                 reply_context,
                 requester_context,
+                user_content=user_content,
             )
             # History feeds back into the model prompt; store the reply without
             # the watermark so the model doesn't learn to regurgitate it.
@@ -961,12 +1007,33 @@ def _build_stored_user_message(
     user_query: str,
     reply_context: str | None,
     requester_context: str,
+    *,
+    user_content: list[ContentPart] | None = None,
 ) -> str:
     sections = [f"[UNTRUSTED_REQUESTER_CONTEXT]\n{requester_context}"]
     if reply_context:
         sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{reply_context}"]')
     sections.append(user_query)
+    if user_content:
+        marker_text = visible_text({"role": "user", "content": user_content})
+        if marker_text:
+            sections.append(marker_text)
     return "\n\n".join(sections)
+
+
+def _message_visible_text(message: ChatMessage | None) -> str | None:
+    if message is None:
+        return None
+    content = message["content"]
+    if isinstance(content, str):
+        return content
+    return visible_text(message) or None
+
+
+def _reply_message_ids(message: discord.Message) -> set[int]:
+    reference = getattr(message, "reference", None)
+    message_id = getattr(reference, "message_id", None)
+    return {message_id} if isinstance(message_id, int) else set()
 
 
 def _parse_account_update_confirmation(content: str) -> bool | None:
