@@ -16,7 +16,7 @@ from eva.ai.client import (
 )
 from eva.ai.parsing import parse_strict_yes_no
 from eva.ai.sanitize import sanitize_response, strip_context_echo, strip_response_watermark
-from eva.ai.schemas import ChatMessage, ToolCall
+from eva.ai.schemas import ChatMessage, ContentPart, ToolCall, visible_text
 from eva.constants import REPLY_MAX_TOKENS, SPLIT_TRIGGER
 from eva.logging import redact_secrets
 from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService
@@ -26,7 +26,7 @@ EMPTY_RESPONSE_ERROR = "Model returned empty response content"
 DISCORD_MINIMUM_AGE = 13
 # Reasoning models spend reasoning tokens from the same max_tokens budget, so a
 # tiny budget starves the YES/NO verdict and silently fails open on empty output.
-TOS_MODERATION_MAX_TOKENS = 256
+TOS_MODERATION_MAX_TOKENS = 512
 MAX_TERMINAL_TOOL_ROUNDS = 3
 MAX_TERMINAL_TOOL_CALLS_PER_ROUND = 5
 MAX_AUTONOMOUS_TOOL_CALLS_PER_RESPONSE = 6
@@ -62,14 +62,32 @@ def _build_user_message(
     user_message: str,
     reply_context: str | None,
     requester_context: str | None,
-) -> str:
+    *,
+    user_content: Sequence[ContentPart] | None = None,
+    reply_context_message: ChatMessage | None = None,
+) -> str | list[ContentPart]:
     sections: list[str] = []
     if requester_context:
         sections.append(f"[UNTRUSTED_REQUESTER_CONTEXT]\n{requester_context}")
     if reply_context:
         sections.append(f'[UNTRUSTED_REPLY_CONTEXT: "{reply_context}"]')
-    sections.append(user_message)
-    return "\n\n".join(sections)
+    if user_content is None and reply_context_message is None:
+        sections.append(user_message)
+        return "\n\n".join(sections)
+    parts: list[ContentPart] = []
+    context_text = "\n\n".join(sections)
+    if context_text:
+        parts.append({"type": "text", "text": context_text})
+    if reply_context_message is not None:
+        reply_content = reply_context_message["content"]
+        if isinstance(reply_content, str):
+            parts.append({"type": "text", "text": reply_content})
+        else:
+            parts.extend(reply_content)
+    parts.append({"type": "text", "text": user_message})
+    if user_content:
+        parts.extend(user_content)
+    return parts
 
 
 def _has_visible_reply_content(content: str) -> bool:
@@ -169,6 +187,8 @@ class ResponseService:
         user_message: str,
         reply_context: str | None,
         requester_context: str | None,
+        user_content: Sequence[ContentPart] | None = None,
+        reply_context_message: ChatMessage | None = None,
         tool_context: ToolExecutionContext | None = None,
     ) -> ResponseGenerationResult:
         conversation_messages = _build_conversation_messages(
@@ -177,6 +197,8 @@ class ResponseService:
             user_message=user_message,
             reply_context=reply_context,
             requester_context=requester_context,
+            user_content=user_content,
+            reply_context_message=reply_context_message,
         )
         tool_messages: list[ChatMessage] = [{"role": "system", "content": system_prompt}]
         tool_messages.extend(conversation_messages)
@@ -369,13 +391,14 @@ async def _generate_reply_with_tools(
     requester_id = tool_context.requester_id if tool_context is not None else None
 
     try:
-        for _ in range(max_tool_rounds):
+        for round_index in range(max_tool_rounds):
             response = await tool_client.chat_completion_with_tools(
                 messages=tool_messages,
                 tools=tool_definitions,
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                clear_thinking=round_index == 0,
             )
 
             if not response.tool_calls:
@@ -467,6 +490,8 @@ def _build_conversation_messages(
     user_message: str,
     reply_context: str | None,
     requester_context: str | None,
+    user_content: Sequence[ContentPart] | None = None,
+    reply_context_message: ChatMessage | None = None,
 ) -> list[ChatMessage]:
     # Discord context is the canonical chronological transcript. Local history is
     # only a fallback for channels where Discord history could not be fetched.
@@ -478,14 +503,20 @@ def _build_conversation_messages(
             messages.append(
                 {
                     "role": message["role"],
-                    "content": f"[UNTRUSTED_HISTORY_DATA]\n{message['content']}",
+                    "content": f"[UNTRUSTED_HISTORY_DATA]\n{visible_text(message)}",
                 }
             )
 
     messages.append(
         {
             "role": "user",
-            "content": _build_user_message(user_message, reply_context, requester_context),
+            "content": _build_user_message(
+                user_message,
+                reply_context,
+                requester_context,
+                user_content=user_content,
+                reply_context_message=reply_context_message,
+            ),
         }
     )
     return messages

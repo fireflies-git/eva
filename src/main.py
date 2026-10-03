@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from eva.app import EvaApp
-from eva.cli import run_settings
+from eva.cli import run_model_check, run_settings
 from eva.config import ConfigError, get_env_path, get_runtime_base_dir, load_settings
 from eva.logging import configure_logging, get_interaction_log_path
 from eva.runtime import (
@@ -150,6 +150,12 @@ def _ensure_service_mode_configuration(env_path: Path) -> None:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "model-check":
+        parser = argparse.ArgumentParser(description="Probe the configured AI provider")
+        parser.add_argument("model-check", nargs="?")
+        parser.add_argument("--video-url", default=None)
+        args = parser.parse_args(sys.argv[1:])
+        raise SystemExit(run_model_check(args.video_url))
     if len(sys.argv) > 1 and sys.argv[1] == "settings":
         raise SystemExit(run_settings(sys.argv[2:]))
 

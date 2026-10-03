@@ -23,6 +23,8 @@ class ChatCompletionClient(Protocol):
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
+        clear_thinking: bool | None = None,
     ) -> str: ...
 
 
@@ -38,6 +40,7 @@ class ChatCompletionOutput:
     content: str | None
     tool_calls: list[ModelToolCall]
     reasoning_content: str | None = None
+    finish_reason: str | None = None
 
 
 @runtime_checkable
@@ -50,6 +53,8 @@ class ToolChatCompletionClient(Protocol):
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
+        clear_thinking: bool | None = None,
     ) -> ChatCompletionOutput: ...
 
 
@@ -62,6 +67,8 @@ class OpenAICompatibleClient:
         default_model: str,
         timeout_seconds: float,
         thinking_enabled: bool | None = None,
+        reasoning_effort: str = "low",
+        clear_thinking: bool = True,
         allow_private_outbound: bool = False,
         allowed_hosts: frozenset[str] | None = None,
         max_response_bytes: int = 1_048_576,
@@ -71,6 +78,10 @@ class OpenAICompatibleClient:
         self._default_model = default_model
         self._timeout_seconds = timeout_seconds
         self._thinking_enabled = thinking_enabled
+        if reasoning_effort not in {"low", "high", "max"}:
+            raise ValueError("reasoning_effort must be low, high, or max")
+        self._reasoning_effort = reasoning_effort
+        self._clear_thinking = clear_thinking
         self._allow_private_outbound = allow_private_outbound
         self._allowed_hosts = allowed_hosts
         self._max_response_bytes = max(64 * 1024, max_response_bytes)
@@ -106,12 +117,16 @@ class OpenAICompatibleClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
+        clear_thinking: bool | None = None,
     ) -> str:
         payload = self._build_completion_payload(
             messages=messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            clear_thinking=clear_thinking,
         )
         data = await self._request("POST", "/chat/completions", json=payload)
 
@@ -130,12 +145,16 @@ class OpenAICompatibleClient:
         model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
+        clear_thinking: bool | None = None,
     ) -> ChatCompletionOutput:
         payload = self._build_completion_payload(
             messages=messages,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+            clear_thinking=clear_thinking,
             tools=tools,
         )
         payload["tool_choice"] = "auto"
@@ -156,6 +175,7 @@ class OpenAICompatibleClient:
             content=resolved_content,
             tool_calls=_parse_tool_calls(message),
             reasoning_content=resolved_reasoning_content,
+            finish_reason=_extract_finish_reason(data),
         )
 
     def _build_completion_payload(
@@ -166,6 +186,8 @@ class OpenAICompatibleClient:
         temperature: float,
         max_tokens: int,
         tools: Sequence[dict[str, object]] | None = None,
+        reasoning_effort: str | None = None,
+        clear_thinking: bool | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model or self._default_model,
@@ -176,6 +198,21 @@ class OpenAICompatibleClient:
         }
         if tools is not None:
             payload["tools"] = list(tools)
+
+        resolved_model = (model or self._default_model).strip().lower()
+        if resolved_model.startswith("glm-5.3-flash"):
+            effort = reasoning_effort or self._reasoning_effort
+            if effort not in {"low", "high", "max"}:
+                raise AIClientError("GLM reasoning effort must be low, high, or max")
+            payload["thinking"] = {
+                "type": "enabled",
+                "clear_thinking": (
+                    self._clear_thinking if clear_thinking is None else clear_thinking
+                ),
+            }
+            payload["reasoning_effort"] = effort
+            payload["top_p"] = 0.95
+            return payload
 
         thinking_enabled = self._resolve_thinking_enabled(model)
         if thinking_enabled is not None:
@@ -270,10 +307,25 @@ def _extract_response_message(data: dict[str, Any]) -> dict[str, Any]:
     first = choices[0]
     if not isinstance(first, dict):
         raise AIClientError("Invalid choice shape in model API response")
+    _extract_finish_reason(data)
     message = first.get("message")
     if not isinstance(message, dict):
         raise AIClientError("Invalid message shape in model API response")
     return message
+
+
+def _extract_finish_reason(data: dict[str, Any]) -> str | None:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    reason = choices[0].get("finish_reason")
+    if reason is None:
+        return None
+    if reason not in {"stop", "tool_calls"}:
+        if isinstance(reason, str):
+            raise AIClientError(f"Model completion ended with finish_reason={reason}")
+        raise AIClientError("Invalid finish_reason in model API response")
+    return reason
 
 
 def _parse_tool_calls(message: dict[str, Any]) -> list[ModelToolCall]:
@@ -298,6 +350,8 @@ def _parse_tool_calls(message: dict[str, Any]) -> list[ModelToolCall]:
         arguments = function.get("arguments")
         if not isinstance(name, str) or not name.strip():
             continue
+        if isinstance(arguments, dict):
+            arguments = jsonlib.dumps(arguments, separators=(",", ":"))
         if not isinstance(arguments, str):
             continue
 

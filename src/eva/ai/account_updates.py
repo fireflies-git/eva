@@ -77,7 +77,7 @@ class AccountUpdatePlanner:
                 messages=messages,
                 model=self._model_name,
                 temperature=0.0,
-                max_tokens=350,
+                max_tokens=512,
             )
         except AIClientError:
             logger.exception("Account update planner failed")

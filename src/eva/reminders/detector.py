@@ -20,7 +20,7 @@ from eva.prompts import build_reminder_detection_prompt
 
 logger = logging.getLogger(__name__)
 
-_DETECTION_MAX_TOKENS = 200
+_DETECTION_MAX_TOKENS = 512
 
 _HEURISTIC_RE = re.compile(
     r"\b("

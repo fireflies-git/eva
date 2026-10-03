@@ -61,6 +61,8 @@ class EvaApp:
             base_url=settings.api_base_url,
             default_model=settings.model_name,
             timeout_seconds=settings.request_timeout_seconds,
+            reasoning_effort=settings.reasoning_effort,
+            clear_thinking=settings.clear_thinking,
             allow_private_outbound=settings.allow_private_outbound,
             allowed_hosts=settings.outbound_allowed_hosts or None,
             max_response_bytes=settings.max_http_response_bytes,

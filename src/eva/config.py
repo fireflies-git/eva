@@ -21,9 +21,11 @@ from eva.runtime import (
 from eva.security.urls import URLPolicyError, validate_url
 
 SETTINGS_DEFAULTS = {
-    "api_base_url": "https://inference.do-ai.run/v1",
+    "api_base_url": "https://api.z.ai/api/paas/v4",
     "account_mode": "assistant",
-    "model_name": "openai-gpt-oss-120b",
+    "model_name": "glm-5.3-flash",
+    "reasoning_effort": "low",
+    "clear_thinking": True,
     "split_model_name": "",
     "trigger_prefix": "eva ",
     "max_history_messages": DEFAULT_MAX_HISTORY_MESSAGES,
@@ -83,6 +85,7 @@ ACCOUNT_MODES = {"assistant", "standalone"}
 AUTONOMOUS_TOOL_SCOPES = {"disabled", "owner_admin", "whitelisted", "any"}
 TERMINAL_COMMAND_MODES = {"allowlist", "sandbox"}
 TOS_FAILURE_MODES = {"fail_closed", "fail_open"}
+REASONING_EFFORTS = {"low", "high", "max"}
 AUTONOMOUS_TOOL_ROUNDS_MIN = 1
 AUTONOMOUS_TOOL_ROUNDS_MAX = 3
 AUTONOMOUS_TOOL_CALLS_MIN = 1
@@ -146,6 +149,8 @@ class Settings:
     max_http_response_bytes: int = 1_048_576
     admin_user_ids: frozenset[int] = frozenset()
     outbound_allowed_hosts: frozenset[str] = frozenset()
+    reasoning_effort: str = "low"
+    clear_thinking: bool = True
 
 
 def get_runtime_base_dir() -> Path:
@@ -355,6 +360,15 @@ def load_settings() -> Settings:
                 choices=ACCOUNT_MODES,
             ),
             model_name=model_name,
+            reasoning_effort=_optional_choice(
+                "MODEL_REASONING_EFFORT",
+                default=SETTINGS_DEFAULTS["reasoning_effort"],
+                choices=REASONING_EFFORTS,
+            ),
+            clear_thinking=_optional_bool(
+                "MODEL_CLEAR_THINKING",
+                default=SETTINGS_DEFAULTS["clear_thinking"],
+            ),
             split_model_name=_optional_env(
                 "SPLIT_MODEL_NAME",
                 default=model_name,

@@ -47,7 +47,7 @@ class FriendRequestReviewService:
                 messages=messages,
                 model=self._model_name,
                 temperature=0.0,
-                max_tokens=300,
+                max_tokens=512,
             )
         except AIClientError:
             logger.exception("Friend request review failed")

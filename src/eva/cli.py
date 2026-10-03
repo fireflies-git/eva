@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import os
 import subprocess  # nosec B404 - fixed internal CLI commands only.
 import sys
@@ -8,6 +10,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values, set_key
 
+from eva.ai.client import AIClientError, OpenAICompatibleClient
+from eva.ai.schemas import ChatMessage
 from eva.config import ACCOUNT_MODES, SETTINGS_DEFAULTS
 from eva.runtime import get_resolved_env_path, validate_secure_path
 
@@ -140,3 +144,109 @@ def run_build() -> None:
 
     command.append("src/main.py")
     raise SystemExit(subprocess.call(command))  # nosec B603 - fixed executable and args.
+
+
+def run_model_check(video_url: str | None = None) -> int:
+    """Probe the configured provider without starting Discord."""
+    from eva.config import ConfigError, load_settings
+    from eva.security.urls import URLPolicyError, validate_url
+
+    try:
+        settings = load_settings()
+        if video_url:
+            validate_url(video_url, allow_private=settings.allow_private_outbound)
+        return asyncio.run(_model_check_async(settings, video_url=video_url))
+    except (ConfigError, AIClientError, URLPolicyError, OSError) as exc:
+        print(f"model-check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+
+async def _model_check_async(settings: object, *, video_url: str | None) -> int:
+    client = OpenAICompatibleClient(
+        api_key=settings.api_key,  # type: ignore[attr-defined]
+        base_url=settings.api_base_url,  # type: ignore[attr-defined]
+        default_model=settings.model_name,  # type: ignore[attr-defined]
+        timeout_seconds=settings.request_timeout_seconds,  # type: ignore[attr-defined]
+        reasoning_effort=settings.reasoning_effort,  # type: ignore[attr-defined]
+        clear_thinking=settings.clear_thinking,  # type: ignore[attr-defined]
+        allow_private_outbound=settings.allow_private_outbound,  # type: ignore[attr-defined]
+        allowed_hosts=settings.outbound_allowed_hosts or None,  # type: ignore[attr-defined]
+    )
+    try:
+        try:
+            models = await client.list_models()
+            if models and not any(
+                isinstance(model, dict) and model.get("id") == settings.model_name  # type: ignore[attr-defined]
+                for model in models
+            ):
+                print(f"warning: {settings.model_name!r} was not listed by /models")  # type: ignore[attr-defined]
+        except AIClientError as exc:
+            print(f"warning: /models unavailable ({exc})", file=sys.stderr)
+
+        text = await client.chat_completion(
+            messages=[{"role": "user", "content": "Reply with the word ready."}],
+            model=settings.model_name,  # type: ignore[attr-defined]
+            max_tokens=64,
+        )
+        if not text.strip():
+            raise AIClientError("text probe returned empty visible content")
+
+        tool_output = await client.chat_completion_with_tools(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Call the probe tool with {\"ok\":true}; do not answer with text.",
+                }
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "probe",
+                        "description": "Provider compatibility probe",
+                        "parameters": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+                    },
+                }
+            ],
+            model=settings.model_name,  # type: ignore[attr-defined]
+            max_tokens=256,
+        )
+        if not tool_output.tool_calls:
+            raise AIClientError("tool probe returned no tool call")
+        if tool_output.finish_reason not in {"tool_calls", None}:
+            raise AIClientError(f"unexpected tool finish reason: {tool_output.finish_reason}")
+
+        png = base64.b64encode(
+            bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000000020001e221bc330000000049454e44ae426082")
+        ).decode("ascii")
+        media_messages: list[ChatMessage] = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe the attached inputs in one word."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}},
+                    {
+                        "type": "file",
+                        "file": {
+                            "file_data": "data:text/plain;base64,SGVsbG8=",
+                            "filename": "probe.txt",
+                        },
+                    },
+                ],
+            }
+        ]
+        if video_url:
+            content = media_messages[0]["content"]
+            if isinstance(content, list):
+                content.append({"type": "video_url", "video_url": {"url": video_url}})
+        media_text = await client.chat_completion(
+            messages=media_messages,
+            model=settings.model_name,  # type: ignore[attr-defined]
+            max_tokens=64,
+        )
+        if not media_text.strip():
+            raise AIClientError("multimodal probe returned empty visible content")
+    finally:
+        await client.close()
+    print(f"model-check passed for {settings.model_name}")  # type: ignore[attr-defined]
+    return 0

@@ -44,9 +44,12 @@ class EnvField:
 ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("DISCORD_TOKEN", "", True, "Discord user token", True),
     EnvField("API_KEY", "", True, "AI API key", True),
-    EnvField("API_BASE_URL", "https://inference.do-ai.run/v1", False, "AI API base URL"),
+    EnvField("API_BASE_URL", "https://api.z.ai/api/paas/v4", False, "AI API base URL"),
     EnvField("ACCOUNT_MODE", "assistant", False, "assistant or standalone mode"),
-    EnvField("MODEL_NAME", "openai-gpt-oss-120b", False, "AI model name"),
+    EnvField("MODEL_NAME", "glm-5.3-flash", False, "AI model name"),
+    EnvField("MODEL_REASONING_EFFORT", "low", False, "GLM reasoning: low, high, or max"),
+    EnvField("MODEL_CLEAR_THINKING", "true", False, "Clear thinking between requests"),
+    EnvField("TOS_MODEL_NAME", "", False, "TOS model (defaults to MODEL_NAME)"),
     EnvField(
         "SPLIT_MODEL_NAME",
         "",
