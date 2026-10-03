@@ -9,7 +9,7 @@ import pytest
 
 import eva.discord.summarize_commands as summarize_commands
 from eva.ai import AIClientError, SummarizationService
-from eva.ai.schemas import ChatMessage
+from eva.ai.schemas import ChatMessage, visible_text
 from eva.discord.summarize_commands import (
     handle_summarize_command,
     is_summarize_command,
@@ -174,7 +174,7 @@ def test_command_returns_summary(monkeypatch) -> None:
     # The system prompt must be the first message.
     messages = cast(list[ChatMessage], chat_client.calls[0]["messages"])
     assert messages[0]["role"] == "system"
-    assert "summariz" in messages[0]["content"].lower()
+    assert "summariz" in visible_text(messages[0]).lower()
 
 
 def test_command_reports_ai_failure(monkeypatch) -> None:

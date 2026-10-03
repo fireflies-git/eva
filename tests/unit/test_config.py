@@ -15,6 +15,31 @@ def test_load_settings_reads_account_mode(monkeypatch) -> None:
     assert settings.terminal_autonomous_enabled is True
 
 
+def test_load_settings_defaults_to_glm_reasoning_policy(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.delenv("API_BASE_URL", raising=False)
+    monkeypatch.delenv("MODEL_NAME", raising=False)
+    monkeypatch.delenv("MODEL_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("MODEL_CLEAR_THINKING", raising=False)
+
+    settings = load_settings()
+
+    assert settings.api_base_url == "https://api.z.ai/api/paas/v4"
+    assert settings.model_name == "glm-5.3-flash"
+    assert settings.reasoning_effort == "low"
+    assert settings.clear_thinking is True
+
+
+def test_load_settings_validates_reasoning_policy(monkeypatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("API_KEY", "key")
+    monkeypatch.setenv("MODEL_REASONING_EFFORT", "medium")
+
+    with pytest.raises(ConfigError, match="MODEL_REASONING_EFFORT"):
+        load_settings()
+
+
 def test_load_settings_rejects_invalid_account_mode(monkeypatch) -> None:
     monkeypatch.setenv("DISCORD_TOKEN", "token")
     monkeypatch.setenv("API_KEY", "key")

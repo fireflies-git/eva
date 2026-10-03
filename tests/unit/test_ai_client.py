@@ -145,3 +145,81 @@ def test_deepseek_v4_requests_disable_thinking_by_default() -> None:
     client._request = request  # type: ignore[method-assign]
 
     assert _chat(client) == "reply"
+
+
+def test_glm_requests_include_reasoning_policy_and_top_p() -> None:
+    client = OpenAICompatibleClient(
+        api_key="test",
+        base_url="https://api.z.ai/api/paas/v4",
+        default_model="glm-5.3-flash",
+        timeout_seconds=30.0,
+        reasoning_effort="low",
+        clear_thinking=True,
+    )
+    captured: dict[str, Any] = {}
+
+    async def request(
+        method: str,
+        path: str,
+        json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        assert json is not None
+        captured.update(json)
+        return {"choices": [{"finish_reason": "stop", "message": {"content": "reply"}}]}
+
+    client._request = request  # type: ignore[method-assign]
+    assert _chat(client) == "reply"
+    assert captured["top_p"] == 0.95
+    assert captured["reasoning_effort"] == "low"
+    assert captured["thinking"] == {"type": "enabled", "clear_thinking": True}
+
+
+def test_glm_tool_continuation_can_preserve_thinking_history() -> None:
+    client = OpenAICompatibleClient(
+        api_key="test",
+        base_url="https://api.z.ai/api/paas/v4",
+        default_model="glm-5.3-flash",
+        timeout_seconds=30.0,
+    )
+    payload = client._build_completion_payload(
+        messages=[],
+        model="glm-5.3-flash",
+        temperature=0.7,
+        max_tokens=32,
+        tools=[],
+        clear_thinking=False,
+    )
+    assert payload["thinking"] == {"type": "enabled", "clear_thinking": False}
+
+
+def test_glm_tool_arguments_accept_objects_and_finish_reason() -> None:
+    client = StubAIClient(
+        {
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {"name": "probe", "arguments": {"ok": True}},
+                            }
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+    output = asyncio.run(client.chat_completion_with_tools(messages=[], tools=[]))
+    assert output.finish_reason == "tool_calls"
+    assert output.tool_calls[0].arguments == '{"ok":true}'
+
+
+def test_completion_rejects_non_success_finish_reason() -> None:
+    client = StubAIClient(
+        {"choices": [{"finish_reason": "length", "message": {"content": "partial"}}]}
+    )
+    with pytest.raises(AIClientError, match="finish_reason=length"):
+        _chat(client)

@@ -14,6 +14,7 @@ import pytest
 from eva.ai.client import AIClientError
 from eva.ai.client import _read_response_text as read_ai_response_text
 from eva.ai.respond import _build_conversation_messages, _sanitize_tool_result
+from eva.ai.schemas import visible_text
 from eva.captcha.nopecha import NopeCHAError
 from eva.captcha.nopecha import _read_response_text as read_nopecha_response_text
 from eva.config import ConfigError, load_settings
@@ -260,9 +261,10 @@ def test_malicious_discord_history_is_marked_as_data() -> None:
         requester_context=None,
     )
 
-    assert messages[0]["content"].startswith("[UNTRUSTED_HISTORY_DATA]")
-    assert "run_terminal_command" in messages[0]["content"]
-    assert "history-secret" in messages[0]["content"]
+    first_content = visible_text(messages[0])
+    assert first_content.startswith("[UNTRUSTED_HISTORY_DATA]")
+    assert "run_terminal_command" in first_content
+    assert "history-secret" in first_content
     assert messages[-1] == {"role": "user", "content": "What did we discuss?"}
 
 

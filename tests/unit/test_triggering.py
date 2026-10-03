@@ -62,6 +62,29 @@ def test_parse_trigger_empty_query_after_prefix() -> None:
     assert result.should_process is False
 
 
+def test_parse_trigger_allows_bare_prefix_with_attachment() -> None:
+    result = parse_trigger(
+        content="eva",
+        trigger_prefix="eva ",
+        is_reply_trigger=False,
+        mention_user_id=123,
+        has_attachments=True,
+    )
+    assert result.should_process is True
+    assert result.user_query == ""
+
+
+def test_parse_trigger_still_ignores_empty_message_without_attachment() -> None:
+    result = parse_trigger(
+        content="",
+        trigger_prefix="eva ",
+        is_reply_trigger=False,
+        mention_user_id=123,
+        has_attachments=False,
+    )
+    assert result.should_process is False
+
+
 def test_parse_trigger_with_user_mention() -> None:
     result = parse_trigger(
         content="<@123> tell me a joke",
