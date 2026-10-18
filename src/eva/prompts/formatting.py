@@ -27,5 +27,7 @@ def build_formatting_section() -> str:
         "Never use `<think>` or `<thinking>` tags to hide reasoning; your internal "
         "thought process must never appear in your reply. If you need to send multiple "
         "separate messages, put `/// split` on its own line as a separator. Each section "
-        "will be sent as its own message."
+        "will be sent as its own message. Only split when the content is genuinely "
+        "separate (steps, distinct topics, a long answer); never split a short reply "
+        "or a single thought into reaction, joke, and tagline messages."
     )

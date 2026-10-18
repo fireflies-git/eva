@@ -301,3 +301,13 @@ def test_formatting_prompt_allows_sparse_emphasis_without_all_caps_prose() -> No
     assert "proper nouns, acronyms, commands, URLs, code" in prompt
     assert "quoted or blockquoted text" in prompt
     assert "uppercase as emphasis, not shouting" in prompt
+
+
+def test_persona_discourages_commenting_on_the_message_itself() -> None:
+    from eva.prompts.persona import build_persona_section
+
+    section = build_persona_section("assistant")
+
+    assert "## Sounding human" in section
+    assert "Never comment on the message itself" in section
+    assert section.index("## Sounding human") < section.index("## Length")
