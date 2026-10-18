@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 import discord
 
@@ -73,6 +74,9 @@ def build_requester_context(message: discord.Message) -> str:
     mentions = format_mentions_metadata(list(getattr(message, "mentions", [])))
 
     lines = [f"CURRENT REQUESTER: {requester}"]
+    created_at = getattr(message, "created_at", None)
+    if isinstance(created_at, datetime):
+        lines.append(f"CURRENT MESSAGE SENT: {created_at.strftime('%H:%M')} UTC")
     if mentions:
         lines.append(mentions)
     return "\n".join(lines)

@@ -42,3 +42,23 @@ def test_history_store_get_does_not_create_entry() -> None:
     store.get(998)
     assert store.get(1) != []
     assert store.get(2) != []
+
+
+def test_history_store_get_filters_expired_messages() -> None:
+    now = [100.0]
+    store = ChannelHistoryStore(max_messages_per_channel=4, clock=lambda: now[0])
+    store.append(1, "user", "old")
+    now[0] = 1000.0
+    store.append(1, "assistant", "fresh")
+
+    assert [m["content"] for m in store.get(1, max_age_seconds=300)] == ["fresh"]
+    assert [m["content"] for m in store.get(1)] == ["old", "fresh"]
+
+
+def test_history_store_get_returns_empty_when_everything_expired() -> None:
+    now = [0.0]
+    store = ChannelHistoryStore(clock=lambda: now[0])
+    store.append_exchange(1, "a", "b")
+    now[0] = 10_000.0
+
+    assert store.get(1, max_age_seconds=60) == []

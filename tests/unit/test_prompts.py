@@ -311,3 +311,33 @@ def test_persona_discourages_commenting_on_the_message_itself() -> None:
     assert "## Sounding human" in section
     assert "Never comment on the message itself" in section
     assert section.index("## Sounding human") < section.index("## Length")
+
+
+def test_context_prompt_includes_recency_guidance() -> None:
+    from types import SimpleNamespace
+
+    from eva.prompts.context import build_context_section
+
+    channel = SimpleNamespace(guild=None, name="DM")
+    client = SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva"))
+
+    section = build_context_section(channel, client, "assistant")  # type: ignore[arg-type]
+
+    assert "## Conversation recency" in section
+    assert "Never dig up old messages" in section
+
+
+def test_requester_context_stamps_the_current_message_time() -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from eva.discord.user_metadata import build_requester_context
+
+    author = SimpleNamespace(id=1, name="leah", display_name="leah")
+    message = SimpleNamespace(
+        author=author,
+        mentions=[],
+        created_at=datetime(2026, 1, 1, 19, 32),
+    )
+
+    assert "CURRENT MESSAGE SENT: 19:32 UTC" in build_requester_context(message)  # type: ignore[arg-type]

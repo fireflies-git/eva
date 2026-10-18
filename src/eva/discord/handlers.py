@@ -27,6 +27,7 @@ from eva.ai.sanitize import strip_response_watermark
 from eva.ai.schemas import ChatMessage, ContentPart, visible_text
 from eva.config import Settings
 from eva.constants import (
+    CONTEXT_MAX_AGE_SECONDS,
     FOLLOWUP_TYPING_AVERAGE_WORD_LENGTH,
     FOLLOWUP_TYPING_MIN_SECONDS,
     FOLLOWUP_TYPING_WPM_MAX,
@@ -179,7 +180,6 @@ class SelfbotMessageHandler:
             content=original_content,
             trigger_prefix=self._settings.trigger_prefix,
         )
-
         if not is_standalone:
             if is_admin and getattr(message.channel, "guild", object()) is None:
                 if await self._handle_friend_request_confirmation(
@@ -818,8 +818,12 @@ class SelfbotMessageHandler:
             max_total_chars=MAX_CONTEXT_TOTAL_CHARS,
             requester_user_id=getattr(message.author, "id", None),
             reply_message_id=getattr(getattr(message, "reference", None), "message_id", None),
+            anchor_time=getattr(message, "created_at", None),
         )
-        history_messages = self._history_store.get(channel_id)
+        history_messages = self._history_store.get(
+            channel_id,
+            max_age_seconds=CONTEXT_MAX_AGE_SECONDS,
+        )
         vision_selection = resolve_vision_selection(
             message,
             channel_id=channel_id,

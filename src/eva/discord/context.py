@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
+from datetime import datetime
 
 import discord
 
 from eva.ai.sanitize import strip_response_watermark
 from eva.ai.schemas import ChatMessage, ContentPart, visible_text
+from eva.constants import CONTEXT_MAX_AGE_SECONDS
 from eva.discord.media import AttachmentBudget, AttachmentMarker, attachment_to_part
 from eva.discord.user_metadata import (
     UserMetadata,
@@ -46,6 +48,7 @@ async def fetch_channel_context(
     max_total_chars: int | None = None,
     requester_user_id: int | None = None,
     reply_message_id: int | None = None,
+    anchor_time: datetime | None = None,
 ) -> list[ChatMessage]:
     if not hasattr(channel, "history"):
         return []
@@ -84,6 +87,7 @@ async def fetch_channel_context(
             account_mode=account_mode,
             is_tracked_message=is_tracked_message,
             exclude_message_id=exclude_message_id,
+            anchor_time=anchor_time,
         )
     else:
         # Keep the legacy behavior for callers that do not provide request
@@ -111,6 +115,7 @@ async def fetch_channel_context(
             strip_watermark=role == "assistant",
             max_content_chars=max_message_chars,
             section_label=section_label,
+            anchor_time=anchor_time,
         )
         content = await _build_message_content(
             msg,
@@ -209,8 +214,14 @@ def _select_ranked_context(
     account_mode: str,
     is_tracked_message: Callable[[int], bool] | None,
     exclude_message_id: int | None,
+    anchor_time: datetime | None = None,
 ) -> list[tuple[discord.Message, str | None]]:
-    """Select primary, requester/Eva, and ambient context deterministically."""
+    """Select primary, requester/Eva, and ambient context deterministically.
+
+    Requester/Eva and ambient turns older than ``CONTEXT_MAX_AGE_SECONDS`` before
+    ``anchor_time`` are a different conversation and are dropped. The reply chain
+    is exempt because an explicit reply is intent regardless of age.
+    """
     selected: dict[int, tuple[discord.Message, str]] = {}
     unkeyed_selected: list[tuple[discord.Message, str]] = []
 
@@ -247,6 +258,8 @@ def _select_ranked_context(
         author_id = getattr(getattr(message, "author", None), "id", None)
         if role != "assistant" and author_id != requester_user_id:
             continue
+        if _is_stale(message, anchor_time):
+            continue
         if _message_id(message) in selected:
             continue
         if requester_turns >= _MAX_REQUESTER_TURNS:
@@ -270,6 +283,8 @@ def _select_ranked_context(
         author_id = getattr(getattr(message, "author", None), "id", None)
         if role == "assistant" or author_id == requester_user_id:
             continue
+        if _is_stale(message, anchor_time):
+            continue
         if ambient_turns >= _MAX_AMBIENT_TURNS:
             break
         add(message, _AMBIENT_LABEL)
@@ -281,6 +296,33 @@ def _select_ranked_context(
     ]
     chosen.sort(key=lambda item: _message_sort_key(item[0]))
     return chosen
+
+
+def _message_age_seconds(message: object, anchor_time: datetime | None) -> float | None:
+    """Seconds between a message and the anchor, or None when it cannot be determined."""
+    created_at = getattr(message, "created_at", None)
+    if anchor_time is None or not isinstance(created_at, datetime):
+        return None
+    try:
+        return (anchor_time - created_at).total_seconds()
+    except TypeError:
+        # Naive vs aware datetimes: no reliable age, so keep the message.
+        return None
+
+
+def _is_stale(message: object, anchor_time: datetime | None) -> bool:
+    age = _message_age_seconds(message, anchor_time)
+    return age is not None and age > CONTEXT_MAX_AGE_SECONDS
+
+
+def _format_age(age_seconds: float) -> str:
+    minutes = int(max(age_seconds, 0) // 60)
+    if minutes < 1:
+        return "just before current"
+    if minutes < 60:
+        return f"{minutes}m before current"
+    hours, remainder = divmod(minutes, 60)
+    return f"{hours}h {remainder}m before current"
 
 
 def _message_id(message: object) -> int | None:
@@ -352,8 +394,12 @@ def _serialize_context_message(
     strip_watermark: bool = False,
     max_content_chars: int | None = None,
     section_label: str | None = None,
+    anchor_time: datetime | None = None,
 ) -> str:
     timestamp = msg.created_at.strftime("%H:%M")
+    age_seconds = _message_age_seconds(msg, anchor_time)
+    if age_seconds is not None:
+        timestamp = f"{timestamp} ({_format_age(age_seconds)})"
     author = format_user_metadata(build_user_metadata(msg.author))
     extras = _format_message_extras(msg, id_to_author)
     mentions = format_mentions_metadata(list(getattr(msg, "mentions", [])))

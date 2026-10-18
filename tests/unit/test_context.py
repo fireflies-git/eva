@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -797,3 +797,125 @@ def test_ranked_context_total_cap_preserves_reply_chain_before_ambient() -> None
     assert "ambient turn" not in joined
     assert "requester turn" not in joined
     assert len(joined) <= 900
+
+
+def _stale_scenario_messages() -> tuple[list[Any], Any]:
+    requester = _make_author(id=1, name="leah", display_name="leah")
+    other = _make_author(id=2, name="other", display_name="Other")
+    anchor = datetime(2026, 1, 1, 19, 32)
+    messages = [
+        _make_message(
+            msg_id=5,
+            content="ur baltant",
+            author=requester,
+            created_at=datetime(2026, 1, 1, 19, 31),
+        ),
+        _make_message(
+            msg_id=4,
+            content="recent chatter",
+            author=other,
+            created_at=datetime(2026, 1, 1, 19, 20),
+        ),
+        _make_message(
+            msg_id=3,
+            content="old greeting from two hours ago",
+            author=requester,
+            created_at=datetime(2026, 1, 1, 17, 29),
+        ),
+        _make_message(
+            msg_id=2,
+            content="old ambient chatter",
+            author=other,
+            created_at=datetime(2026, 1, 1, 17, 30),
+        ),
+    ]
+    return messages, anchor
+
+
+def _fetch_with_anchor(messages: list[Any], anchor: datetime, **kwargs: Any) -> str:
+    channel = _FakeHistoryChannel(messages)
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=16,
+            exclude_message_id=99,
+            requester_user_id=1,
+            anchor_time=anchor,
+            **kwargs,
+        )
+    )
+    return "\n".join(str(message["content"]) for message in context)
+
+
+def test_ranked_context_drops_messages_older_than_the_age_window() -> None:
+    messages, anchor = _stale_scenario_messages()
+
+    rendered = _fetch_with_anchor(messages, anchor)
+
+    assert "ur baltant" in rendered
+    assert "recent chatter" in rendered
+    assert "old greeting from two hours ago" not in rendered
+    assert "old ambient chatter" not in rendered
+
+
+def test_ranked_context_tags_messages_with_relative_age() -> None:
+    messages, anchor = _stale_scenario_messages()
+
+    rendered = _fetch_with_anchor(messages, anchor)
+
+    assert "19:31 (1m before current)" in rendered
+    assert "19:20 (12m before current)" in rendered
+
+
+def test_ranked_context_keeps_old_reply_chain_messages() -> None:
+    requester = _make_author(id=1, name="leah", display_name="leah")
+    parent = _make_message(
+        msg_id=1,
+        content="old message being replied to",
+        author=requester,
+        created_at=datetime(2026, 1, 1, 17, 29),
+    )
+    anchor = datetime(2026, 1, 1, 19, 32)
+    channel = _FakeHistoryChannel([], fetched_messages={1: parent})
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=16,
+            exclude_message_id=99,
+            requester_user_id=1,
+            reply_message_id=1,
+            anchor_time=anchor,
+        )
+    )
+
+    rendered = "\n".join(str(message["content"]) for message in context)
+    assert "old message being replied to" in rendered
+    assert "17:29 (2h 3m before current)" in rendered
+
+
+def test_context_without_anchor_keeps_every_message_untagged() -> None:
+    messages, _ = _stale_scenario_messages()
+    channel = _FakeHistoryChannel(messages)
+
+    context = asyncio.run(
+        fetch_channel_context(
+            cast(discord.abc.Messageable, channel),
+            limit=16,
+            requester_user_id=1,
+        )
+    )
+
+    rendered = "\n".join(str(message["content"]) for message in context)
+    assert "old greeting from two hours ago" in rendered
+    assert "before current" not in rendered
+
+
+def test_context_tolerates_mixed_naive_and_aware_timestamps() -> None:
+    messages, _ = _stale_scenario_messages()
+    aware_anchor = datetime(2026, 1, 1, 19, 32, tzinfo=UTC)
+
+    rendered = _fetch_with_anchor(messages, aware_anchor)
+
+    assert "old greeting from two hours ago" in rendered
+    assert "before current" not in rendered
