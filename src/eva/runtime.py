@@ -71,6 +71,7 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("IMAGE_LANGUAGE", "en-US", False, "Image generation language"),
     EnvField("IMAGE_INCOGNITO", "true", False, "Image generation incognito mode"),
     EnvField("CONTEXT7_API_KEY", "", False, "Context7 API key (optional)", True),
+    EnvField("EXA_API_KEY", "", False, "Exa web search API key (optional)", True),
     EnvField(
         "ADMIN_USER_IDS",
         "213766338005434370",

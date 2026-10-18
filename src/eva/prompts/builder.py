@@ -29,6 +29,7 @@ def build_system_prompt(
     autonomous_terminal_enabled: bool,
     playwright_enabled: bool = False,
     context7_enabled: bool = False,
+    exa_enabled: bool = False,
     requester_is_admin: bool = False,
     vision_enabled: bool = False,
 ) -> str:
@@ -42,6 +43,7 @@ def build_system_prompt(
             autonomous_terminal_enabled=autonomous_terminal_enabled,
             playwright_enabled=playwright_enabled,
             context7_enabled=context7_enabled,
+            exa_enabled=exa_enabled,
             vision_enabled=vision_enabled,
         ),
         build_environment_section(),

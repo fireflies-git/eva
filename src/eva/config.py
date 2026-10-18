@@ -64,6 +64,7 @@ SETTINGS_DEFAULTS = {
     "outbound_allowed_hosts": frozenset(),
     "max_http_response_bytes": 1_048_576,
     "context7_api_key": None,
+    "exa_api_key": None,
 }
 RESPONSE_CONTEXT_MESSAGES_MIN = 1
 RESPONSE_CONTEXT_MESSAGES_MAX = 100
@@ -138,6 +139,7 @@ class Settings:
     nopecha_api_key: str | None
     context7_api_key: str | None
     autonomous_tool_scope: str = "owner_admin"
+    exa_api_key: str | None = None
     terminal_command_mode: str = "allowlist"
     terminal_network_enabled: bool = False
     max_autonomous_tool_rounds: int = 3
@@ -464,6 +466,7 @@ def load_settings() -> Settings:
             nopecha_enabled=nopecha_enabled,
             nopecha_api_key=nopecha_api_key,
             context7_api_key=_optional_secret("CONTEXT7_API_KEY"),
+            exa_api_key=_optional_secret("EXA_API_KEY"),
             autonomous_tool_scope=_optional_choice(
                 "AUTONOMOUS_TOOL_SCOPE",
                 default=SETTINGS_DEFAULTS["autonomous_tool_scope"],

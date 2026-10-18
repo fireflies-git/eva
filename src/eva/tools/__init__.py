@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 
 __all__ = [
     "Context7Service",
+    "ExaService",
     "PlaywrightService",
     "ToolAuthorizationError",
     "ToolAuthorizer",
@@ -37,5 +38,6 @@ from eva.tools.authorization import (  # noqa: E402
     ToolExecutionContext,
 )
 from eva.tools.context7_service import Context7Service  # noqa: E402
+from eva.tools.exa_service import ExaService  # noqa: E402
 from eva.tools.playwright_service import PlaywrightService  # noqa: E402
 from eva.tools.vision_service import VisionInspectionTool  # noqa: E402

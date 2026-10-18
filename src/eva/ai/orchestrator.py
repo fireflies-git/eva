@@ -101,6 +101,7 @@ class ReplyGenerationService:
         autonomous_terminal_enabled: bool = False,
         playwright_enabled: bool = False,
         context7_enabled: bool = False,
+        exa_enabled: bool = False,
         autonomous_tool_scope: str = "owner_admin",
         safeguard_notifier: SafeguardNotifier | None = None,
     ) -> None:
@@ -113,6 +114,7 @@ class ReplyGenerationService:
         self._autonomous_terminal_enabled = autonomous_terminal_enabled
         self._playwright_enabled = playwright_enabled
         self._context7_enabled = context7_enabled
+        self._exa_enabled = exa_enabled
         normalized_scope = autonomous_tool_scope.strip().lower()
         if normalized_scope not in {"disabled", "owner_admin", "whitelisted", "any"}:
             raise ValueError(f"Unknown autonomous tool scope: {autonomous_tool_scope!r}")
@@ -191,6 +193,7 @@ class ReplyGenerationService:
                 and autonomous_tools_available,
                 playwright_enabled=self._playwright_enabled and autonomous_tools_available,
                 context7_enabled=self._context7_enabled and autonomous_tools_available,
+                exa_enabled=self._exa_enabled and autonomous_tools_available,
                 requester_is_admin=requester_is_admin,
                 vision_enabled=autonomous_tools_available
                 and (vision_context_available or bool(vision_images)),

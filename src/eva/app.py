@@ -46,7 +46,7 @@ from eva.state.tracked_messages import DEFAULT_TRACKED_MESSAGES_PATH
 from eva.state.user_memory import DEFAULT_USER_MEMORY_PATH
 from eva.state.whitelist import DEFAULT_WHITELIST_PATH
 from eva.terminal import TerminalService
-from eva.tools import Context7Service, PlaywrightService, ToolAuthorizer, ToolService
+from eva.tools import Context7Service, ExaService, PlaywrightService, ToolAuthorizer, ToolService
 from eva.yuri import YuriImageService
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,15 @@ class EvaApp:
                 allowed_hosts=settings.outbound_allowed_hosts or None,
             )
             self._tool_services.append(self._context7_service)
+
+        self._exa_service: ExaService | None = None
+        if settings.exa_api_key:
+            self._exa_service = ExaService(
+                api_key=settings.exa_api_key,
+                allow_private_outbound=settings.allow_private_outbound,
+                allowed_hosts=settings.outbound_allowed_hosts or None,
+            )
+            self._tool_services.append(self._exa_service)
 
         self._response_service = ResponseService(
             client=self._ai_client,
@@ -214,6 +223,7 @@ class EvaApp:
             autonomous_terminal_enabled=settings.terminal_autonomous_enabled,
             playwright_enabled=settings.playwright_enabled,
             context7_enabled=settings.context7_api_key is not None,
+            exa_enabled=settings.exa_api_key is not None,
             autonomous_tool_scope=settings.autonomous_tool_scope,
             safeguard_notifier=self._safeguard_notifier,
         )
@@ -267,6 +277,8 @@ class EvaApp:
                 await self._playwright_service.start()
             if self._context7_service is not None:
                 await self._context7_service.start()
+            if self._exa_service is not None:
+                await self._exa_service.start()
             self._reminder_runner.start()
             await self._discord_client.start(self._settings.discord_token)
         finally:
@@ -274,6 +286,8 @@ class EvaApp:
                 await self._reminder_runner.stop()
             with contextlib.suppress(Exception):
                 self._whitelist.close()
+            if self._exa_service is not None:
+                await self._exa_service.close()
             if self._context7_service is not None:
                 await self._context7_service.close()
             if self._playwright_service is not None:
