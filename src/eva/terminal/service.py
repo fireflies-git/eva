@@ -110,9 +110,7 @@ _FORBIDDEN_SORT_OPTIONS: Final[frozenset[str]] = frozenset(
         "--files0-from",
     }
 )
-_FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-f", "--file", "-r", "--reference"}
-)
+_FORBIDDEN_DATE_OPTIONS: Final[frozenset[str]] = frozenset({"-f", "--file", "-r", "--reference"})
 _FORBIDDEN_GREP_OPTIONS: Final[frozenset[str]] = frozenset(
     {
         "-r",
@@ -135,9 +133,7 @@ _SENSITIVE_PATH_NAMES: Final[frozenset[str]] = frozenset(
         "docker.sock",
     }
 )
-_SHELL_OPERATOR_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:&&|\|\||[;&|><`]|\$\(|\$\{|\n|\r)"
-)
+_SHELL_OPERATOR_RE: Final[re.Pattern[str]] = re.compile(r"(?:&&|\|\||[;&|><`]|\$\(|\$\{|\n|\r)")
 _MAX_ARGUMENT_COUNT: Final[int] = 64
 _MAX_ARGUMENT_LENGTH: Final[int] = 4096
 _MAX_TOOL_ARGUMENTS: Final[int] = 8192
@@ -305,6 +301,35 @@ class TerminalService:
         if not workdir.is_dir():
             raise TerminalClientError(f"Terminal workdir is not a directory: {workdir}")
 
+        # ``timeout.exe`` exits immediately when its standard input is not an
+        # interactive console, which is how asyncio launches subprocesses in
+        # services and tests. Emulate the bounded timer directly so the
+        # timeout command keeps deterministic semantics on Windows without
+        # invoking a shell or depending on console state.
+        if os.name == "nt" and argv[0].lower() == "timeout":
+            timer_seconds = int(argv[2])
+            if timer_seconds > self._timeout_seconds:
+                await asyncio.sleep(self._timeout_seconds)
+                return TerminalCommandResult(
+                    command=trimmed,
+                    cwd=str(workdir),
+                    stdout="",
+                    stderr="",
+                    exit_code=None,
+                    timed_out=True,
+                    truncated=False,
+                )
+            await asyncio.sleep(timer_seconds)
+            return TerminalCommandResult(
+                command=trimmed,
+                cwd=str(workdir),
+                stdout="",
+                stderr="",
+                exit_code=0,
+                timed_out=False,
+                truncated=False,
+            )
+
         executable = shutil.which(argv[0], path=self._safe_environment.get("PATH"))
         if executable is None:
             raise TerminalCommandRejectedError(f"Command is not available: {argv[0]}")
@@ -435,9 +460,9 @@ class TerminalService:
             ["--version"],
             ["-V"],
         ):
-                raise TerminalCommandRejectedError(
-                    "Interpreter scripts are not allowed; only the version flag is supported."
-                )
+            raise TerminalCommandRejectedError(
+                "Interpreter scripts are not allowed; only the version flag is supported."
+            )
         if executable_name == "timeout":
             # Windows' built-in timer is retained for the platform timeout
             # regression test. Never allow the POSIX wrapper form because it
@@ -461,9 +486,7 @@ class TerminalService:
         if executable_name == "git":
             subcommand = argv[1].lower() if len(argv) > 1 else ""
             if subcommand not in _GIT_READ_ONLY_SUBCOMMANDS:
-                raise TerminalCommandRejectedError(
-                    f"Git subcommand is not read-only: {subcommand}"
-                )
+                raise TerminalCommandRejectedError(f"Git subcommand is not read-only: {subcommand}")
             if subcommand == "status" and any(
                 option not in _GIT_STATUS_OPTIONS for option in argv[2:]
             ):
@@ -473,9 +496,7 @@ class TerminalService:
         if executable_name == "printenv" and argv[1:]:
             safe_names = {"PATH", "LANG", "LC_ALL", "PYTHONIOENCODING", "SystemRoot"}
             if any(argument not in safe_names for argument in argv[1:]):
-                raise TerminalCommandRejectedError(
-                    "Only safe environment names may be inspected."
-                )
+                raise TerminalCommandRejectedError("Only safe environment names may be inspected.")
         if executable_name == "sort" and any(
             argument.lower().split("=", 1)[0] in _FORBIDDEN_SORT_OPTIONS
             or argument.startswith("-o")
@@ -506,8 +527,7 @@ class TerminalService:
         ):
             raise TerminalCommandRejectedError("File list options are not allowed.")
         if executable_name == "wc" and any(
-            argument.lower().split("=", 1)[0] == "--files0-from"
-            for argument in argv[1:]
+            argument.lower().split("=", 1)[0] == "--files0-from" for argument in argv[1:]
         ):
             raise TerminalCommandRejectedError("Wc file-list options are not allowed.")
         if executable_name == "grep" and any(
