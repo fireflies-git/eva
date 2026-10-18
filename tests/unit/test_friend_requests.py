@@ -389,6 +389,39 @@ def test_confirmation_yes_accepts_request() -> None:
     assert store.get(requester_id=_REQUESTER_ID) is None
 
 
+def test_confirmation_r_accepts_and_creates_application_group() -> None:
+    client, relationship = _client_with_incoming(
+        requester=FakeUser(_REQUESTER_ID, name="applicant")
+    )
+    store = PendingFriendRequestStore()
+    store.set(
+        requester_id=_REQUESTER_ID,
+        requester_label="applicant",
+        review_text="body",
+        notified_admin_ids=frozenset({_ADMIN_ID}),
+    )
+    handler = FriendRequestHandler(pending_store=store, admin_ids=[_ADMIN_ID])
+
+    result = asyncio.run(
+        handler.handle_confirmation(
+            client=cast(discord.Client, client),
+            admin_user_id=_ADMIN_ID,
+            content="r",
+        )
+    )
+
+    assert result is not None
+    assert "Accepted friend request" in result
+    assert relationship.accepted is True
+    assert relationship.deleted is False
+    assert store.get(requester_id=_REQUESTER_ID) is None
+    assert len(client.groups) == 1
+    group = client.groups[0]
+    assert {user.id for user in group.recipients} == {_ADMIN_ID, _REQUESTER_ID}
+    assert group.name == "applicant's Application"
+    assert "Application started" in group.sent[0]
+
+
 def test_confirmation_no_denies_request() -> None:
     client, relationship = _client_with_incoming()
     store = PendingFriendRequestStore()
@@ -758,6 +791,8 @@ def test_parse_friend_request_confirmation() -> None:
     assert parse_friend_request_confirmation("yes") is FriendRequestDecision.ACCEPT
     assert parse_friend_request_confirmation("accept") is FriendRequestDecision.ACCEPT
     assert parse_friend_request_confirmation("Y") is FriendRequestDecision.ACCEPT
+    assert parse_friend_request_confirmation("r") is FriendRequestDecision.REVIEW
+    assert parse_friend_request_confirmation("review") is FriendRequestDecision.REVIEW
     assert parse_friend_request_confirmation("n") is FriendRequestDecision.DENY
     assert parse_friend_request_confirmation("no") is FriendRequestDecision.DENY
     assert parse_friend_request_confirmation("deny") is FriendRequestDecision.DENY
@@ -806,6 +841,8 @@ def test_build_friend_request_dm_without_review() -> None:
     assert "I got a friend request" in body
     assert "Name: nerrou" in body
     assert "Reply `y` to accept" in body
+    assert "`r` to accept it and open an application group" in body
+    assert "`n` to deny it" in body
 
 
 # --- AI review service ---

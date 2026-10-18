@@ -25,11 +25,13 @@ logger = logging.getLogger(__name__)
 
 _ACCEPT_WORDS = frozenset({"yes", "y", "accept"})
 _DENY_WORDS = frozenset({"no", "n", "deny", "reject"})
+_REVIEW_WORDS = frozenset({"r", "review"})
 
 
 class FriendRequestDecision(enum.Enum):
     ACCEPT = "accept"
     DENY = "deny"
+    REVIEW = "review"
 
 
 class FriendRequestReviewer(Protocol):
@@ -100,7 +102,7 @@ class FriendRequestHandler:
     ) -> str | None:
         """Resolve the oldest pending request this admin was notified about.
 
-        Returns None when the message is not a yes/no reply or there is no
+        Returns None when the message is not a confirmation reply or there is no
         matching pending request (the message then falls through to normal
         handling). Otherwise returns the confirmation text for the admin.
         """
@@ -114,6 +116,9 @@ class FriendRequestHandler:
             client=client,
             pending=pending,
             decision=decision,
+            application_admin_id=(
+                admin_user_id if decision is FriendRequestDecision.REVIEW else None
+            ),
         )
 
     def is_requester_pending(self, *, requester_id: int) -> bool:
@@ -235,10 +240,14 @@ class FriendRequestHandler:
                 "is already resolved or no longer exists."
             )
 
-        action = decision.value
+        accepts_request = decision in {
+            FriendRequestDecision.ACCEPT,
+            FriendRequestDecision.REVIEW,
+        }
+        action = "accept" if accepts_request else "deny"
         if not already_accepted:
             try:
-                if decision is FriendRequestDecision.ACCEPT:
+                if accepts_request:
                     await relationship.accept()
                 else:
                     await relationship.delete()
@@ -251,12 +260,13 @@ class FriendRequestHandler:
 
         if already_accepted and decision is FriendRequestDecision.DENY:
             return (
-                f"{WARNING_MARK} Friend request from {pending.requester_label} "
-                "is already accepted."
+                f"{WARNING_MARK} Friend request from {pending.requester_label} is already accepted."
             )
 
-        verb = "Already accepted" if already_accepted else (
-            "Accepted" if decision is FriendRequestDecision.ACCEPT else "Denied"
+        verb = (
+            "Already accepted"
+            if already_accepted
+            else ("Accepted" if accepts_request else "Denied")
         )
         if application_admin_id is not None:
             try:
@@ -282,8 +292,7 @@ class FriendRequestHandler:
                     "accepted; application group created."
                 )
             return (
-                f"{CHECK_MARK} Friend request from {pending.requester_label} "
-                "is already accepted."
+                f"{CHECK_MARK} Friend request from {pending.requester_label} is already accepted."
             )
         return f"{CHECK_MARK} {verb} friend request from {pending.requester_label}."
 
@@ -396,7 +405,8 @@ def build_friend_request_dm(
     lines.extend(
         [
             "",
-            "Reply `y` to accept it. Reply `n` to deny it.",
+            "Reply `y` to accept it, `r` to accept it and open an application group, "
+            "or `n` to deny it.",
         ]
     )
     return "\n".join(lines)
@@ -406,6 +416,8 @@ def parse_friend_request_confirmation(content: str) -> FriendRequestDecision | N
     normalized = content.strip().lower()
     if normalized in _ACCEPT_WORDS:
         return FriendRequestDecision.ACCEPT
+    if normalized in _REVIEW_WORDS:
+        return FriendRequestDecision.REVIEW
     if normalized in _DENY_WORDS:
         return FriendRequestDecision.DENY
     return None
