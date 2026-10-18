@@ -15,7 +15,7 @@ Eva defaults to the official Z.AI standard API:
 ```bash
 API_KEY=your-standard-zai-key
 API_BASE_URL=https://api.z.ai/api/paas/v4
-MODEL_NAME=glm-5.3-flash
+MODEL_NAME=glm-5.3-flashx
 MODEL_REASONING_EFFORT=low
 MODEL_CLEAR_THINKING=true
 ```

@@ -23,7 +23,7 @@ from eva.security.urls import URLPolicyError, validate_url
 SETTINGS_DEFAULTS = {
     "api_base_url": "https://api.z.ai/api/paas/v4",
     "account_mode": "assistant",
-    "model_name": "glm-5.3-flash",
+    "model_name": "glm-5.3-flashx",
     "reasoning_effort": "low",
     "clear_thinking": True,
     "split_model_name": "",

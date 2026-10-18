@@ -151,7 +151,7 @@ def test_glm_requests_include_reasoning_policy_and_top_p() -> None:
     client = OpenAICompatibleClient(
         api_key="test",
         base_url="https://api.z.ai/api/paas/v4",
-        default_model="glm-5.3-flash",
+        default_model="glm-5.3-flashx",
         timeout_seconds=30.0,
         reasoning_effort="low",
         clear_thinking=True,
@@ -178,12 +178,12 @@ def test_glm_tool_continuation_can_preserve_thinking_history() -> None:
     client = OpenAICompatibleClient(
         api_key="test",
         base_url="https://api.z.ai/api/paas/v4",
-        default_model="glm-5.3-flash",
+        default_model="glm-5.3-flashx",
         timeout_seconds=30.0,
     )
     payload = client._build_completion_payload(
         messages=[],
-        model="glm-5.3-flash",
+        model="glm-5.3-flashx",
         temperature=0.7,
         max_tokens=32,
         tools=[],
