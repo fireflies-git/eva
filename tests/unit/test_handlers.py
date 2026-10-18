@@ -659,8 +659,16 @@ def test_clear_command_clears_only_current_channel_memory(monkeypatch, tmp_path)
     assert len(handler._history_store.get(2)) == 2
 
 
-@pytest.mark.parametrize("whitelisted", [False, True])
-def test_yuri_command_bypasses_ai_generation(monkeypatch, tmp_path, whitelisted: bool) -> None:
+@pytest.mark.parametrize(
+    ("guild", "expected_allow_nsfw"),
+    [(None, True), (SimpleNamespace(id=7), False)],
+)
+def test_yuri_command_bypasses_ai_generation(
+    monkeypatch,
+    tmp_path,
+    guild: object | None,
+    expected_allow_nsfw: bool,
+) -> None:
     class FailingReplyGenerationService:
         async def generate_reply(self, **kwargs: object) -> object:
             raise AssertionError("AI generation should not run for Yuri commands")
@@ -683,9 +691,7 @@ def test_yuri_command_bypasses_ai_generation(monkeypatch, tmp_path, whitelisted:
                 is_nsfw=False,
             )
 
-    handler = _build_handler(tmp_path)
-    if whitelisted:
-        handler._whitelist.add(2)
+    handler = _build_handler(tmp_path, account_mode="assistant")
     handler._reply_generation_service = cast(
         ReplyGenerationService, FailingReplyGenerationService()
     )
@@ -712,8 +718,9 @@ def test_yuri_command_bypasses_ai_generation(monkeypatch, tmp_path, whitelisted:
         discord.Message,
         SimpleNamespace(
             author=SimpleNamespace(id=2, display_name="friend"),
-            channel=SimpleNamespace(id=1),
+            channel=SimpleNamespace(id=1, guild=guild),
             content="eva yuri",
+            guild=guild,
             id=123,
             reference=None,
         ),
@@ -723,4 +730,4 @@ def test_yuri_command_bypasses_ai_generation(monkeypatch, tmp_path, whitelisted:
     asyncio.run(handler.on_message(client, message))
 
     assert delivered == [("✔ `yuri-7.png`", [("yuri-7.png", b"png-bytes")])]
-    assert handler._yuri_service.allow_nsfw is whitelisted
+    assert handler._yuri_service.allow_nsfw is expected_allow_nsfw

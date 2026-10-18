@@ -29,9 +29,8 @@ async def handle_yuri_command(
     content: str,
     trigger_prefix: str,
     yuri_service: YuriImageProvider | None,
-    allow_nsfw: bool,
 ) -> CommandOutcome:
-    if not _is_yuri_command(content=content, trigger_prefix=trigger_prefix):
+    if not is_yuri_command(content=content, trigger_prefix=trigger_prefix):
         return CommandOutcome.not_handled()
 
     if yuri_service is None:
@@ -40,6 +39,7 @@ async def handle_yuri_command(
             content=f"{X_MARK} Yuri images are disabled.",
         )
 
+    allow_nsfw = _is_private_channel(message)
     max_bytes = _get_guild_filesize_limit(message) or DEFAULT_DM_DOWNLOAD_LIMIT_BYTES
     async with _typing_context(message.channel):
         try:
@@ -54,6 +54,13 @@ async def handle_yuri_command(
                 content=f"{X_MARK} {exc}",
             )
 
+    if asset.is_nsfw and not allow_nsfw:
+        logger.error("Yuri service returned an NSFW image for a server channel")
+        return CommandOutcome(
+            handled=True,
+            content=f"{X_MARK} NSFW Yuri images are unavailable in server channels.",
+        )
+
     if asset.is_nsfw:
         content = f"{WARNING_MARK} Marked NSFW — `{asset.filename}`"
     else:
@@ -66,12 +73,17 @@ async def handle_yuri_command(
     )
 
 
-def _is_yuri_command(*, content: str, trigger_prefix: str) -> bool:
+def is_yuri_command(*, content: str, trigger_prefix: str) -> bool:
     text = content.strip()
     prefix = trigger_prefix.strip()
     if not text.lower().startswith(prefix.lower()):
         return False
     return text[len(prefix) :].strip().lower() == "yuri"
+
+
+def _is_private_channel(message: discord.Message) -> bool:
+    # Direct messages and group DMs both have no guild; server channels do.
+    return getattr(message, "guild", None) is None
 
 
 def _get_guild_filesize_limit(message: discord.Message) -> int | None:

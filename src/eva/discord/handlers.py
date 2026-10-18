@@ -80,7 +80,7 @@ from eva.discord.vision import (
     resolve_vision_selection,
 )
 from eva.discord.watermark_commands import handle_watermark_command
-from eva.discord.yuri_commands import YuriImageProvider, handle_yuri_command
+from eva.discord.yuri_commands import YuriImageProvider, handle_yuri_command, is_yuri_command
 from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
@@ -171,6 +171,10 @@ class SelfbotMessageHandler:
         if channel_id is None:
             return
 
+        is_yuri = is_yuri_command(
+            content=original_content,
+            trigger_prefix=self._settings.trigger_prefix,
+        )
         is_download_request = is_download_command(
             content=original_content,
             trigger_prefix=self._settings.trigger_prefix,
@@ -186,7 +190,8 @@ class SelfbotMessageHandler:
                 ):
                     return
             if (
-                not is_download_request
+                not is_yuri
+                and not is_download_request
                 and not is_admin
                 and not self._whitelist.contains(message.author.id)
             ):
@@ -478,10 +483,6 @@ class SelfbotMessageHandler:
             content=original_content,
             trigger_prefix=self._settings.trigger_prefix,
             yuri_service=self._yuri_service,
-            allow_nsfw=(
-                is_admin_user(user_id=message.author.id, is_owner=is_owner)
-                or self._whitelist.contains(message.author.id)
-            ),
         )
         if await self._handle_command_outcome(
             outcome=yuri_outcome,

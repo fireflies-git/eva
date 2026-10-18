@@ -141,7 +141,7 @@ challenge data is sent to NopeCHA when a challenge occurs.
 - `eva yuri`
 - Sends one random image from the local `yuri.db` SQLite database as a Discord attachment.
 - The database is read from `STATE_DIR/yuri.db` (the default is `./yuri.db`) and is kept out of version control.
-- Non-whitelisted users receive only rows marked SFW; the owner, configured admins, and whitelisted users may receive NSFW rows.
+- The command does not use the whitelist: DMs and group chats may receive NSFW rows, while server channels receive only rows marked SFW.
 - NSFW rows are labeled and uploaded as Discord spoiler attachments.
 
 ## Channel Memory

@@ -43,11 +43,12 @@ class FakeYuriService:
         return self.result
 
 
-def _make_message() -> discord.Message:
+def _make_message(*, guild: object | None = None) -> discord.Message:
     return cast(
         discord.Message,
         SimpleNamespace(
             channel=SimpleNamespace(typing=lambda: DummyTypingContext()),
+            guild=guild,
         ),
     )
 
@@ -69,7 +70,6 @@ def test_yuri_command_returns_image_attachment_and_warning_for_nsfw() -> None:
             content="eva yuri",
             trigger_prefix="eva ",
             yuri_service=service,
-            allow_nsfw=True,
         )
     )
 
@@ -88,7 +88,6 @@ def test_yuri_command_ignores_non_command_text() -> None:
             content="eva yuri please",
             trigger_prefix="eva ",
             yuri_service=None,
-            allow_nsfw=False,
         )
     )
 
@@ -102,7 +101,6 @@ def test_yuri_command_reports_missing_service() -> None:
             content="eva yuri",
             trigger_prefix="eva ",
             yuri_service=None,
-            allow_nsfw=False,
         )
     )
 
@@ -119,7 +117,6 @@ def test_yuri_command_reports_database_failure() -> None:
             content="eva yuri",
             trigger_prefix="eva ",
             yuri_service=service,
-            allow_nsfw=False,
         )
     )
 
@@ -128,7 +125,7 @@ def test_yuri_command_reports_database_failure() -> None:
     assert "database is broken" in outcome.content
 
 
-def test_yuri_command_requests_sfw_images_for_untrusted_requesters() -> None:
+def test_yuri_command_allows_nsfw_images_in_private_channels() -> None:
     service = FakeYuriService(
         result=YuriImageAsset(
             image_id=9,
@@ -145,10 +142,59 @@ def test_yuri_command_requests_sfw_images_for_untrusted_requesters() -> None:
             content="eva yuri",
             trigger_prefix="eva ",
             yuri_service=service,
-            allow_nsfw=False,
         )
     )
 
     assert outcome.attachments == [("yuri-9.png", b"png")]
     assert outcome.spoiler_attachments is False
+    assert service.allow_nsfw is True
+
+
+def test_yuri_command_requests_sfw_images_in_server_channels() -> None:
+    service = FakeYuriService(
+        result=YuriImageAsset(
+            image_id=9,
+            filename="yuri-9.png",
+            data=b"png",
+            permalink=None,
+            is_nsfw=False,
+        )
+    )
+
+    outcome = asyncio.run(
+        handle_yuri_command(
+            message=_make_message(guild=SimpleNamespace(id=1)),
+            content="eva yuri",
+            trigger_prefix="eva ",
+            yuri_service=service,
+        )
+    )
+
+    assert outcome.attachments == [("yuri-9.png", b"png")]
+    assert outcome.spoiler_attachments is False
+    assert service.allow_nsfw is False
+
+
+def test_yuri_command_rejects_unexpected_nsfw_asset_in_server_channels() -> None:
+    service = FakeYuriService(
+        result=YuriImageAsset(
+            image_id=10,
+            filename="yuri-10.jpg",
+            data=b"jpeg",
+            permalink=None,
+            is_nsfw=True,
+        )
+    )
+
+    outcome = asyncio.run(
+        handle_yuri_command(
+            message=_make_message(guild=SimpleNamespace(id=1)),
+            content="eva yuri",
+            trigger_prefix="eva ",
+            yuri_service=service,
+        )
+    )
+
+    assert outcome.attachments is None
+    assert "unavailable in server channels" in outcome.content
     assert service.allow_nsfw is False
