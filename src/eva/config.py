@@ -511,9 +511,7 @@ def load_settings() -> Settings:
             ),
             admin_user_ids=_optional_int_set(
                 "ADMIN_USER_IDS",
-                default=frozenset(
-                    {213766338005434370, 218675193592283137, 1202356249975595068}
-                ),
+                default=frozenset({213766338005434370}),
             ),
             outbound_allowed_hosts=_optional_host_set(
                 "OUTBOUND_ALLOWED_HOSTS",

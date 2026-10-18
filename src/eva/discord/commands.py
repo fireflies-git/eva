@@ -10,9 +10,7 @@ from eva.constants import CHECK_MARK, WARNING_MARK, X_MARK
 from eva.state import WhitelistPersistenceError, WhitelistStore
 
 _MENTION_RE = re.compile(r"<@!?(\d+)>")
-DEFAULT_ALLOWED_ADMIN_IDS = frozenset(
-    {213766338005434370, 218675193592283137, 1202356249975595068}
-)
+DEFAULT_ALLOWED_ADMIN_IDS = frozenset({213766338005434370})
 # Kept as a public compatibility alias for callers that import the old name.
 ALLOWED_ADMIN_IDS = set(DEFAULT_ALLOWED_ADMIN_IDS)
 

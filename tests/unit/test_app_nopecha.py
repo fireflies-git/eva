@@ -23,6 +23,7 @@ def test_app_wires_keyless_nopecha_only_when_enabled(
     monkeypatch.setenv("DISCORD_TOKEN", "test-token")
     monkeypatch.setenv("API_KEY", "test-key")
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("ADMIN_USER_IDS", "")
     monkeypatch.setenv("TERMINAL_ENABLED", "false")
     monkeypatch.setenv("NOPECHA_ENABLED", str(enabled).lower())
     monkeypatch.delenv("NOPECHA_API_KEY", raising=False)

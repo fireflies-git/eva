@@ -35,7 +35,7 @@ def test_terminal_command_runs_for_admin(tmp_path: Path) -> None:
     response = asyncio.run(
         handle_terminal_command(
             content="eva shell python --version",
-            user_id=218675193592283137,
+            user_id=213766338005434370,
             is_owner=False,
             trigger_prefix="eva ",
             terminal_service=_build_terminal_service(tmp_path),
@@ -51,7 +51,7 @@ def test_terminal_command_supports_exec_alias(tmp_path: Path) -> None:
     response = asyncio.run(
         handle_terminal_command(
             content="eva exec python --version",
-            user_id=218675193592283137,
+            user_id=213766338005434370,
             is_owner=False,
             trigger_prefix="eva ",
             terminal_service=_build_terminal_service(tmp_path),
@@ -66,7 +66,7 @@ def test_terminal_command_returns_usage_for_empty_command(tmp_path: Path) -> Non
     response = asyncio.run(
         handle_terminal_command(
             content="eva shell",
-            user_id=218675193592283137,
+            user_id=213766338005434370,
             is_owner=False,
             trigger_prefix="eva ",
             terminal_service=_build_terminal_service(tmp_path),

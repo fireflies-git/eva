@@ -11,7 +11,7 @@ from eva.discord.friend_requests import FriendRequestHandler
 from eva.discord.social_commands import SocialClient, handle_social_command
 from eva.state import PendingFriendRequestStore
 
-_ADMIN_ID = 218675193592283137
+_ADMIN_ID = 213766338005434370
 _TRIGGER_PREFIX = "eva "
 
 

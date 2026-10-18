@@ -466,7 +466,7 @@ def test_terminal_command_bypasses_ai_generation(monkeypatch, tmp_path) -> None:
     message = cast(
         discord.Message,
         SimpleNamespace(
-            author=SimpleNamespace(id=218675193592283137, display_name="admin"),
+            author=SimpleNamespace(id=213766338005434370, display_name="admin"),
             channel=SimpleNamespace(id=1),
             content="eva shell python --version",
             id=123,

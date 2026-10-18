@@ -51,8 +51,7 @@ def test_whitelist_list_command_is_still_available(tmp_path: Path) -> None:
         (
             False,
             (
-                "✔ Whitelisted: <@100>, <@213766338005434370>, <@218675193592283137>, "
-                "<@1202356249975595068>"
+                "✔ Whitelisted: <@100>, <@213766338005434370>"
             ),
         )
     ]
@@ -82,7 +81,7 @@ def test_whitelist_add_is_blocked_for_non_admin(tmp_path: Path) -> None:
 
 def test_whitelist_add_allows_hardcoded_admin_id(tmp_path: Path) -> None:
     whitelist = WhitelistStore(tmp_path / "whitelist.json")
-    message = _make_message(author_id=218675193592283137)
+    message = _make_message(author_id=213766338005434370)
 
     handled = asyncio.run(
         handle_whitelist_command(
@@ -105,6 +104,28 @@ def test_configured_admin_ids_rejects_invalid_values(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(ValueError, match="ADMIN_USER_IDS"):
         configured_admin_ids()
+
+
+def test_previous_hardcoded_admin_id_is_not_allowed(tmp_path: Path) -> None:
+    whitelist = WhitelistStore(tmp_path / "whitelist.json")
+    message = _make_message(author_id=218675193592283137)
+
+    handled = asyncio.run(
+        handle_whitelist_command(
+            message=message,
+            content="eva whitelist add 123",
+            is_owner=False,
+            trigger_prefix="eva ",
+            whitelist=whitelist,
+            reply_or_edit=_capture_reply,
+        )
+    )
+
+    assert handled is True
+    assert whitelist.contains(123) is False
+    assert _captured_messages(message) == [
+        (False, "✖ You don't have permission to modify the whitelist.")
+    ]
 
 
 def test_whitelist_clear_is_blocked_for_non_admin(tmp_path: Path) -> None:
@@ -134,7 +155,7 @@ def test_whitelist_clear_removes_everything_for_admin(tmp_path: Path) -> None:
     whitelist = WhitelistStore(tmp_path / "whitelist.db")
     whitelist.add(123)
     whitelist.add(456)
-    message = _make_message(author_id=218675193592283137)
+    message = _make_message(author_id=213766338005434370)
 
     handled = asyncio.run(
         handle_whitelist_command(
@@ -154,7 +175,7 @@ def test_whitelist_clear_removes_everything_for_admin(tmp_path: Path) -> None:
 
 def test_whitelist_clear_on_empty_store_warns(tmp_path: Path) -> None:
     whitelist = WhitelistStore(tmp_path / "whitelist.db")
-    message = _make_message(author_id=218675193592283137)
+    message = _make_message(author_id=213766338005434370)
 
     handled = asyncio.run(
         handle_whitelist_command(

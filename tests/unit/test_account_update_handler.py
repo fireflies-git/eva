@@ -23,7 +23,7 @@ from eva.state import (
     WhitelistStore,
 )
 
-_ADMIN_ID = 218675193592283137
+_ADMIN_ID = 213766338005434370
 
 
 def _settings(*, account_mode: str = "assistant") -> Settings:

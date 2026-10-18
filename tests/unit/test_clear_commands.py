@@ -24,7 +24,7 @@ def test_clear_command_clears_for_admin() -> None:
     response = asyncio.run(
         handle_clear_command(
             content="eva clear",
-            user_id=218675193592283137,
+            user_id=213766338005434370,
             is_owner=False,
             trigger_prefix="eva ",
         )
@@ -39,7 +39,7 @@ def test_clear_command_ignores_other_messages() -> None:
     response = asyncio.run(
         handle_clear_command(
             content="eva help",
-            user_id=218675193592283137,
+            user_id=213766338005434370,
             is_owner=False,
             trigger_prefix="eva ",
         )

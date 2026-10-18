@@ -73,7 +73,7 @@ ENV_FIELDS: tuple[EnvField, ...] = (
     EnvField("CONTEXT7_API_KEY", "", False, "Context7 API key (optional)", True),
     EnvField(
         "ADMIN_USER_IDS",
-        "213766338005434370,218675193592283137,1202356249975595068",
+        "213766338005434370",
         False,
         "Comma-separated administrator Discord user IDs",
     ),
