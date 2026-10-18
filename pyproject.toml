@@ -48,3 +48,6 @@ select = ["E", "F", "I", "UP", "B"]
 python = ".venv"
 python-version = "3.12"
 root = ["src"]
+
+[tool.pyright]
+include = ["src", "tests"]

@@ -7,6 +7,7 @@ from eva.cli import run_settings
 
 def test_run_settings_writes_account_mode_to_env(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVA_ENV_PATH", str(tmp_path / ".env"))
 
     exit_code = run_settings(["set", "account-mode", "standalone"])
 
@@ -16,6 +17,7 @@ def test_run_settings_writes_account_mode_to_env(monkeypatch, tmp_path) -> None:
 
 def test_run_settings_show_uses_default_when_unset(capsys, monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVA_ENV_PATH", str(tmp_path / ".env"))
 
     exit_code = run_settings(["show"])
 
