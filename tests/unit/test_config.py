@@ -25,8 +25,8 @@ def test_load_settings_defaults_to_glm_reasoning_policy(monkeypatch) -> None:
 
     settings = load_settings()
 
-    assert settings.api_base_url == "https://api.z.ai/api/paas/v4"
-    assert settings.model_name == "glm-5.3-flash"
+    assert settings.api_base_url == "https://api.deepseek.com"
+    assert settings.model_name == "deepseek-v4-flash"
     assert settings.reasoning_effort == "low"
     assert settings.clear_thinking is True
 

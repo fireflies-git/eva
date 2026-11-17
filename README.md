@@ -8,22 +8,20 @@ AI Assistant selfbot for Discord.
 uv run eva
 ```
 
-## Z.AI and GLM-5.3-Flash
+## DeepSeek
 
-Eva defaults to the official Z.AI standard API:
+Eva defaults to the DeepSeek API:
 
 ```bash
-API_KEY=your-standard-zai-key
-API_BASE_URL=https://api.z.ai/api/paas/v4
-MODEL_NAME=glm-5.3-flash
-MODEL_REASONING_EFFORT=low
-MODEL_CLEAR_THINKING=true
+API_KEY=your-deepseek-key
+API_BASE_URL=https://api.deepseek.com
+MODEL_NAME=deepseek-v4-flash
 ```
 
-Standard API keys and Coding Plan keys use different Z.AI endpoints. Use the
-endpoint that matches the key type. `SPLIT_MODEL_NAME` and `TOS_MODEL_NAME`
-remain optional and default to `MODEL_NAME`; changing the generic model or base
-URL is the supported rollback path.
+`SPLIT_MODEL_NAME` and `TOS_MODEL_NAME` remain optional and default to
+`MODEL_NAME`. GLM-5.3-Flash is still supported by pointing `API_BASE_URL` and
+`MODEL_NAME` at Z.AI; the GLM reasoning settings (`MODEL_REASONING_EFFORT`,
+`MODEL_CLEAR_THINKING`) only apply to `glm-5.3-flash*` models.
 
 Run the provider smoke check without connecting to Discord:
 
