@@ -48,3 +48,11 @@ def test_scope_all_requires_a_real_requester() -> None:
 def test_invalid_scope_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown autonomous tool scope"):
         ToolAuthorizer(scope="everyone")
+
+
+def test_web_search_is_a_protected_tool() -> None:
+    authorizer = ToolAuthorizer(scope="owner_admin")
+
+    assert authorizer.is_allowed("web_search", ToolExecutionContext(requester_id=1, is_owner=True))
+    assert not authorizer.is_allowed("web_search", ToolExecutionContext(requester_id=2))
+    assert not authorizer.is_allowed("web_search", None)

@@ -65,3 +65,9 @@ FRIEND_REQUEST_PROFILE_MUTUAL_GUILDS_LIMIT = 5
 
 RESPONSE_WATERMARK = "-# -eva"
 SPLIT_TRIGGER = "/// split"
+
+TOOL_RUN_TERMINAL_COMMAND = "run_terminal_command"
+TOOL_FETCH_WEB_PAGE = "fetch_web_page"
+TOOL_LOOKUP_DOCUMENTATION = "lookup_documentation"
+TOOL_WEB_SEARCH = "web_search"
+TOOL_INSPECT_ATTACHED_IMAGES = "inspect_attached_images"

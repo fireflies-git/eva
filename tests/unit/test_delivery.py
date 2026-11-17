@@ -301,3 +301,33 @@ def test_deliver_reply_response_can_allow_embeds() -> None:
     assert result.primary_delivered is True
     assert message.reply_suppress_flags == [False]
     assert channel.sent_suppress_flags and not any(channel.sent_suppress_flags)
+
+
+def test_build_plain_response_chunks_without_splitting_keeps_one_message() -> None:
+    from eva.discord.formatting import build_plain_response_chunks
+
+    text = "First sentence. Second sentence.\n\n- item one\n- item two"
+    assert build_plain_response_chunks(text, split_messages=False) == [text]
+
+
+def test_build_plain_response_chunks_without_splitting_ignores_split_trigger() -> None:
+    from eva.discord.formatting import build_plain_response_chunks
+
+    chunks = build_plain_response_chunks("One.\n/// split\nTwo.", split_messages=False)
+    assert chunks == ["One.\n\nTwo."]
+
+
+def test_build_plain_response_chunks_without_splitting_still_respects_limit() -> None:
+    from eva.discord.formatting import build_plain_response_chunks
+
+    chunks = build_plain_response_chunks("word " * 100, split_messages=False, message_limit=120)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 120 for chunk in chunks)
+
+
+def test_build_response_chunks_without_splitting_keeps_one_message() -> None:
+    from eva.discord.formatting import build_response_chunks
+
+    chunks = build_response_chunks("eva hi", "One. Two. Three.", split_messages=False)
+    assert len(chunks) == 1
+    assert chunks[0].endswith("One. Two. Three.")

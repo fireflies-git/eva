@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 import discord
 
 from eva.prompts.capabilities import build_capabilities_section
@@ -16,7 +18,7 @@ from eva.prompts.security import build_security_section
 def build_friend_request_review_prompt(*, account_mode: str) -> str:
     """Compose Eva's persona with the friend-request review instructions."""
     return "\n\n---\n\n".join(
-        [build_persona_section(account_mode), FRIEND_REQUEST_REVIEW_INSTRUCTIONS]
+        [build_persona_section(), FRIEND_REQUEST_REVIEW_INSTRUCTIONS]
     )
 
 
@@ -25,30 +27,15 @@ def build_system_prompt(
     client: discord.Client,
     *,
     account_mode: str,
-    terminal_enabled: bool,
-    autonomous_terminal_enabled: bool,
-    playwright_enabled: bool = False,
-    context7_enabled: bool = False,
-    exa_enabled: bool = False,
+    available_tools: Collection[str] = frozenset(),
     requester_is_admin: bool = False,
-    vision_enabled: bool = False,
 ) -> str:
     sections = [
-        build_persona_section(
-            account_mode,
-            requester_is_admin=requester_is_admin,
-        ),
-        build_capabilities_section(
-            terminal_enabled=terminal_enabled,
-            autonomous_terminal_enabled=autonomous_terminal_enabled,
-            playwright_enabled=playwright_enabled,
-            context7_enabled=context7_enabled,
-            exa_enabled=exa_enabled,
-            vision_enabled=vision_enabled,
-        ),
+        build_persona_section(requester_is_admin=requester_is_admin),
+        build_capabilities_section(available_tools=available_tools),
         build_environment_section(),
-        build_formatting_section(),
-        build_context_section(channel, client, account_mode),
+        build_formatting_section(allow_message_splitting=account_mode == "standalone"),
+        build_context_section(channel, client),
         build_security_section(),
     ]
     return "\n\n---\n\n".join(sections)

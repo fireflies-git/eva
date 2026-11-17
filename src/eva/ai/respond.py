@@ -34,6 +34,11 @@ from eva.constants import (
 from eva.logging import redact_secrets
 from eva.tools import ToolAuthorizer, ToolExecutionContext, ToolService, VisionInspectionTool
 
+TOOL_BUDGET_EXHAUSTED_NUDGE = (
+    "Tool budget is used up. Do not call more tools. Answer the user now using "
+    "only the tool results gathered above, and say what you could not confirm."
+)
+
 logger = logging.getLogger(__name__)
 EMPTY_RESPONSE_ERROR = "Model returned empty response content"
 DISCORD_MINIMUM_AGE = 13
@@ -528,14 +533,13 @@ async def _generate_reply_with_tools(
     requester_id = tool_context.requester_id if tool_context is not None else None
 
     try:
-        for round_index in range(max_tool_rounds):
+        for _ in range(max_tool_rounds):
             response = await tool_client.chat_completion_with_tools(
                 messages=tool_messages,
                 tools=tool_definitions,
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                clear_thinking=round_index == 0,
             )
 
             if not response.tool_calls:
@@ -547,7 +551,7 @@ async def _generate_reply_with_tools(
             # message, otherwise the next round 400s on unanswered tool_call_ids.
             remaining_calls = max_tool_calls - total_tool_calls
             if remaining_calls <= 0:
-                raise AIClientError("Model exceeded tool-call limit")
+                break
             answered_tool_calls = response.tool_calls[
                 : min(MAX_TERMINAL_TOOL_CALLS_PER_ROUND, remaining_calls)
             ]
@@ -565,42 +569,20 @@ async def _generate_reply_with_tools(
             )
             tool_messages.append(assistant_message)
 
-            for tool_call in answered_tool_calls:
-                service = name_to_service.get(tool_call.name)
-                if service is None:
-                    result = "Tool error: unknown tool."
-                elif not _is_tool_allowed(
-                    tool_call.name,
-                    tool_authorizer=tool_authorizer,
-                    tool_context=tool_context,
-                ):
-                    # Re-check immediately before execution.  This is kept
-                    # outside the prompt so untrusted model text cannot grant
-                    # itself a capability.
-                    logger.warning(
-                        "autonomous_tool_denied tool=%s requester_id=%s",
-                        tool_call.name,
-                        tool_context.requester_id if tool_context is not None else None,
+            results = await asyncio.gather(
+                *(
+                    _execute_tool_call(
+                        tool_call,
+                        name_to_service=name_to_service,
+                        tool_authorizer=tool_authorizer,
+                        tool_context=tool_context,
+                        tool_semaphore=tool_semaphore,
+                        requester_tool_semaphore=requester_tool_semaphore,
                     )
-                    result = f"Tool error: requester is not authorized to use '{tool_call.name}'."
-                elif len(tool_call.arguments) > MAX_AUTONOMOUS_TOOL_ARGUMENT_CHARS:
-                    result = "Tool error: arguments exceed the configured size limit."
-                else:
-                    try:
-                        async with tool_semaphore:
-                            async with requester_tool_semaphore:
-                                result = await service.run_autonomous_tool(tool_call.arguments)
-                    except Exception as exc:
-                        logger.warning(
-                            "autonomous_tool_failed tool=%s requester_id=%s error_type=%s",
-                            tool_call.name,
-                            tool_context.requester_id if tool_context is not None else None,
-                            type(exc).__name__,
-                        )
-                        result = "Tool error: execution failed."
-
-                result = _sanitize_tool_result(result)
-
+                    for tool_call in answered_tool_calls
+                )
+            )
+            for tool_call, result in zip(answered_tool_calls, results, strict=True):
                 tool_messages.append(
                     {
                         "role": "tool",
@@ -609,10 +591,86 @@ async def _generate_reply_with_tools(
                         "content": f"[UNTRUSTED_TOOL_OUTPUT]\n{result}",
                     }
                 )
-        raise AIClientError("Model exceeded tool-call limit")
+        return await _final_answer_without_tools(
+            tool_client,
+            tool_messages=tool_messages,
+            model_name=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
     except AIClientError:
         logger.exception("Autonomous tool flow failed; falling back to plain reply")
         return None
+
+
+async def _final_answer_without_tools(
+    client: ChatCompletionClient,
+    *,
+    tool_messages: Sequence[ChatMessage],
+    model_name: str,
+    temperature: float,
+    max_tokens: int,
+) -> str:
+    """Ask for an answer from gathered tool results once tool budget is spent."""
+
+    messages: list[ChatMessage] = [
+        *tool_messages,
+        {"role": "user", "content": TOOL_BUDGET_EXHAUSTED_NUDGE},
+    ]
+    content = await client.chat_completion(
+        messages=messages,
+        model=model_name,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    if not content.strip():
+        raise AIClientError(EMPTY_RESPONSE_ERROR)
+    return content
+
+
+async def _execute_tool_call(
+    tool_call: ModelToolCall,
+    *,
+    name_to_service: dict[str, ToolService],
+    tool_authorizer: ToolAuthorizer,
+    tool_context: ToolExecutionContext | None,
+    tool_semaphore: asyncio.Semaphore,
+    requester_tool_semaphore: asyncio.Semaphore,
+) -> str:
+    """Run one tool call and return sanitized output; never raises tool errors."""
+
+    requester_id = tool_context.requester_id if tool_context is not None else None
+    service = name_to_service.get(tool_call.name)
+    if service is None:
+        return _sanitize_tool_result("Tool error: unknown tool.")
+    if not _is_tool_allowed(
+        tool_call.name,
+        tool_authorizer=tool_authorizer,
+        tool_context=tool_context,
+    ):
+        # Re-check immediately before execution.  This is kept outside the
+        # prompt so untrusted model text cannot grant itself a capability.
+        logger.warning(
+            "autonomous_tool_denied tool=%s requester_id=%s", tool_call.name, requester_id
+        )
+        return _sanitize_tool_result(
+            f"Tool error: requester is not authorized to use '{tool_call.name}'."
+        )
+    if len(tool_call.arguments) > MAX_AUTONOMOUS_TOOL_ARGUMENT_CHARS:
+        return _sanitize_tool_result("Tool error: arguments exceed the configured size limit.")
+    try:
+        async with tool_semaphore:
+            async with requester_tool_semaphore:
+                result = await service.run_autonomous_tool(tool_call.arguments)
+    except Exception as exc:
+        logger.warning(
+            "autonomous_tool_failed tool=%s requester_id=%s error_type=%s",
+            tool_call.name,
+            requester_id,
+            type(exc).__name__,
+        )
+        return _sanitize_tool_result("Tool error: execution failed.")
+    return _sanitize_tool_result(result)
 
 
 def _is_tool_allowed(

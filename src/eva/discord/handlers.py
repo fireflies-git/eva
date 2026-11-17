@@ -924,6 +924,7 @@ class SelfbotMessageHandler:
                 reply_attachments=ai_reply.attachments,
                 suppress_embeds=suppress_embeds,
                 followup_delay_seconds=self._calculate_followup_delay_seconds,
+                split_messages=False,
             )
         if is_standalone:
             return await self._deliver_standalone_reply_response(
@@ -936,6 +937,7 @@ class SelfbotMessageHandler:
             reply_attachments=ai_reply.attachments,
             suppress_embeds=suppress_embeds,
             followup_delay_seconds=self._calculate_followup_delay_seconds,
+            split_messages=False,
         )
 
     async def _deliver_standalone_reply_response(
@@ -981,6 +983,7 @@ class SelfbotMessageHandler:
                 reply_content=content,
                 reply_attachments=attachments,
                 spoiler_attachments=spoiler_attachments,
+                split_messages=False,
             )
             return
 
@@ -989,6 +992,7 @@ class SelfbotMessageHandler:
             reply_content=content,
             reply_attachments=attachments,
             spoiler_attachments=spoiler_attachments,
+            split_messages=self._is_standalone_mode(),
         )
 
     def _clear_channel_memory(self, channel_id: int) -> None:

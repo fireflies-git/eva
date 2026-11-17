@@ -11,6 +11,7 @@ DEFAULT_PROTECTED_TOOL_NAMES: Final[frozenset[str]] = frozenset(
         "run_terminal_command",
         "fetch_web_page",
         "lookup_documentation",
+        "web_search",
     }
 )
 

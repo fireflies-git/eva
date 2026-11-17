@@ -172,3 +172,13 @@ def test_response_body_cap_rejects_oversized_payload() -> None:
 
     with pytest.raises(RuntimeError, match="size limit"):
         asyncio.run(_read_response_body(response, max_bytes=10))
+
+
+def test_tool_descriptions_include_usage_guidance() -> None:
+    function = cast(dict[str, Any], _service(None).build_autonomous_tool_definition()["function"])
+    description = function["description"]
+
+    assert "fresh" in description
+    assert "Do not use" in description
+    assert "untrusted" in description
+    assert "fetch_web_page" in description

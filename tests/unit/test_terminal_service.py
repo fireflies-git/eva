@@ -271,3 +271,19 @@ def test_terminal_workdir_rejects_symlinks(tmp_path: Path) -> None:
             timeout_seconds=5.0,
             max_output_chars=200,
         )
+
+
+def test_autonomous_tool_description_has_when_to_use_guidance(tmp_path: Path) -> None:
+    service = TerminalService(
+        workdir=tmp_path,
+        shell="/bin/sh",
+        timeout_seconds=5.0,
+        max_output_chars=200,
+    )
+
+    description = service.build_autonomous_tool_definition()["function"]["description"]  # type: ignore[index]
+
+    assert "ONE" in description
+    assert "git status" in description
+    assert "allowlisted" in description
+    assert "redirects" in description

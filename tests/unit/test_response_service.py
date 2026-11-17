@@ -288,6 +288,146 @@ def test_tool_loop_caps_unanswered_tool_calls_on_assistant_message() -> None:
     assert {message["tool_call_id"] for message in tool_messages} == answered_ids
 
 
+class AlwaysCallingToolClient:
+    """Requests tools every round; plain completion produces the final answer."""
+
+    def __init__(
+        self, *, calls_per_round: int = 1, final: str | Exception = "final answer"
+    ) -> None:
+        self.calls_per_round = calls_per_round
+        self.final = final
+        self.tool_rounds = 0
+        self.plain_messages: list[list[dict[str, Any]]] = []
+
+    async def chat_completion(self, **kwargs: object) -> str:
+        messages = cast(list[dict[str, Any]], kwargs["messages"])
+        is_final = messages[-1].get("role") == "user" and any(
+            message.get("role") == "tool" for message in messages
+        )
+        if not is_final:
+            return "plain fallback"
+        self.plain_messages.append(messages)
+        if isinstance(self.final, Exception):
+            raise self.final
+        return self.final
+
+    async def chat_completion_with_tools(self, **kwargs: object) -> ChatCompletionOutput:
+        self.tool_rounds += 1
+        return ChatCompletionOutput(
+            content=None,
+            tool_calls=[
+                ModelToolCall(id=f"r{self.tool_rounds}-{index}", name="fake_tool", arguments="{}")
+                for index in range(self.calls_per_round)
+            ],
+        )
+
+
+def _generate_with_tools(
+    client: object, services: list[ToolService], **service_kwargs: Any
+) -> str:
+    service = ResponseService(
+        client=cast(Any, client),
+        model_name="model",
+        tool_services=services,
+        tool_authorizer=ToolAuthorizer(protected_tool_names={"fake_tool"}),
+        **service_kwargs,
+    )
+    reply = asyncio.run(
+        service.generate_reply(
+            system_prompt="prompt",
+            context_messages=[],
+            history_messages=[],
+            user_message="use tools",
+            reply_context=None,
+            requester_context=None,
+            tool_context=ToolExecutionContext(requester_id=1, is_admin=True),
+        )
+    )
+    return reply.content
+
+
+def test_exhausted_tool_rounds_still_answer_from_gathered_results() -> None:
+    client = AlwaysCallingToolClient(final="answer from results")
+
+    content = _generate_with_tools(client, [FakeToolService()])
+
+    assert content == "answer from results"
+    assert client.plain_messages
+    final_messages = client.plain_messages[-1]
+    assert any(
+        message.get("role") == "tool" and "tool result" in message["content"]
+        for message in final_messages
+    )
+
+
+def test_failed_final_no_tools_call_falls_back_to_plain_reply() -> None:
+    client = AlwaysCallingToolClient(final=AIClientError("boom"))
+
+    content = _generate_with_tools(client, [FakeToolService()])
+
+    assert content == "plain fallback"
+
+
+def test_empty_final_no_tools_call_falls_back_to_plain_reply() -> None:
+    client = AlwaysCallingToolClient(final="   ")
+
+    content = _generate_with_tools(client, [FakeToolService()])
+
+    assert content == "plain fallback"
+
+
+class OrderedToolService:
+    """First call finishes last; calls with 'fail' arguments raise."""
+
+    @property
+    def autonomous_tool_name(self) -> str:
+        return "fake_tool"
+
+    def build_autonomous_tool_definition(self) -> dict[str, object]:
+        return {"type": "function", "function": {"name": "fake_tool"}}
+
+    async def run_autonomous_tool(self, arguments: str) -> str:
+        await asyncio.sleep(0.05 if arguments == "slow" else 0)
+        if arguments == "fail":
+            raise RuntimeError("tool exploded")
+        return f"result-{arguments}"
+
+
+class ScriptedArgumentsClient:
+    def __init__(self) -> None:
+        self.second_round_messages: list[dict[str, Any]] = []
+
+    async def chat_completion(self, **kwargs: object) -> str:
+        return "plain fallback"
+
+    async def chat_completion_with_tools(self, **kwargs: object) -> ChatCompletionOutput:
+        messages = cast(list[dict[str, Any]], kwargs["messages"])
+        if any(message.get("role") == "tool" for message in messages):
+            self.second_round_messages = messages
+            return ChatCompletionOutput(content="done", tool_calls=[])
+        return ChatCompletionOutput(
+            content=None,
+            tool_calls=[
+                ModelToolCall(id="a", name="fake_tool", arguments="slow"),
+                ModelToolCall(id="b", name="fake_tool", arguments="fail"),
+                ModelToolCall(id="c", name="fake_tool", arguments="fast"),
+            ],
+        )
+
+
+def test_tool_calls_run_concurrently_in_order_and_isolate_failures() -> None:
+    client = ScriptedArgumentsClient()
+
+    content = _generate_with_tools(client, [OrderedToolService()])
+
+    assert content == "done"
+    tool_messages = [m for m in client.second_round_messages if m.get("role") == "tool"]
+    assert [m["tool_call_id"] for m in tool_messages] == ["a", "b", "c"]
+    assert "result-slow" in tool_messages[0]["content"]
+    assert "execution failed" in tool_messages[1]["content"]
+    assert "result-fast" in tool_messages[2]["content"]
+
+
 def test_response_service_prefers_canonical_discord_context() -> None:
     client = FakeChatClient()
     service = ResponseService(client=client, model_name="model")

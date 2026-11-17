@@ -191,12 +191,31 @@ def _remove_terminal_period(text: str) -> str:
     return f"{body}{watermark}"
 
 
+def _split_by_length_only(text: str, *, first_limit: int, continuation_limit: int) -> list[str]:
+    chunks: list[str] = []
+    pending = text.strip() or EMPTY_RESPONSE
+    limit = max(first_limit, 1)
+    while len(pending) > limit:
+        piece, pending = _take_chunk(pending, limit)
+        chunks.append(piece)
+        limit = max(continuation_limit, 1)
+    chunks.append(pending)
+    return chunks
+
+
 def split_reply_for_limits(
     reply_content: str,
     *,
     first_limit: int,
     continuation_limit: int,
+    split_into_units: bool = True,
 ) -> list[str]:
+    if not split_into_units:
+        return _split_by_length_only(
+            reply_content,
+            first_limit=first_limit,
+            continuation_limit=continuation_limit,
+        )
     sections = _split_into_message_units(reply_content)
     chunks: list[str] = []
     current = ""
@@ -236,12 +255,20 @@ def split_message_content(
     text: str,
     *,
     message_limit: int = DISCORD_MESSAGE_LIMIT,
+    split_into_units: bool = True,
 ) -> list[str]:
     return split_reply_for_limits(
         text,
         first_limit=message_limit,
         continuation_limit=message_limit,
+        split_into_units=split_into_units,
     )
+
+
+def _segments_for_delivery(reply_content: str, *, split_messages: bool) -> list[str]:
+    if split_messages:
+        return split_on_text_triggers(reply_content)
+    return ["\n\n".join(split_on_text_triggers(reply_content))]
 
 
 def split_on_text_triggers(content: str) -> list[str]:
@@ -309,11 +336,16 @@ def build_plain_response_chunks(
     reply_content: str,
     *,
     message_limit: int = DISCORD_MESSAGE_LIMIT,
+    split_messages: bool = True,
 ) -> list[str]:
-    segments = split_on_text_triggers(reply_content)
+    segments = _segments_for_delivery(reply_content, split_messages=split_messages)
     all_chunks: list[str] = []
     for segment in segments:
-        segment_chunks = split_message_content(segment, message_limit=message_limit)
+        segment_chunks = split_message_content(
+            segment,
+            message_limit=message_limit,
+            split_into_units=split_messages,
+        )
         all_chunks.extend(segment_chunks)
     return all_chunks
 
@@ -331,10 +363,11 @@ def build_response_chunks(
     reply_content: str,
     *,
     message_limit: int = DISCORD_MESSAGE_LIMIT,
+    split_messages: bool = True,
 ) -> list[str]:
     layout = build_response_chunk_layout(original_content, message_limit=message_limit)
     chunk_bodies: list[str] = []
-    for segment in split_on_text_triggers(reply_content):
+    for segment in _segments_for_delivery(reply_content, split_messages=split_messages):
         # Only the very first body gets the larger first-message room; every
         # later body (including the first of each new segment) is a continuation.
         first_limit = layout.continuation_body_limit if chunk_bodies else layout.first_body_limit
@@ -343,6 +376,7 @@ def build_response_chunks(
                 segment,
                 first_limit=first_limit,
                 continuation_limit=layout.continuation_body_limit,
+                split_into_units=split_messages,
             )
         )
     return format_response_chunks(

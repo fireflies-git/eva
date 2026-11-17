@@ -65,9 +65,10 @@ class VisionInspectionTool:
             "function": {
                 "name": _AUTONOMOUS_TOOL_NAME,
                 "description": (
-                    "Inspect currently available Discord image attachments when visual "
-                    "evidence is needed to answer the user. Decide independently whether "
-                    "to use this tool; do not call it for ordinary text-only requests. "
+                    "Inspect currently available Discord image attachments. Call it "
+                    "whenever the current message has images and the answer depends on "
+                    "what is visible; do not call it for ordinary text-only requests. "
+                    "Never describe image details this tool did not return. "
                     f"{availability}"
                 ),
                 "parameters": {

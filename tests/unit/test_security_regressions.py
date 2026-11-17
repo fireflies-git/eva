@@ -235,8 +235,7 @@ def test_system_prompt_marks_external_content_as_untrusted() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     assert "UNTRUSTED_DATA" in prompt

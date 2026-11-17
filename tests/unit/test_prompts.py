@@ -18,15 +18,13 @@ def test_build_system_prompt_changes_identity_by_account_mode() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
     standalone_prompt = build_system_prompt(
         channel,
         client,
         account_mode="standalone",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     identity = "You are Eva, speaking directly with the people in this conversation."
@@ -49,12 +47,11 @@ def test_build_system_prompt_advertises_terminal_tool_when_enabled() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     assert "run_terminal_command" in prompt
-    assert "policy-controlled" in prompt
+    assert "read-only" in prompt
     assert "It's unrestricted" not in prompt
 
 
@@ -69,12 +66,10 @@ def test_build_system_prompt_omits_terminal_capability_when_disabled() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
     )
 
     assert "run_terminal_command" not in prompt
-    assert "don't have shell or network access" in prompt
+    assert "can't check live information" in prompt
 
 
 def test_build_system_prompt_advertises_autonomous_vision_tool_when_available() -> None:
@@ -88,14 +83,12 @@ def test_build_system_prompt_advertises_autonomous_vision_tool_when_available() 
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
-        vision_enabled=True,
+        available_tools=frozenset({"inspect_attached_images"}),
     )
 
     assert "inspect_attached_images" in prompt
-    assert "Decide independently whether visual evidence is needed" in prompt
-    assert "Do not pretend to see image details" in prompt
+    assert "before describing" in prompt
+    assert "don't claim details the tool didn't return" in prompt
 
 
 def test_build_system_prompt_includes_home_network() -> None:
@@ -109,8 +102,7 @@ def test_build_system_prompt_includes_home_network() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     assert "10.0.0.2" not in prompt
@@ -129,8 +121,7 @@ def test_build_system_prompt_includes_security_section() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     assert "Security boundaries" in prompt
@@ -148,8 +139,7 @@ def test_build_system_prompt_enforces_brevity_default() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     assert "Short is the default" in prompt
@@ -166,8 +156,6 @@ def test_build_system_prompt_uses_lowercase_casual_ascii_voice() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
     )
 
     assert "quietly reserved" in prompt
@@ -194,8 +182,6 @@ def test_build_system_prompt_prioritizes_current_conversation_and_handles_ambigu
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
     )
 
     assert "Answer the latest direct user message" in prompt
@@ -218,8 +204,6 @@ def test_build_system_prompt_allows_sparse_uppercase_emphasis() -> None:
         channel,
         client,
         account_mode="assistant",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
     )
 
     assert "one to three salient words" in prompt
@@ -241,8 +225,7 @@ def test_build_system_prompt_does_not_volunteer_deployment_labels() -> None:
         channel,
         client,
         account_mode="standalone",
-        terminal_enabled=True,
-        autonomous_terminal_enabled=True,
+        available_tools=frozenset({"run_terminal_command"}),
     )
 
     assert "Docker container" not in prompt
@@ -261,16 +244,12 @@ def test_build_system_prompt_adds_quirky_admin_bond_only_for_admins() -> None:
         channel,
         client,
         account_mode="standalone",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
         requester_is_admin=True,
     )
     regular_prompt = build_system_prompt(
         channel,
         client,
         account_mode="standalone",
-        terminal_enabled=False,
-        autonomous_terminal_enabled=False,
     )
 
     assert "Your admin bond" in admin_prompt
@@ -292,21 +271,19 @@ def test_formatting_prompt_forbids_transcript_framing() -> None:
     assert "eva:" in prompt
 
 
-def test_formatting_prompt_allows_sparse_emphasis_without_all_caps_prose() -> None:
+def test_formatting_prompt_owns_symbol_rules_not_casing_rules() -> None:
     prompt = build_formatting_section()
 
-    assert "lowercase by default" in prompt
-    assert "uppercase one to three important words" in prompt
-    assert "never write all-caps prose" in prompt
-    assert "proper nouns, acronyms, commands, URLs, code" in prompt
-    assert "quoted or blockquoted text" in prompt
-    assert "uppercase as emphasis, not shouting" in prompt
+    assert "lowercase by default" not in prompt
+    assert "all-caps" not in prompt
+    assert "Approved emoticons" in prompt
+    assert "<think>" in prompt
 
 
 def test_persona_discourages_commenting_on_the_message_itself() -> None:
     from eva.prompts.persona import build_persona_section
 
-    section = build_persona_section("assistant")
+    section = build_persona_section()
 
     assert "## Sounding human" in section
     assert "Never comment on the message itself" in section
@@ -321,7 +298,7 @@ def test_context_prompt_includes_recency_guidance() -> None:
     channel = SimpleNamespace(guild=None, name="DM")
     client = SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva"))
 
-    section = build_context_section(channel, client, "assistant")  # type: ignore[arg-type]
+    section = build_context_section(channel, client)  # type: ignore[arg-type]
 
     assert "## Conversation recency" in section
     assert "Never dig up old messages" in section
@@ -341,3 +318,38 @@ def test_requester_context_stamps_the_current_message_time() -> None:
     )
 
     assert "CURRENT MESSAGE SENT: 19:32 UTC" in build_requester_context(message)  # type: ignore[arg-type]
+
+
+def test_formatting_prompt_mentions_split_trigger_only_when_splitting_allowed() -> None:
+    assert "/// split" in build_formatting_section()
+    assert "/// split" not in build_formatting_section(allow_message_splitting=False)
+    assert "terminal periods are optional" not in build_formatting_section(
+        allow_message_splitting=False
+    )
+
+
+def test_key_rules_appear_exactly_once_across_persona_and_formatting() -> None:
+    from eva.prompts.persona import build_persona_section
+
+    combined = build_persona_section() + build_formatting_section()
+
+    for phrase in (
+        "lowercase by default",
+        "em dashes",
+        "Approved emoticons",
+        "<think>",
+        "No headers",
+        "not shouting",
+        "Play along",
+    ):
+        assert combined.count(phrase) == 1, phrase
+
+
+def test_persona_scopes_process_narration_and_tool_output_rules() -> None:
+    from eva.prompts.persona import build_persona_section
+
+    section = build_persona_section()
+
+    assert "Do not narrate what you are doing" in section
+    assert "when a tool fails or you used a source, say so plainly" in section
+    assert "do not paste or summarize raw output" in section

@@ -58,9 +58,10 @@ class Context7Service:
             "function": {
                 "name": _AUTONOMOUS_TOOL_NAME,
                 "description": (
-                    "Search the official documentation of a specific library "
-                    "or framework and return relevant results with titles, "
-                    "URLs, and snippets."
+                    "Look up the official documentation of a named library or framework "
+                    "(API, arguments, behavior) instead of guessing from memory. Returns "
+                    "titles, URLs, and snippets. Do not use for general web questions; use "
+                    "web_search for those."
                 ),
                 "parameters": {
                     "type": "object",
@@ -72,7 +73,7 @@ class Context7Service:
                         "library": {
                             "type": "string",
                             "description": (
-                                "The name of the library or framework to search within "
+                                "Exact name of the library or framework to search within "
                                 "(e.g. 'discord.py', 'pydantic', 'fastapi')."
                             ),
                         },

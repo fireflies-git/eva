@@ -264,11 +264,12 @@ class TerminalService:
             "function": {
                 "name": _AUTONOMOUS_TOOL_NAME,
                 "description": (
-                    "Run one approved read-only inspection command in Eva's isolated working "
-                    "directory. Commands are executed without a shell and without network "
-                    "access. Do not use pipes, command chains, redirects, command substitution, "
-                    "package managers, installers, or commands that modify files. Output and "
-                    "runtime are bounded."
+                    "Run ONE read-only diagnostic command in Eva's isolated working directory, "
+                    "such as listing files, reading logs, git status/log/diff, or a simple "
+                    "grep. Only allowlisted commands work. It runs without a shell and "
+                    "without network access, so no pipes, command chains, redirects, "
+                    "command substitution, package managers, installers, or anything that "
+                    "writes files. Output and runtime are bounded."
                 ),
                 "parameters": {
                     "type": "object",

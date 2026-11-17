@@ -251,8 +251,11 @@ async def deliver_owner_response(
     suppress_embeds: bool = True,
     spoiler_attachments: bool = False,
     followup_delay_seconds: Callable[[str], float] | None = None,
+    split_messages: bool = True,
 ) -> DeliveryResult:
-    response_chunks = build_response_chunks(original_content, reply_content)
+    response_chunks = build_response_chunks(
+        original_content, reply_content, split_messages=split_messages
+    )
     primary_delivered = await safe_edit(
         message,
         response_chunks[0],
@@ -295,8 +298,9 @@ async def deliver_reply_response(
     suppress_embeds: bool = True,
     spoiler_attachments: bool = False,
     followup_delay_seconds: Callable[[str], float] | None = None,
+    split_messages: bool = True,
 ) -> DeliveryResult:
-    chunks = build_plain_response_chunks(reply_content)
+    chunks = build_plain_response_chunks(reply_content, split_messages=split_messages)
     first = await safe_reply(
         message,
         chunks[0],

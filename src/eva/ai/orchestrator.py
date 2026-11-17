@@ -15,7 +15,17 @@ from eva.ai.sanitize import (
     strip_response_watermark,
 )
 from eva.ai.schemas import ChatMessage, ContentPart, VisionImage
-from eva.constants import MAX_IMAGE_URLS, RESPONSE_WATERMARK, SPLIT_TRIGGER, WARNING_MARK
+from eva.constants import (
+    MAX_IMAGE_URLS,
+    RESPONSE_WATERMARK,
+    SPLIT_TRIGGER,
+    TOOL_FETCH_WEB_PAGE,
+    TOOL_INSPECT_ATTACHED_IMAGES,
+    TOOL_LOOKUP_DOCUMENTATION,
+    TOOL_RUN_TERMINAL_COMMAND,
+    TOOL_WEB_SEARCH,
+    WARNING_MARK,
+)
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_system_prompt
 from eva.reminders import ReminderConfirmation
@@ -188,15 +198,11 @@ class ReplyGenerationService:
                 channel,
                 client,
                 account_mode=self._account_mode,
-                terminal_enabled=self._terminal_enabled and autonomous_tools_available,
-                autonomous_terminal_enabled=self._autonomous_terminal_enabled
-                and autonomous_tools_available,
-                playwright_enabled=self._playwright_enabled and autonomous_tools_available,
-                context7_enabled=self._context7_enabled and autonomous_tools_available,
-                exa_enabled=self._exa_enabled and autonomous_tools_available,
+                available_tools=self._available_tool_names(
+                    autonomous_tools_available=autonomous_tools_available,
+                    vision_available=vision_context_available or bool(vision_images),
+                ),
                 requester_is_admin=requester_is_admin,
-                vision_enabled=autonomous_tools_available
-                and (vision_context_available or bool(vision_images)),
             )
             content = await self._response_service.generate_reply(
                 system_prompt=system_prompt,
@@ -230,6 +236,29 @@ class ReplyGenerationService:
             requester_id=user_id,
             channel_id=channel_id,
         )
+
+    def _available_tool_names(
+        self,
+        *,
+        autonomous_tools_available: bool,
+        vision_available: bool,
+    ) -> frozenset[str]:
+        """Names of the tools offered to this requester for this message."""
+        names: set[str] = set()
+        if autonomous_tools_available:
+            if self._terminal_enabled and self._autonomous_terminal_enabled:
+                names.add(TOOL_RUN_TERMINAL_COMMAND)
+            if self._playwright_enabled:
+                names.add(TOOL_FETCH_WEB_PAGE)
+            if self._context7_enabled:
+                names.add(TOOL_LOOKUP_DOCUMENTATION)
+            if self._exa_enabled:
+                names.add(TOOL_WEB_SEARCH)
+        # Image inspection is scoped to attachments, not requester privilege
+        # (mirrors _is_tool_allowed in respond.py).
+        if vision_available:
+            names.add(TOOL_INSPECT_ATTACHED_IMAGES)
+        return frozenset(names)
 
     def _can_use_autonomous_tools(
         self,
