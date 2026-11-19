@@ -252,6 +252,7 @@ The repo is intentionally split by responsibility:
   - `delivery.py`: Discord write-side send/edit/reply behavior
   - `formatting.py`: Discord output chunking / loading text
   - `code_attachments.py`: extract fenced code blocks into Discord file attachments
+  - `persona_commands.py`: `persona` command parsing and admin checks for custom personas
 - `src/eva/ai/*`
   AI transport, orchestration, response shaping, moderation, and tool-call handling.
 - `src/eva/images/*`
@@ -732,7 +733,7 @@ State modules should stay small and boring:
 Do not add business logic to state modules unless the logic is inseparable from persistence/storage semantics.
 
 Persistent JSON stores must write state files atomically via `write_text_atomic()` (temp file +
-`os.replace`) so a crash mid-write cannot corrupt `reminders.json`, `user_memory.json`, or
+`os.replace`) so a crash mid-write cannot corrupt `reminders.json`, `user_memory.json`, `personas.json`, or
 `tracked_messages.json`.
 
 The whitelist is the exception: `whitelist.py` is SQLite-backed (`whitelist.db`) with an in-memory

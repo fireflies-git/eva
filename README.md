@@ -139,6 +139,18 @@ challenge data is sent to NopeCHA when a challenge occurs.
 
 - `eva yuri`
 - Sends one random image from the local `yuri.db` SQLite database as a Discord attachment.
+## Custom Personas
+
+Admins (the owner and `ADMIN_USER_IDS`) can build a shared library of personas. A persona is extra
+voice/role instructions appended after Eva's built-in persona; it never overrides content policy,
+formatting or security rules. State is stored in `personas.json` under `STATE_DIR`.
+
+- `eva persona create <name> <instructions>` / `edit <name> <instructions>` / `delete <name>` (admin)
+- `eva persona channel <name>` / `eva persona channel reset` (admin, applies to everyone in the channel)
+- `eva persona list` / `show <name>` / `use <name>` / `reset` (any allowed user, applies to their own prompts)
+
+A user's own persona wins over the channel persona.
+
 - The database is read from `STATE_DIR/yuri.db` (the default is `./yuri.db`) and is kept out of version control.
 - The command does not use the whitelist: DMs and group chats may receive NSFW rows, while server channels receive only rows marked SFW.
 - NSFW rows are labeled and uploaded as Discord spoiler attachments.

@@ -11,6 +11,7 @@ from eva.ai.orchestrator import (
 )
 from eva.constants import RESPONSE_WATERMARK
 from eva.images import GeneratedImage, GeneratedImageAsset, ImageClientError, ImageResultBundle
+from eva.state.personas import Persona
 
 _WM = "\n-# -eva"
 
@@ -742,3 +743,56 @@ def test_reply_generation_normal_reply_suppresses_embeds() -> None:
     )
 
     assert reply.allow_embeds is False
+
+
+class StubPersonaResolver:
+    def __init__(self, persona: Persona | None) -> None:
+        self.persona = persona
+        self.calls: list[tuple[int | None, int | None]] = []
+
+    def resolve(self, user_id: int | None, channel_id: int | None) -> Persona | None:
+        self.calls.append((user_id, channel_id))
+        return self.persona
+
+
+def _generate_with_resolver(resolver: StubPersonaResolver | None) -> str:
+    response_service = StubResponseService("normal")
+    reply_service = ReplyGenerationService(
+        account_mode="assistant",
+        response_service=response_service,
+        image_service=StubImageService(result=None),
+        tos_check_service=StubTOSCheckService(),
+        persona_resolver=resolver,
+    )
+    asyncio.run(
+        reply_service.generate_reply(
+            channel=cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM")),
+            client=cast(
+                discord.Client,
+                SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+            ),
+            context_messages=[],
+            history_messages=[],
+            user_message="hello there",
+            reply_context=None,
+            user_id=5,
+            channel_id=6,
+        )
+    )
+    return cast(str, response_service.calls[0]["system_prompt"])
+
+
+def test_reply_generation_injects_resolved_custom_persona() -> None:
+    resolver = StubPersonaResolver(
+        Persona(name="pirate", instructions="Talk like a pirate.", created_by=1)
+    )
+
+    system_prompt = _generate_with_resolver(resolver)
+
+    assert resolver.calls == [(5, 6)]
+    assert "Talk like a pirate." in system_prompt
+
+
+def test_reply_generation_without_custom_persona_is_unchanged() -> None:
+    assert "Custom persona" not in _generate_with_resolver(None)
+    assert "Custom persona" not in _generate_with_resolver(StubPersonaResolver(None))

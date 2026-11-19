@@ -3,6 +3,12 @@ from eva.state.pending_friend_requests import (
     PendingFriendRequest,
     PendingFriendRequestStore,
 )
+from eva.state.personas import (
+    Persona,
+    PersonaError,
+    PersonaPersistenceError,
+    PersonaStore,
+)
 from eva.state.rate_limiter import RateLimiter
 from eva.state.reminders import (
     Reminder,
@@ -24,6 +30,10 @@ __all__ = [
     "ChannelHistoryStore",
     "PendingFriendRequest",
     "PendingFriendRequestStore",
+    "Persona",
+    "PersonaError",
+    "PersonaPersistenceError",
+    "PersonaStore",
     "RateLimiter",
     "Reminder",
     "ReminderError",

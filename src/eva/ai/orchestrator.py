@@ -29,6 +29,7 @@ from eva.constants import (
 from eva.images import ImageClientError, ImageResultBundle
 from eva.prompts import build_system_prompt
 from eva.reminders import ReminderConfirmation
+from eva.state.personas import Persona
 from eva.tools import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,10 @@ class ReminderRunner(Protocol):
     ) -> ReminderConfirmation | None: ...
 
 
+class PersonaResolver(Protocol):
+    def resolve(self, user_id: int | None, channel_id: int | None) -> Persona | None: ...
+
+
 class ReplyGenerationService:
     def __init__(
         self,
@@ -114,7 +119,9 @@ class ReplyGenerationService:
         exa_enabled: bool = False,
         autonomous_tool_scope: str = "owner_admin",
         safeguard_notifier: SafeguardNotifier | None = None,
+        persona_resolver: PersonaResolver | None = None,
     ) -> None:
+        self._persona_resolver = persona_resolver
         self._account_mode = account_mode
         self._response_service = response_service
         self._image_service = image_service
@@ -138,6 +145,13 @@ class ReplyGenerationService:
 
     def set_watermark_enabled(self, enabled: bool) -> None:
         self._watermark_enabled = enabled
+
+    def _resolve_custom_persona(
+        self, *, user_id: int | None, channel_id: int | None
+    ) -> Persona | None:
+        if self._persona_resolver is None:
+            return None
+        return self._persona_resolver.resolve(user_id, channel_id)
 
     async def generate_reply(
         self,
@@ -203,6 +217,9 @@ class ReplyGenerationService:
                     vision_available=vision_context_available or bool(vision_images),
                 ),
                 requester_is_admin=requester_is_admin,
+                custom_persona=self._resolve_custom_persona(
+                    user_id=user_id, channel_id=channel_id
+                ),
             )
             content = await self._response_service.generate_reply(
                 system_prompt=system_prompt,

@@ -64,6 +64,7 @@ from eva.discord.formatting import build_loading_text, build_plain_response_chun
 from eva.discord.friend_requests import FriendRequestHandler
 from eva.discord.media import AttachmentBudget
 from eva.discord.memory_commands import format_memories_for_prompt, handle_memory_command
+from eva.discord.persona_commands import handle_persona_command
 from eva.discord.reminder_commands import handle_reminder_command
 from eva.discord.social_commands import handle_social_command
 from eva.discord.summarize_commands import handle_summarize_command, is_summarize_command
@@ -85,6 +86,7 @@ from eva.discord.yuri_commands import YuriImageProvider, handle_yuri_command, is
 from eva.downloads import DownloadService
 from eva.state import (
     ChannelHistoryStore,
+    PersonaStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -129,7 +131,9 @@ class SelfbotMessageHandler:
         friend_request_handler: FriendRequestHandler | None = None,
         yuri_service: YuriImageProvider | None = None,
         vision_store: VisionImageStore | None = None,
+        persona_store: PersonaStore | None = None,
     ) -> None:
+        self._persona_store = persona_store
         self._settings = settings
         self._reply_generation_service = reply_generation_service
         self._history_store = history_store
@@ -522,6 +526,24 @@ class SelfbotMessageHandler:
             channel_id=channel_id,
         ):
             return True
+
+        if self._persona_store is not None:
+            persona_outcome = await handle_persona_command(
+                content=original_content,
+                user_id=message.author.id,
+                channel_id=channel_id,
+                trigger_prefix=self._settings.trigger_prefix,
+                is_admin=is_admin_user(user_id=message.author.id, is_owner=is_owner),
+                persona_store=self._persona_store,
+            )
+            if await self._handle_command_outcome(
+                outcome=persona_outcome,
+                message=message,
+                is_owner=is_owner,
+                original_content=original_content,
+                channel_id=channel_id,
+            ):
+                return True
 
         return await self._dispatch_summarize_command(
             message=message,

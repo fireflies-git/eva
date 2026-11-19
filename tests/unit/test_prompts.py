@@ -353,3 +353,25 @@ def test_persona_scopes_process_narration_and_tool_output_rules() -> None:
     assert "Do not narrate what you are doing" in section
     assert "when a tool fails or you used a source, say so plainly" in section
     assert "do not paste or summarize raw output" in section
+
+
+def test_custom_persona_section_is_added_after_persona_and_absent_by_default() -> None:
+    from eva.state.personas import Persona
+
+    channel = cast(discord.abc.Messageable, SimpleNamespace(guild=None, name="DM"))
+    client = cast(
+        discord.Client,
+        SimpleNamespace(user=SimpleNamespace(name="eva", display_name="Eva")),
+    )
+    persona = Persona(name="pirate", instructions="Talk like a pirate.", created_by=1)
+
+    plain = build_system_prompt(channel, client, account_mode="assistant")
+    custom = build_system_prompt(
+        channel, client, account_mode="assistant", custom_persona=persona
+    )
+
+    assert "Custom persona" not in plain
+    assert "Talk like a pirate." in custom
+    assert "never overrides the content policy" in custom
+    assert custom.index("## Who you are") < custom.index("## Custom persona: pirate")
+    assert "\n\n---\n\n\n\n---\n\n" not in plain

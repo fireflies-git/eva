@@ -33,6 +33,7 @@ from eva.runtime import validate_secure_path
 from eva.state import (
     ChannelHistoryStore,
     PendingFriendRequestStore,
+    PersonaStore,
     RateLimiter,
     ReminderStore,
     TrackedMessageStore,
@@ -41,6 +42,7 @@ from eva.state import (
     WhitelistStore,
 )
 from eva.state.pending_friend_requests import DEFAULT_PENDING_FRIEND_REQUESTS_PATH
+from eva.state.personas import DEFAULT_PERSONAS_PATH
 from eva.state.reminders import DEFAULT_REMINDERS_PATH
 from eva.state.tracked_messages import DEFAULT_TRACKED_MESSAGES_PATH
 from eva.state.user_memory import DEFAULT_USER_MEMORY_PATH
@@ -204,6 +206,7 @@ class EvaApp:
             path=state_dir / DEFAULT_TRACKED_MESSAGES_PATH.name
         )
         self._whitelist = WhitelistStore(state_dir / DEFAULT_WHITELIST_PATH.name)
+        self._persona_store = PersonaStore(path=state_dir / DEFAULT_PERSONAS_PATH.name)
         self._user_memory = UserMemoryStore(path=state_dir / DEFAULT_USER_MEMORY_PATH.name)
         self._reminder_store = ReminderStore(path=state_dir / DEFAULT_REMINDERS_PATH.name)
         self._reminder_scheduler = ReminderScheduler(
@@ -224,6 +227,7 @@ class EvaApp:
             playwright_enabled=settings.playwright_enabled,
             context7_enabled=settings.context7_api_key is not None,
             exa_enabled=settings.exa_api_key is not None,
+            persona_resolver=self._persona_store,
             autonomous_tool_scope=settings.autonomous_tool_scope,
             safeguard_notifier=self._safeguard_notifier,
         )
@@ -238,6 +242,7 @@ class EvaApp:
             response_split_service=self._response_split_service,
             history_store=self._history_store,
             tracked_messages=self._tracked_messages,
+            persona_store=self._persona_store,
             whitelist=self._whitelist,
             user_memory=self._user_memory,
             reminder_store=self._reminder_store,
